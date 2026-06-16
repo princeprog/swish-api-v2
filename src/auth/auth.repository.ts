@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import type { OrganizationMembership } from '../common/auth/roles';
 import { DATABASE, type Database } from '../database/database.tokens';
 import type { AuthPasswordCredentials } from '../database/db';
 import type { AuthUser, RefreshTokenRecord } from './auth.types';
@@ -157,6 +158,21 @@ export class AuthRepository {
       .executeTakeFirst();
 
     return user ? toAuthUser(user) : undefined;
+  }
+
+  async findActiveOrganizationMembership(
+    userId: string,
+    organizationId: string,
+  ): Promise<OrganizationMembership | undefined> {
+    const membership = await this.db
+      .selectFrom('admin.organization_members')
+      .select(['organization_id', 'role', 'status', 'user_id'])
+      .where('organization_id', '=', organizationId)
+      .where('user_id', '=', userId)
+      .where('status', '=', 'active')
+      .executeTakeFirst();
+
+    return membership as OrganizationMembership | undefined;
   }
 
   async revokeRefreshToken(id: string): Promise<void> {
