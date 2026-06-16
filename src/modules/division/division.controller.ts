@@ -1,34 +1,66 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
-import { DivisionService } from './division.service';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
+import { AUTH_ROLES } from '../../common/auth/roles';
+import { OrganizationRoles } from '../../common/decorators/organization-roles.decorator';
+import { OrganizationRolesGuard } from '../../common/guards/organization-roles.guard';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateDivisionDto } from './dto/create-division.dto';
 import { UpdateDivisionDto } from './dto/update-division.dto';
+import { DivisionService } from './division.service';
 
-@Controller('division')
+@Controller('organizations/:organizationId/divisions')
+@UseGuards(JwtAuthGuard, OrganizationRolesGuard)
+@OrganizationRoles(AUTH_ROLES.OWNER, AUTH_ROLES.ADMIN)
 export class DivisionController {
   constructor(private readonly divisionService: DivisionService) {}
 
   @Post()
-  create(@Body() createDivisionDto: CreateDivisionDto) {
-    return this.divisionService.create(createDivisionDto);
+  create(
+    @Param('organizationId') organizationId: string,
+    @Body() createDivisionDto: CreateDivisionDto,
+  ) {
+    return this.divisionService.create(organizationId, createDivisionDto);
   }
 
   @Get()
-  findAll() {
-    return this.divisionService.findAll();
+  findAll(@Param('organizationId') organizationId: string) {
+    return this.divisionService.findAll(organizationId);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.divisionService.findOne(+id);
+  @Get(':divisionId')
+  findOne(
+    @Param('organizationId') organizationId: string,
+    @Param('divisionId') divisionId: string,
+  ) {
+    return this.divisionService.findOne(organizationId, divisionId);
   }
 
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updateDivisionDto: UpdateDivisionDto) {
-    return this.divisionService.update(+id, updateDivisionDto);
+  @Patch(':divisionId')
+  update(
+    @Param('organizationId') organizationId: string,
+    @Param('divisionId') divisionId: string,
+    @Body() updateDivisionDto: UpdateDivisionDto,
+  ) {
+    return this.divisionService.update(
+      organizationId,
+      divisionId,
+      updateDivisionDto,
+    );
   }
 
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.divisionService.remove(+id);
+  @Delete(':divisionId')
+  remove(
+    @Param('organizationId') organizationId: string,
+    @Param('divisionId') divisionId: string,
+  ) {
+    return this.divisionService.remove(organizationId, divisionId);
   }
 }

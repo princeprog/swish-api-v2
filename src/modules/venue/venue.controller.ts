@@ -1,34 +1,62 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
-import { VenueService } from './venue.service';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
+import { AUTH_ROLES } from '../../common/auth/roles';
+import { OrganizationRoles } from '../../common/decorators/organization-roles.decorator';
+import { OrganizationRolesGuard } from '../../common/guards/organization-roles.guard';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateVenueDto } from './dto/create-venue.dto';
 import { UpdateVenueDto } from './dto/update-venue.dto';
+import { VenueService } from './venue.service';
 
-@Controller('venue')
+@Controller('organizations/:organizationId/venues')
+@UseGuards(JwtAuthGuard, OrganizationRolesGuard)
+@OrganizationRoles(AUTH_ROLES.OWNER, AUTH_ROLES.ADMIN)
 export class VenueController {
   constructor(private readonly venueService: VenueService) {}
 
   @Post()
-  create(@Body() createVenueDto: CreateVenueDto) {
-    return this.venueService.create(createVenueDto);
+  create(
+    @Param('organizationId') organizationId: string,
+    @Body() createVenueDto: CreateVenueDto,
+  ) {
+    return this.venueService.create(organizationId, createVenueDto);
   }
 
   @Get()
-  findAll() {
-    return this.venueService.findAll();
+  findAll(@Param('organizationId') organizationId: string) {
+    return this.venueService.findAll(organizationId);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.venueService.findOne(+id);
+  @Get(':venueId')
+  findOne(
+    @Param('organizationId') organizationId: string,
+    @Param('venueId') venueId: string,
+  ) {
+    return this.venueService.findOne(organizationId, venueId);
   }
 
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updateVenueDto: UpdateVenueDto) {
-    return this.venueService.update(+id, updateVenueDto);
+  @Patch(':venueId')
+  update(
+    @Param('organizationId') organizationId: string,
+    @Param('venueId') venueId: string,
+    @Body() updateVenueDto: UpdateVenueDto,
+  ) {
+    return this.venueService.update(organizationId, venueId, updateVenueDto);
   }
 
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.venueService.remove(+id);
+  @Delete(':venueId')
+  remove(
+    @Param('organizationId') organizationId: string,
+    @Param('venueId') venueId: string,
+  ) {
+    return this.venueService.remove(organizationId, venueId);
   }
 }
