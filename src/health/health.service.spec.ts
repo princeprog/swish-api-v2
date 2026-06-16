@@ -10,8 +10,10 @@ const config: AppConfig = {
   },
   auth: {
     accessTokenExpiresIn: '15m',
+    accessTokenSecret: 'access-secret',
     refreshCookieName: 'swish_refresh_token',
     refreshTokenExpiresIn: '30d',
+    refreshTokenSecret: 'refresh-secret',
     secureCookies: false,
   },
   database: {

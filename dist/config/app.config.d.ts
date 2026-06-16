@@ -1,6 +1,8 @@
+import type { JwtSignOptions } from '@nestjs/jwt';
 import { createDatabasePoolConfig } from '../database/database.config';
 export declare const APP_CONFIG = "APP_CONFIG";
 type AppEnvironment = 'development' | 'production' | 'test';
+type JwtDuration = NonNullable<JwtSignOptions['expiresIn']>;
 export type AppConfig = {
     app: {
         environment: AppEnvironment;
@@ -8,9 +10,11 @@ export type AppConfig = {
         serviceName: string;
     };
     auth: {
-        accessTokenExpiresIn: string;
+        accessTokenExpiresIn: JwtDuration;
+        accessTokenSecret: string;
         refreshCookieName: string;
         refreshTokenExpiresIn: string;
+        refreshTokenSecret: string;
         secureCookies: boolean;
     };
     database: ReturnType<typeof createDatabasePoolConfig>;

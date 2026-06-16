@@ -20,8 +20,10 @@ describe('createAppConfig', () => {
       },
       auth: {
         accessTokenExpiresIn: '15m',
+        accessTokenSecret: 'access-secret',
         refreshCookieName: 'swish_refresh_token',
         refreshTokenExpiresIn: '30d',
+        refreshTokenSecret: 'refresh-secret',
         secureCookies: false,
       },
       database: {
@@ -59,5 +61,14 @@ describe('createAppConfig', () => {
         PORT: 'invalid',
       }),
     ).toThrow('PORT must be a positive integer');
+  });
+
+  it('rejects an invalid JWT_ACCESS_EXPIRES_IN value', () => {
+    expect(() =>
+      createAppConfig({
+        ...validEnv,
+        JWT_ACCESS_EXPIRES_IN: 'tomorrow',
+      }),
+    ).toThrow('JWT_ACCESS_EXPIRES_IN must use a duration like 15m or 1h');
   });
 });

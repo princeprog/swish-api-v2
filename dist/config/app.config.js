@@ -33,10 +33,17 @@ function parseEnvironment(value) {
     }
     return 'development';
 }
+function parseJwtDuration(value) {
+    const duration = value ?? '15m';
+    if (!/^\d+[smhd]$/.test(duration)) {
+        throw new Error('JWT_ACCESS_EXPIRES_IN must use a duration like 15m or 1h');
+    }
+    return duration;
+}
 function createAppConfig(env) {
     const environment = parseEnvironment(env.NODE_ENV);
-    requireAppEnv(env, 'JWT_ACCESS_SECRET');
-    requireAppEnv(env, 'JWT_REFRESH_SECRET');
+    const accessTokenSecret = requireAppEnv(env, 'JWT_ACCESS_SECRET');
+    const refreshTokenSecret = requireAppEnv(env, 'JWT_REFRESH_SECRET');
     return {
         app: {
             environment,
@@ -44,9 +51,11 @@ function createAppConfig(env) {
             serviceName: env.SERVICE_NAME ?? 'swish-api-v2',
         },
         auth: {
-            accessTokenExpiresIn: env.JWT_ACCESS_EXPIRES_IN ?? '15m',
+            accessTokenExpiresIn: parseJwtDuration(env.JWT_ACCESS_EXPIRES_IN),
+            accessTokenSecret,
             refreshCookieName: env.AUTH_REFRESH_COOKIE_NAME ?? 'swish_refresh_token',
             refreshTokenExpiresIn: env.JWT_REFRESH_EXPIRES_IN ?? '30d',
+            refreshTokenSecret,
             secureCookies: parseBoolean(env.AUTH_COOKIE_SECURE, environment === 'production'),
         },
         database: (0, database_config_1.createDatabasePoolConfig)(env),

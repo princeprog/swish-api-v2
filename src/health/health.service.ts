@@ -41,9 +41,7 @@ export class HealthService {
   async getReadiness(): Promise<HealthResponse> {
     try {
       await this.db
-        .selectNoFrom((expressionBuilder) =>
-          expressionBuilder.val(1).as('ok'),
-        )
+        .selectNoFrom((expressionBuilder) => expressionBuilder.val(1).as('ok'))
         .executeTakeFirst();
 
       return {

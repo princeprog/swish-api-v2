@@ -1,8 +1,10 @@
+import type { JwtSignOptions } from '@nestjs/jwt';
 import { createDatabasePoolConfig } from '../database/database.config';
 
 export const APP_CONFIG = 'APP_CONFIG';
 
 type AppEnvironment = 'development' | 'production' | 'test';
+type JwtDuration = NonNullable<JwtSignOptions['expiresIn']>;
 
 export type AppConfig = {
   app: {
@@ -11,9 +13,11 @@ export type AppConfig = {
     serviceName: string;
   };
   auth: {
-    accessTokenExpiresIn: string;
+    accessTokenExpiresIn: JwtDuration;
+    accessTokenSecret: string;
     refreshCookieName: string;
     refreshTokenExpiresIn: string;
+    refreshTokenSecret: string;
     secureCookies: boolean;
   };
   database: ReturnType<typeof createDatabasePoolConfig>;
@@ -62,11 +66,20 @@ function parseEnvironment(value: string | undefined): AppEnvironment {
   return 'development';
 }
 
+function parseJwtDuration(value: string | undefined): JwtDuration {
+  const duration = value ?? '15m';
+
+  if (!/^\d+[smhd]$/.test(duration)) {
+    throw new Error('JWT_ACCESS_EXPIRES_IN must use a duration like 15m or 1h');
+  }
+
+  return duration as JwtDuration;
+}
+
 export function createAppConfig(env: NodeJS.ProcessEnv): AppConfig {
   const environment = parseEnvironment(env.NODE_ENV);
-
-  requireAppEnv(env, 'JWT_ACCESS_SECRET');
-  requireAppEnv(env, 'JWT_REFRESH_SECRET');
+  const accessTokenSecret = requireAppEnv(env, 'JWT_ACCESS_SECRET');
+  const refreshTokenSecret = requireAppEnv(env, 'JWT_REFRESH_SECRET');
 
   return {
     app: {
@@ -75,9 +88,11 @@ export function createAppConfig(env: NodeJS.ProcessEnv): AppConfig {
       serviceName: env.SERVICE_NAME ?? 'swish-api-v2',
     },
     auth: {
-      accessTokenExpiresIn: env.JWT_ACCESS_EXPIRES_IN ?? '15m',
+      accessTokenExpiresIn: parseJwtDuration(env.JWT_ACCESS_EXPIRES_IN),
+      accessTokenSecret,
       refreshCookieName: env.AUTH_REFRESH_COOKIE_NAME ?? 'swish_refresh_token',
       refreshTokenExpiresIn: env.JWT_REFRESH_EXPIRES_IN ?? '30d',
+      refreshTokenSecret,
       secureCookies: parseBoolean(
         env.AUTH_COOKIE_SECURE,
         environment === 'production',
