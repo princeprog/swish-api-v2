@@ -24,7 +24,30 @@ export interface AuthAuthSessions {
   created_at: Generated<Timestamp>;
   expires_at: Timestamp;
   id: Generated<string>;
-  session_token: string;
+  revoked_at: Timestamp | null;
+  session_token_hash: string;
+  updated_at: Generated<Timestamp>;
+  user_id: string;
+}
+
+export interface AuthPasswordCredentials {
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  password_hash: string;
+  password_updated_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+  user_id: string;
+}
+
+export interface AuthRefreshTokens {
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
+  id: Generated<string>;
+  revoked_at: Timestamp | null;
+  rotated_from_token_id: string | null;
+  session_id: string;
+  token_hash: string;
+  updated_at: Generated<Timestamp>;
   user_id: string;
 }
 
@@ -40,5 +63,7 @@ export interface AuthUsers {
 export interface DB {
   "auth.auth_accounts": AuthAuthAccounts;
   "auth.auth_sessions": AuthAuthSessions;
+  "auth.password_credentials": AuthPasswordCredentials;
+  "auth.refresh_tokens": AuthRefreshTokens;
   "auth.users": AuthUsers;
 }
