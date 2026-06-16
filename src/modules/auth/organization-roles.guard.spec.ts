@@ -1,7 +1,7 @@
 import type { ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { AUTH_ROLES } from '../common/auth/roles';
-import { OrganizationRolesGuard } from '../common/guards/organization-roles.guard';
+import { AUTH_ROLES } from '../../common/auth/roles';
+import { OrganizationRolesGuard } from '../../common/guards/organization-roles.guard';
 import { OrganizationAuthorizationService } from './organization-authorization.service';
 
 const user = {

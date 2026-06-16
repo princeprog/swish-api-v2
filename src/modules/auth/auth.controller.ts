@@ -9,7 +9,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { APP_CONFIG, type AppConfig } from '../config/app.config';
+import { APP_CONFIG, type AppConfig } from '../../config/app.config';
 import type { AuthenticatedRequest, CookieRequest } from './auth.request';
 import { AuthService } from './auth.service';
 import type { AuthSessionResult } from './auth.types';

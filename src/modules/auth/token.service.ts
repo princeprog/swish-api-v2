@@ -1,7 +1,7 @@
 import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { createHash, randomBytes } from 'crypto';
-import { APP_CONFIG, type AppConfig } from '../config/app.config';
+import { APP_CONFIG, type AppConfig } from '../../config/app.config';
 import { AuthRepository } from './auth.repository';
 import type { AccessTokenPayload, AuthUser } from './auth.types';
 

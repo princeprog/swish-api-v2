@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { OrganizationMembership } from '../common/auth/roles';
-import { DATABASE, type Database } from '../database/database.tokens';
-import type { AuthPasswordCredentials } from '../database/db';
+import type { OrganizationMembership } from '../../common/auth/roles';
+import { DATABASE, type Database } from '../../database/database.tokens';
+import type { AuthPasswordCredentials } from '../../database/db';
 import type { AuthUser, RefreshTokenRecord } from './auth.types';
 
 type CreateUserWithPasswordInput = {

@@ -3,7 +3,7 @@ import {
   AUTH_ROLES,
   type AuthRole,
   type OrganizationMembership,
-} from '../common/auth/roles';
+} from '../../common/auth/roles';
 import { OrganizationAuthorizationService } from './organization-authorization.service';
 import type { AuthRepository } from './auth.repository';
 

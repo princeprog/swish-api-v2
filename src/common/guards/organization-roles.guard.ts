@@ -5,8 +5,8 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import type { AuthenticatedRequest } from '../../auth/auth.request';
-import { OrganizationAuthorizationService } from '../../auth/organization-authorization.service';
+import type { AuthenticatedRequest } from '../../modules/auth/auth.request';
+import { OrganizationAuthorizationService } from '../../modules/auth/organization-authorization.service';
 import { ORGANIZATION_ROLE_METADATA_KEY, type AuthRole } from '../auth/roles';
 
 @Injectable()

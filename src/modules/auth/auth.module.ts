@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
-import { OrganizationRolesGuard } from '../common/guards/organization-roles.guard';
-import { DatabaseModule } from '../database/database.module';
+import { OrganizationRolesGuard } from '../../common/guards/organization-roles.guard';
+import { DatabaseModule } from '../../database/database.module';
 import { AuthController } from './auth.controller';
 import { AuthRepository } from './auth.repository';
 import { AuthService } from './auth.service';
