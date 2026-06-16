@@ -11,6 +11,77 @@ export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
 
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
+export interface AdminDivisions {
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  league_season_id: string;
+  name: string;
+  slug: string;
+  status: Generated<string>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface AdminLeagueSeasons {
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  name: string;
+  organization_id: string;
+  public_enabled: Generated<boolean>;
+  slug: string;
+  status: Generated<string>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface AdminOrganizationMembers {
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  organization_id: string;
+  role: string;
+  status: Generated<string>;
+  updated_at: Generated<Timestamp>;
+  user_id: string;
+}
+
+export interface AdminOrganizations {
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  name: string;
+  slug: string;
+  status: Generated<string>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface AdminPlayers {
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  jersey_number: string;
+  name: string;
+  status: Generated<string>;
+  team_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface AdminTeams {
+  color: string | null;
+  created_at: Generated<Timestamp>;
+  division_id: string;
+  id: Generated<string>;
+  name: string;
+  slug: string;
+  status: Generated<string>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface AdminVenues {
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  league_season_id: string;
+  name: string;
+  slug: string;
+  status: Generated<string>;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface AuthAuthAccounts {
   created_at: Generated<Timestamp>;
   id: Generated<string>;
@@ -61,6 +132,13 @@ export interface AuthUsers {
 }
 
 export interface DB {
+  "admin.divisions": AdminDivisions;
+  "admin.league_seasons": AdminLeagueSeasons;
+  "admin.organization_members": AdminOrganizationMembers;
+  "admin.organizations": AdminOrganizations;
+  "admin.players": AdminPlayers;
+  "admin.teams": AdminTeams;
+  "admin.venues": AdminVenues;
   "auth.auth_accounts": AuthAuthAccounts;
   "auth.auth_sessions": AuthAuthSessions;
   "auth.password_credentials": AuthPasswordCredentials;
