@@ -27,6 +27,7 @@ packages/**/*.js
 
 # misc
 .DS_Store
+/dist
 .env
 .env.*
 lerna-debug.log
