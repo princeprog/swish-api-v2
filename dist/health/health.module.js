@@ -6,21 +6,19 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AppModule = void 0;
+exports.HealthModule = void 0;
 const common_1 = require("@nestjs/common");
-const app_controller_1 = require("./app.controller");
-const app_service_1 = require("./app.service");
-const app_config_module_1 = require("./config/app-config.module");
-const database_module_1 = require("./database/database.module");
-const health_module_1 = require("./health/health.module");
-let AppModule = class AppModule {
+const database_module_1 = require("../database/database.module");
+const health_controller_1 = require("./health.controller");
+const health_service_1 = require("./health.service");
+let HealthModule = class HealthModule {
 };
-exports.AppModule = AppModule;
-exports.AppModule = AppModule = __decorate([
+exports.HealthModule = HealthModule;
+exports.HealthModule = HealthModule = __decorate([
     (0, common_1.Module)({
-        imports: [app_config_module_1.AppConfigModule, database_module_1.DatabaseModule, health_module_1.HealthModule],
-        controllers: [app_controller_1.AppController],
-        providers: [app_service_1.AppService],
+        imports: [database_module_1.DatabaseModule],
+        controllers: [health_controller_1.HealthController],
+        providers: [health_service_1.HealthService],
     })
-], AppModule);
-//# sourceMappingURL=app.module.js.map
+], HealthModule);
+//# sourceMappingURL=health.module.js.map

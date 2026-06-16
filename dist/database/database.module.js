@@ -9,13 +9,13 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DatabaseModule = exports.DatabaseService = exports.DATABASE = void 0;
+exports.DatabaseModule = exports.DatabaseService = void 0;
 require("dotenv/config");
 const common_1 = require("@nestjs/common");
 const kysely_1 = require("kysely");
 const pg_1 = require("pg");
 const database_config_1 = require("./database.config");
-exports.DATABASE = 'DATABASE';
+const database_tokens_1 = require("./database.tokens");
 let DatabaseService = class DatabaseService {
     database;
     constructor() {
@@ -45,12 +45,12 @@ exports.DatabaseModule = DatabaseModule = __decorate([
         providers: [
             DatabaseService,
             {
-                provide: exports.DATABASE,
+                provide: database_tokens_1.DATABASE,
                 useFactory: (databaseService) => databaseService.db,
                 inject: [DatabaseService],
             },
         ],
-        exports: [exports.DATABASE, DatabaseService],
+        exports: [database_tokens_1.DATABASE, DatabaseService],
     })
 ], DatabaseModule);
 //# sourceMappingURL=database.module.js.map

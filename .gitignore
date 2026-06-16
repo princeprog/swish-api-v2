@@ -27,6 +27,8 @@ packages/**/*.js
 
 # misc
 .DS_Store
+.env
+.env.*
 lerna-debug.log
 npm-debug.log
 yarn-error.log

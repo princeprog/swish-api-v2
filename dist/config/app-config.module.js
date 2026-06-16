@@ -6,21 +6,23 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AppModule = void 0;
+exports.AppConfigModule = void 0;
+require("dotenv/config");
 const common_1 = require("@nestjs/common");
-const app_controller_1 = require("./app.controller");
-const app_service_1 = require("./app.service");
-const app_config_module_1 = require("./config/app-config.module");
-const database_module_1 = require("./database/database.module");
-const health_module_1 = require("./health/health.module");
-let AppModule = class AppModule {
+const app_config_1 = require("./app.config");
+let AppConfigModule = class AppConfigModule {
 };
-exports.AppModule = AppModule;
-exports.AppModule = AppModule = __decorate([
+exports.AppConfigModule = AppConfigModule;
+exports.AppConfigModule = AppConfigModule = __decorate([
+    (0, common_1.Global)(),
     (0, common_1.Module)({
-        imports: [app_config_module_1.AppConfigModule, database_module_1.DatabaseModule, health_module_1.HealthModule],
-        controllers: [app_controller_1.AppController],
-        providers: [app_service_1.AppService],
+        providers: [
+            {
+                provide: app_config_1.APP_CONFIG,
+                useFactory: () => (0, app_config_1.createAppConfig)(process.env),
+            },
+        ],
+        exports: [app_config_1.APP_CONFIG],
     })
-], AppModule);
-//# sourceMappingURL=app.module.js.map
+], AppConfigModule);
+//# sourceMappingURL=app-config.module.js.map
