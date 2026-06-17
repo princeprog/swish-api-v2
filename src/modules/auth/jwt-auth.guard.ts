@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { AuthRepository } from './auth.repository';
 import type { AuthenticatedRequest } from './auth.request';
+import { APP_CONFIG, type AppConfig } from '../../config/app.config';
+import { Inject } from '@nestjs/common';
 import { TokenService } from './token.service';
 
 function extractBearerToken(header: string | undefined): string | undefined {
@@ -23,11 +25,14 @@ export class JwtAuthGuard implements CanActivate {
   constructor(
     private readonly authRepository: AuthRepository,
     private readonly tokenService: TokenService,
+    @Inject(APP_CONFIG) private readonly config?: AppConfig,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
-    const token = extractBearerToken(request.headers.authorization);
+    const token =
+      request.cookies?.[this.accessCookieName] ??
+      extractBearerToken(request.headers.authorization);
 
     if (!token) {
       throw new UnauthorizedException('Missing access token');
@@ -43,5 +48,9 @@ export class JwtAuthGuard implements CanActivate {
     request.user = user;
 
     return true;
+  }
+
+  private get accessCookieName(): string {
+    return this.config?.auth.accessCookieName ?? 'swish_access_token';
   }
 }

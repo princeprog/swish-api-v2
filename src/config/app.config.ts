@@ -13,8 +13,10 @@ export type AppConfig = {
     serviceName: string;
   };
   auth: {
+    accessCookieName: string;
     accessTokenExpiresIn: JwtDuration;
     accessTokenSecret: string;
+    corsOrigin: string;
     refreshCookieName: string;
     refreshTokenExpiresIn: string;
     refreshTokenSecret: string;
@@ -88,8 +90,10 @@ export function createAppConfig(env: NodeJS.ProcessEnv): AppConfig {
       serviceName: env.SERVICE_NAME ?? 'swish-api-v2',
     },
     auth: {
+      accessCookieName: env.AUTH_ACCESS_COOKIE_NAME ?? 'swish_access_token',
       accessTokenExpiresIn: parseJwtDuration(env.JWT_ACCESS_EXPIRES_IN),
       accessTokenSecret,
+      corsOrigin: env.CORS_ORIGIN ?? 'http://localhost:3000',
       refreshCookieName: env.AUTH_REFRESH_COOKIE_NAME ?? 'swish_refresh_token',
       refreshTokenExpiresIn: env.JWT_REFRESH_EXPIRES_IN ?? '30d',
       refreshTokenSecret,

@@ -25,9 +25,11 @@ import { TokenService } from './token.service';
     TokenService,
   ],
   exports: [
+    AuthRepository,
     JwtAuthGuard,
     OrganizationAuthorizationService,
     OrganizationRolesGuard,
+    TokenService,
   ],
 })
 export class AuthModule {}

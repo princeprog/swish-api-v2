@@ -18,14 +18,15 @@ import { RegisterDto } from './dto/register.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
 type AuthResponse = {
-  accessToken: string;
   user: AuthSessionResult['user'];
 };
 
 function defaultAuthConfig(): AppConfig['auth'] {
   return {
+    accessCookieName: 'swish_access_token',
     accessTokenExpiresIn: '15m',
     accessTokenSecret: '',
+    corsOrigin: 'http://localhost:3000',
     refreshCookieName: 'swish_refresh_token',
     refreshTokenExpiresIn: '30d',
     refreshTokenSecret: '',
@@ -57,6 +58,10 @@ export class AuthController {
     @Res({ passthrough: true }) response: Response,
   ) {
     await this.authService.logout(this.getRefreshToken(request));
+    response.clearCookie(
+      this.authConfig.accessCookieName,
+      this.cookieOptions(),
+    );
     response.clearCookie(
       this.authConfig.refreshCookieName,
       this.cookieOptions(),
@@ -93,6 +98,10 @@ export class AuthController {
     );
   }
 
+  private getAccessCookieMaxAgeMs(): number {
+    return this.parseDurationToMs(this.authConfig.accessTokenExpiresIn);
+  }
+
   private get authConfig(): AppConfig['auth'] {
     return this.config?.auth ?? defaultAuthConfig();
   }
@@ -116,14 +125,46 @@ export class AuthController {
     response: Response,
   ): AuthResponse {
     response.cookie(
+      this.authConfig.accessCookieName,
+      result.accessToken,
+      this.cookieOptions(this.getAccessCookieMaxAgeMs()),
+    );
+    response.cookie(
       this.authConfig.refreshCookieName,
       result.refreshToken,
       this.cookieOptions(result.refreshCookieMaxAgeMs),
     );
 
     return {
-      accessToken: result.accessToken,
       user: result.user,
     };
+  }
+
+  private parseDurationToMs(duration: string | number): number {
+    if (typeof duration === 'number') {
+      return duration * 1000;
+    }
+
+    const match = duration.match(/^(\d+)([smhd])$/);
+
+    if (!match) {
+      return 15 * 60 * 1000;
+    }
+
+    const [, value, unit] = match;
+    const amount = Number(value);
+
+    switch (unit) {
+      case 's':
+        return amount * 1000;
+      case 'm':
+        return amount * 60 * 1000;
+      case 'h':
+        return amount * 60 * 60 * 1000;
+      case 'd':
+        return amount * 24 * 60 * 60 * 1000;
+      default:
+        return 15 * 60 * 1000;
+    }
   }
 }

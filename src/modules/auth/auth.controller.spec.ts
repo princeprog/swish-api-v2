@@ -60,10 +60,15 @@ describe('AuthController', () => {
         },
         response,
       ),
-    ).resolves.toEqual({
-      accessToken: 'access-token',
-      user,
-    });
+    ).resolves.toEqual({ user });
+    expect(response.cookie).toHaveBeenCalledWith(
+      'swish_access_token',
+      'access-token',
+      expect.objectContaining({
+        httpOnly: true,
+        sameSite: 'lax',
+      }),
+    );
     expect(response.cookie).toHaveBeenCalledWith(
       'swish_refresh_token',
       'refresh-token',
@@ -107,10 +112,15 @@ describe('AuthController', () => {
 
     await expect(
       controller.refresh(createCookieRequest('old-refresh-token'), response),
-    ).resolves.toEqual({
-      accessToken: 'new-access-token',
-      user,
-    });
+    ).resolves.toEqual({ user });
+    expect(response.cookie).toHaveBeenCalledWith(
+      'swish_access_token',
+      'new-access-token',
+      expect.objectContaining({
+        httpOnly: true,
+        sameSite: 'lax',
+      }),
+    );
     expect(authService.refresh).toHaveBeenCalledWith('old-refresh-token');
     expect(response.cookie).toHaveBeenCalledWith(
       'swish_refresh_token',
@@ -118,6 +128,30 @@ describe('AuthController', () => {
       expect.objectContaining({
         httpOnly: true,
         maxAge: 1000,
+        sameSite: 'lax',
+      }),
+    );
+  });
+
+  it('clears both auth cookies after logout', async () => {
+    const { authService, controller } = createAuthController();
+    const response = createResponseMock();
+
+    authService.logout.mockResolvedValue(undefined);
+
+    await controller.logout(createCookieRequest('refresh-token'), response);
+
+    expect(response.clearCookie).toHaveBeenCalledWith(
+      'swish_access_token',
+      expect.objectContaining({
+        httpOnly: true,
+        sameSite: 'lax',
+      }),
+    );
+    expect(response.clearCookie).toHaveBeenCalledWith(
+      'swish_refresh_token',
+      expect.objectContaining({
+        httpOnly: true,
         sameSite: 'lax',
       }),
     );
