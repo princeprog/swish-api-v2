@@ -131,6 +131,34 @@ export interface AuthUsers {
   updated_at: Generated<Timestamp>;
 }
 
+export interface PublicPortalLeagueShells {
+  division_id: string | null;
+  division_name: string | null;
+  division_slug: string | null;
+  organization_id: string | null;
+  organization_name: string | null;
+  organization_slug: string | null;
+  player_id: string | null;
+  player_jersey_number: string | null;
+  player_name: string | null;
+  season_id: string | null;
+  season_name: string | null;
+  season_slug: string | null;
+  team_color: string | null;
+  team_id: string | null;
+  team_name: string | null;
+  team_slug: string | null;
+}
+
+export interface PublicPortalOrganizations {
+  organization_id: string | null;
+  organization_name: string | null;
+  organization_slug: string | null;
+  season_id: string | null;
+  season_name: string | null;
+  season_slug: string | null;
+}
+
 export interface DB {
   "admin.divisions": AdminDivisions;
   "admin.league_seasons": AdminLeagueSeasons;
@@ -144,4 +172,6 @@ export interface DB {
   "auth.password_credentials": AuthPasswordCredentials;
   "auth.refresh_tokens": AuthRefreshTokens;
   "auth.users": AuthUsers;
+  "public_portal.league_shells": PublicPortalLeagueShells;
+  "public_portal.organizations": PublicPortalOrganizations;
 }

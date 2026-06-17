@@ -10,6 +10,7 @@ import { LeagueSeasonModule } from './modules/league-season/league-season.module
 import { OrganizationModule } from './modules/organization/organization.module';
 import { OrganizationMemberModule } from './modules/organization-member/organization-member.module';
 import { PlayerModule } from './modules/player/player.module';
+import { PublicModule } from './modules/public/public.module';
 import { TeamModule } from './modules/team/team.module';
 import { VenueModule } from './modules/venue/venue.module';
 
@@ -19,6 +20,7 @@ import { VenueModule } from './modules/venue/venue.module';
     DatabaseModule,
     HealthModule,
     AuthModule,
+    PublicModule,
     OrganizationModule,
     OrganizationMemberModule,
     LeagueSeasonModule,
