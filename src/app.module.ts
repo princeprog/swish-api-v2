@@ -8,6 +8,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { DivisionModule } from './modules/division/division.module';
 import { LeagueSeasonModule } from './modules/league-season/league-season.module';
 import { OrganizationModule } from './modules/organization/organization.module';
+import { OrganizationMemberModule } from './modules/organization-member/organization-member.module';
 import { PlayerModule } from './modules/player/player.module';
 import { TeamModule } from './modules/team/team.module';
 import { VenueModule } from './modules/venue/venue.module';
@@ -19,6 +20,7 @@ import { VenueModule } from './modules/venue/venue.module';
     HealthModule,
     AuthModule,
     OrganizationModule,
+    OrganizationMemberModule,
     LeagueSeasonModule,
     DivisionModule,
     TeamModule,

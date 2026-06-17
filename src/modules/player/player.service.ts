@@ -94,14 +94,23 @@ export class PlayerService {
     updatePlayerDto: UpdatePlayerDto,
   ) {
     const player = await this.findOne(organizationId, playerId);
+    const targetTeamId = updatePlayerDto.teamId ?? player.team_id;
+
+    if (updatePlayerDto.teamId && updatePlayerDto.teamId !== player.team_id) {
+      await this.assertTeamBelongsToOrganization(
+        organizationId,
+        updatePlayerDto.teamId,
+      );
+    }
 
     if (
-      updatePlayerDto.jerseyNumber &&
-      updatePlayerDto.jerseyNumber !== player.jersey_number
+      (updatePlayerDto.jerseyNumber &&
+        updatePlayerDto.jerseyNumber !== player.jersey_number) ||
+      targetTeamId !== player.team_id
     ) {
       await this.ensureJerseyAvailable(
-        player.team_id,
-        updatePlayerDto.jerseyNumber,
+        targetTeamId,
+        updatePlayerDto.jerseyNumber ?? player.jersey_number,
       );
     }
 
@@ -111,6 +120,7 @@ export class PlayerService {
         jersey_number: updatePlayerDto.jerseyNumber,
         name: updatePlayerDto.name,
         status: updatePlayerDto.status,
+        team_id: updatePlayerDto.teamId,
         updated_at: new Date(),
       })
       .where('id', '=', playerId)

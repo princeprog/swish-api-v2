@@ -11,7 +11,9 @@ const organization = {
 function createController() {
   const organizationService = {
     create: jest.fn(),
+    findAll: jest.fn(),
     findOne: jest.fn(),
+    remove: jest.fn(),
     update: jest.fn(),
   } as unknown as jest.Mocked<OrganizationService>;
 
@@ -49,5 +51,28 @@ describe('OrganizationController', () => {
       },
       user.id,
     );
+  });
+
+  it('lists organizations for the authenticated user', async () => {
+    const { controller, organizationService } = createController();
+    const user = {
+      email: 'owner@example.com',
+      id: 'user-1',
+      name: 'Owner',
+    };
+
+    organizationService.findAll.mockResolvedValue([organization]);
+
+    await expect(controller.findAll(user)).resolves.toEqual([organization]);
+    expect(organizationService.findAll).toHaveBeenCalledWith(user.id);
+  });
+
+  it('removes an organization', async () => {
+    const { controller, organizationService } = createController();
+
+    organizationService.remove.mockResolvedValue({ success: true });
+
+    await expect(controller.remove('org-1')).resolves.toEqual({ success: true });
+    expect(organizationService.remove).toHaveBeenCalledWith('org-1');
   });
 });

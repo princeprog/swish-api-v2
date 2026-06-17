@@ -90,17 +90,33 @@ export class VenueService {
     updateVenueDto: UpdateVenueDto,
   ) {
     const venue = await this.findOne(organizationId, venueId);
+    const targetLeagueSeasonId =
+      updateVenueDto.leagueSeasonId ?? venue.league_season_id;
 
-    if (updateVenueDto.slug && updateVenueDto.slug !== venue.slug) {
+    if (
+      updateVenueDto.leagueSeasonId &&
+      updateVenueDto.leagueSeasonId !== venue.league_season_id
+    ) {
+      await this.assertLeagueSeasonBelongsToOrganization(
+        organizationId,
+        updateVenueDto.leagueSeasonId,
+      );
+    }
+
+    if (
+      (updateVenueDto.slug && updateVenueDto.slug !== venue.slug) ||
+      targetLeagueSeasonId !== venue.league_season_id
+    ) {
       await this.ensureSlugAvailable(
-        venue.league_season_id,
-        updateVenueDto.slug,
+        targetLeagueSeasonId,
+        updateVenueDto.slug ?? venue.slug,
       );
     }
 
     return this.db
       .updateTable('admin.venues')
       .set({
+        league_season_id: updateVenueDto.leagueSeasonId,
         name: updateVenueDto.name,
         slug: updateVenueDto.slug,
         status: updateVenueDto.status,

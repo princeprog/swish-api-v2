@@ -63,6 +63,28 @@ export class OrganizationService {
     return organization;
   }
 
+  findAll(userId: string) {
+    return this.db
+      .selectFrom('admin.organizations as organizations')
+      .innerJoin(
+        'admin.organization_members as organization_members',
+        'organization_members.organization_id',
+        'organizations.id',
+      )
+      .select([
+        'organizations.created_at',
+        'organizations.id',
+        'organizations.name',
+        'organizations.slug',
+        'organizations.status',
+        'organizations.updated_at',
+      ])
+      .where('organization_members.user_id', '=', userId)
+      .where('organization_members.status', '=', 'active')
+      .orderBy('organizations.created_at asc')
+      .execute();
+  }
+
   async update(
     organizationId: string,
     updateOrganizationDto: UpdateOrganizationDto,
@@ -93,5 +115,16 @@ export class OrganizationService {
       .where('id', '=', organizationId)
       .returningAll()
       .executeTakeFirstOrThrow();
+  }
+
+  async remove(organizationId: string) {
+    await this.findOne(organizationId);
+
+    await this.db
+      .deleteFrom('admin.organizations')
+      .where('id', '=', organizationId)
+      .execute();
+
+    return { success: true };
   }
 }

@@ -1,4 +1,14 @@
-import { PartialType } from '@nestjs/mapped-types';
-import { CreateOrganizationMemberDto } from './create-organization-member.dto';
+import { IsIn, IsOptional, IsString } from 'class-validator';
+import { AUTH_ROLES } from '../../../common/auth/roles';
 
-export class UpdateOrganizationMemberDto extends PartialType(CreateOrganizationMemberDto) {}
+export class UpdateOrganizationMemberDto {
+  @IsOptional()
+  @IsString()
+  @IsIn(Object.values(AUTH_ROLES))
+  role?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['active', 'inactive'])
+  status?: string;
+}

@@ -90,17 +90,33 @@ export class DivisionService {
     updateDivisionDto: UpdateDivisionDto,
   ) {
     const division = await this.findOne(organizationId, divisionId);
+    const targetLeagueSeasonId =
+      updateDivisionDto.leagueSeasonId ?? division.league_season_id;
 
-    if (updateDivisionDto.slug && updateDivisionDto.slug !== division.slug) {
+    if (
+      updateDivisionDto.leagueSeasonId &&
+      updateDivisionDto.leagueSeasonId !== division.league_season_id
+    ) {
+      await this.assertLeagueSeasonBelongsToOrganization(
+        organizationId,
+        updateDivisionDto.leagueSeasonId,
+      );
+    }
+
+    if (
+      (updateDivisionDto.slug && updateDivisionDto.slug !== division.slug) ||
+      targetLeagueSeasonId !== division.league_season_id
+    ) {
       await this.ensureSlugAvailable(
-        division.league_season_id,
-        updateDivisionDto.slug,
+        targetLeagueSeasonId,
+        updateDivisionDto.slug ?? division.slug,
       );
     }
 
     return this.db
       .updateTable('admin.divisions')
       .set({
+        league_season_id: updateDivisionDto.leagueSeasonId,
         name: updateDivisionDto.name,
         slug: updateDivisionDto.slug,
         status: updateDivisionDto.status,

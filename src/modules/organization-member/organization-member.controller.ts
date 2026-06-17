@@ -1,34 +1,71 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
+import { AUTH_ROLES } from '../../common/auth/roles';
+import { OrganizationRoles } from '../../common/decorators/organization-roles.decorator';
+import { OrganizationRolesGuard } from '../../common/guards/organization-roles.guard';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { OrganizationMemberService } from './organization-member.service';
 import { CreateOrganizationMemberDto } from './dto/create-organization-member.dto';
 import { UpdateOrganizationMemberDto } from './dto/update-organization-member.dto';
 
-@Controller('organization-member')
+@Controller('organizations/:organizationId/members')
+@UseGuards(JwtAuthGuard, OrganizationRolesGuard)
+@OrganizationRoles(AUTH_ROLES.OWNER, AUTH_ROLES.ADMIN)
 export class OrganizationMemberController {
-  constructor(private readonly organizationMemberService: OrganizationMemberService) {}
+  constructor(
+    private readonly organizationMemberService: OrganizationMemberService,
+  ) {}
 
   @Post()
-  create(@Body() createOrganizationMemberDto: CreateOrganizationMemberDto) {
-    return this.organizationMemberService.create(createOrganizationMemberDto);
+  create(
+    @Param('organizationId') organizationId: string,
+    @Body() createOrganizationMemberDto: CreateOrganizationMemberDto,
+  ) {
+    return this.organizationMemberService.create(
+      organizationId,
+      createOrganizationMemberDto,
+    );
   }
 
   @Get()
-  findAll() {
-    return this.organizationMemberService.findAll();
+  findAll(@Param('organizationId') organizationId: string) {
+    return this.organizationMemberService.findAll(organizationId);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.organizationMemberService.findOne(+id);
+  @Get(':memberId')
+  findOne(
+    @Param('organizationId') organizationId: string,
+    @Param('memberId') memberId: string,
+  ) {
+    return this.organizationMemberService.findOne(organizationId, memberId);
   }
 
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updateOrganizationMemberDto: UpdateOrganizationMemberDto) {
-    return this.organizationMemberService.update(+id, updateOrganizationMemberDto);
+  @Patch(':memberId')
+  update(
+    @Param('organizationId') organizationId: string,
+    @Param('memberId') memberId: string,
+    @Body() updateOrganizationMemberDto: UpdateOrganizationMemberDto,
+  ) {
+    return this.organizationMemberService.update(
+      organizationId,
+      memberId,
+      updateOrganizationMemberDto,
+    );
   }
 
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.organizationMemberService.remove(+id);
+  @Delete(':memberId')
+  remove(
+    @Param('organizationId') organizationId: string,
+    @Param('memberId') memberId: string,
+  ) {
+    return this.organizationMemberService.remove(organizationId, memberId);
   }
 }

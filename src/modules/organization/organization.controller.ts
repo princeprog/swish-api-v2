@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -30,6 +31,11 @@ export class OrganizationController {
     return this.organizationService.create(createOrganizationDto, user.id);
   }
 
+  @Get()
+  findAll(@CurrentUser() user: AuthUser) {
+    return this.organizationService.findAll(user.id);
+  }
+
   @Get(':organizationId')
   @UseGuards(OrganizationRolesGuard)
   @OrganizationRoles(AUTH_ROLES.OWNER, AUTH_ROLES.ADMIN)
@@ -45,5 +51,12 @@ export class OrganizationController {
     @Body() updateOrganizationDto: UpdateOrganizationDto,
   ) {
     return this.organizationService.update(organizationId, updateOrganizationDto);
+  }
+
+  @Delete(':organizationId')
+  @UseGuards(OrganizationRolesGuard)
+  @OrganizationRoles(AUTH_ROLES.OWNER)
+  remove(@Param('organizationId') organizationId: string) {
+    return this.organizationService.remove(organizationId);
   }
 }

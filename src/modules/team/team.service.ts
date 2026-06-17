@@ -92,15 +92,33 @@ export class TeamService {
     updateTeamDto: UpdateTeamDto,
   ) {
     const team = await this.findOne(organizationId, teamId);
+    const targetDivisionId = updateTeamDto.divisionId ?? team.division_id;
 
-    if (updateTeamDto.slug && updateTeamDto.slug !== team.slug) {
-      await this.ensureSlugAvailable(team.division_id, updateTeamDto.slug);
+    if (
+      updateTeamDto.divisionId &&
+      updateTeamDto.divisionId !== team.division_id
+    ) {
+      await this.assertDivisionBelongsToOrganization(
+        organizationId,
+        updateTeamDto.divisionId,
+      );
+    }
+
+    if (
+      (updateTeamDto.slug && updateTeamDto.slug !== team.slug) ||
+      targetDivisionId !== team.division_id
+    ) {
+      await this.ensureSlugAvailable(
+        targetDivisionId,
+        updateTeamDto.slug ?? team.slug,
+      );
     }
 
     return this.db
       .updateTable('admin.teams')
       .set({
-        color: updateTeamDto.color ?? null,
+        color: updateTeamDto.color ?? team.color,
+        division_id: updateTeamDto.divisionId,
         name: updateTeamDto.name,
         slug: updateTeamDto.slug,
         status: updateTeamDto.status,
