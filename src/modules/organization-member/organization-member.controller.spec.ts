@@ -2,10 +2,12 @@ import { OrganizationMemberController } from './organization-member.controller';
 import type { OrganizationMemberService } from './organization-member.service';
 
 const membership = {
+  created_at: new Date('2026-06-17T00:00:00.000Z'),
   id: 'member-1',
   organization_id: 'org-1',
   role: 'admin',
   status: 'active',
+  updated_at: new Date('2026-06-17T00:00:00.000Z'),
   user_id: 'user-2',
 };
 

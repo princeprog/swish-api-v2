@@ -2,10 +2,12 @@ import { OrganizationController } from './organization.controller';
 import type { OrganizationService } from './organization.service';
 
 const organization = {
+  created_at: new Date('2026-06-17T00:00:00.000Z'),
   id: 'org-1',
   name: 'Swish League',
   slug: 'swish-league',
   status: 'active',
+  updated_at: new Date('2026-06-17T00:00:00.000Z'),
 };
 
 function createController() {

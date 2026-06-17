@@ -1,5 +1,6 @@
 import type { Response } from 'express';
 import { AuthController } from './auth.controller';
+import type { CookieRequest } from './auth.request';
 import type { AuthService } from './auth.service';
 
 const user = {
@@ -28,6 +29,14 @@ function createAuthController() {
     authService,
     controller: new AuthController(authService),
   };
+}
+
+function createCookieRequest(token: string): CookieRequest {
+  return {
+    cookies: {
+      swish_refresh_token: token,
+    },
+  } as unknown as CookieRequest;
 }
 
 describe('AuthController', () => {
@@ -73,14 +82,7 @@ describe('AuthController', () => {
     authService.logout.mockResolvedValue(undefined);
 
     await expect(
-      controller.logout(
-        {
-          cookies: {
-            swish_refresh_token: 'refresh-token',
-          },
-        },
-        response,
-      ),
+      controller.logout(createCookieRequest('refresh-token'), response),
     ).resolves.toEqual({ success: true });
     expect(authService.logout).toHaveBeenCalledWith('refresh-token');
     expect(response.clearCookie).toHaveBeenCalledWith(
@@ -104,14 +106,7 @@ describe('AuthController', () => {
     });
 
     await expect(
-      controller.refresh(
-        {
-          cookies: {
-            swish_refresh_token: 'old-refresh-token',
-          },
-        },
-        response,
-      ),
+      controller.refresh(createCookieRequest('old-refresh-token'), response),
     ).resolves.toEqual({
       accessToken: 'new-access-token',
       user,
