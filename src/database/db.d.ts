@@ -61,6 +61,33 @@ export interface AdminPlayers {
   updated_at: Generated<Timestamp>;
 }
 
+export interface AdminScheduleGames {
+  away_team_color: string | null;
+  away_team_id: string | null;
+  away_team_name: string | null;
+  away_team_slug: string | null;
+  created_at: Timestamp | null;
+  division_id: string | null;
+  division_name: string | null;
+  division_slug: string | null;
+  home_team_color: string | null;
+  home_team_id: string | null;
+  home_team_name: string | null;
+  home_team_slug: string | null;
+  id: string | null;
+  league_season_id: string | null;
+  league_season_name: string | null;
+  league_season_slug: string | null;
+  organization_id: string | null;
+  published_at: Timestamp | null;
+  starts_at: Timestamp | null;
+  status: string | null;
+  updated_at: Timestamp | null;
+  venue_id: string | null;
+  venue_name: string | null;
+  venue_slug: string | null;
+}
+
 export interface AdminTeams {
   color: string | null;
   created_at: Generated<Timestamp>;
@@ -131,6 +158,20 @@ export interface AuthUsers {
   updated_at: Generated<Timestamp>;
 }
 
+export interface CompetitionGames {
+  away_team_id: string;
+  created_at: Generated<Timestamp>;
+  division_id: string;
+  home_team_id: string;
+  id: Generated<string>;
+  league_season_id: string;
+  published_at: Timestamp | null;
+  starts_at: Timestamp;
+  status: Generated<string>;
+  updated_at: Generated<Timestamp>;
+  venue_id: string;
+}
+
 export interface PublicPortalLeagueShells {
   division_id: string | null;
   division_name: string | null;
@@ -165,6 +206,7 @@ export interface DB {
   "admin.organization_members": AdminOrganizationMembers;
   "admin.organizations": AdminOrganizations;
   "admin.players": AdminPlayers;
+  "admin.schedule_games": AdminScheduleGames;
   "admin.teams": AdminTeams;
   "admin.venues": AdminVenues;
   "auth.auth_accounts": AuthAuthAccounts;
@@ -172,6 +214,7 @@ export interface DB {
   "auth.password_credentials": AuthPasswordCredentials;
   "auth.refresh_tokens": AuthRefreshTokens;
   "auth.users": AuthUsers;
+  "competition.games": CompetitionGames;
   "public_portal.league_shells": PublicPortalLeagueShells;
   "public_portal.organizations": PublicPortalOrganizations;
 }
