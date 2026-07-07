@@ -4,8 +4,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import {
+  createPaginatedResponse,
+  normalizePagination,
+} from '../../common/pagination/pagination.types';
 import { DATABASE, type Database } from '../../database/database.tokens';
 import { CreatePlayerDto } from './dto/create-player.dto';
+import type { PlayerListQueryDto } from './dto/player-list-query.dto';
 import { UpdatePlayerDto } from './dto/update-player.dto';
 
 @Injectable()
@@ -34,8 +39,20 @@ export class PlayerService {
       .executeTakeFirstOrThrow();
   }
 
-  findAll(organizationId: string) {
-    return this.db
+  async findAll(organizationId: string, query: PlayerListQueryDto) {
+    const pagination = normalizePagination(query);
+    let countQuery = this.db
+      .selectFrom('admin.players as players')
+      .innerJoin('admin.teams as teams', 'teams.id', 'players.team_id')
+      .innerJoin('admin.divisions as divisions', 'divisions.id', 'teams.division_id')
+      .innerJoin(
+        'admin.league_seasons as league_seasons',
+        'league_seasons.id',
+        'divisions.league_season_id',
+      )
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('league_seasons.organization_id', '=', organizationId);
+    let dataQuery = this.db
       .selectFrom('admin.players as players')
       .innerJoin('admin.teams as teams', 'teams.id', 'players.team_id')
       .innerJoin('admin.divisions as divisions', 'divisions.id', 'teams.division_id')
@@ -53,9 +70,56 @@ export class PlayerService {
         'players.team_id',
         'players.updated_at',
       ])
-      .where('league_seasons.organization_id', '=', organizationId)
-      .orderBy('players.created_at asc')
-      .execute();
+      .where('league_seasons.organization_id', '=', organizationId);
+
+    if (query.search) {
+      const search = `%${query.search}%`;
+      countQuery = countQuery.where((eb) =>
+        eb.or([
+          eb('players.name', 'ilike', search),
+          eb('players.jersey_number', 'ilike', search),
+        ]),
+      );
+      dataQuery = dataQuery.where((eb) =>
+        eb.or([
+          eb('players.name', 'ilike', search),
+          eb('players.jersey_number', 'ilike', search),
+        ]),
+      );
+    }
+
+    if (query.teamId) {
+      countQuery = countQuery.where('players.team_id', '=', query.teamId);
+      dataQuery = dataQuery.where('players.team_id', '=', query.teamId);
+    }
+
+    if (query.divisionId) {
+      countQuery = countQuery.where('teams.division_id', '=', query.divisionId);
+      dataQuery = dataQuery.where('teams.division_id', '=', query.divisionId);
+    }
+
+    if (query.status) {
+      countQuery = countQuery.where('players.status', '=', query.status);
+      dataQuery = dataQuery.where('players.status', '=', query.status);
+    }
+
+    if (query.sortBy === 'name') {
+      dataQuery = dataQuery.orderBy('players.name asc');
+    } else if (query.sortBy === 'team') {
+      dataQuery = dataQuery.orderBy('teams.name asc').orderBy('players.name asc');
+    } else {
+      dataQuery = dataQuery.orderBy('players.updated_at desc');
+    }
+
+    const [total, data] = await Promise.all([
+      countQuery.executeTakeFirstOrThrow(),
+      dataQuery
+        .limit(pagination.limit)
+        .offset(pagination.offset)
+        .execute(),
+    ]);
+
+    return createPaginatedResponse(data, Number(total.count), pagination);
   }
 
   async findOne(organizationId: string, playerId: string) {

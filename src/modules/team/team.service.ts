@@ -4,8 +4,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import {
+  createPaginatedResponse,
+  normalizePagination,
+} from '../../common/pagination/pagination.types';
 import { DATABASE, type Database } from '../../database/database.tokens';
 import { CreateTeamDto } from './dto/create-team.dto';
+import type { TeamListQueryDto } from './dto/team-list-query.dto';
 import { UpdateTeamDto } from './dto/update-team.dto';
 
 @Injectable()
@@ -32,8 +37,19 @@ export class TeamService {
       .executeTakeFirstOrThrow();
   }
 
-  findAll(organizationId: string) {
-    return this.db
+  async findAll(organizationId: string, query: TeamListQueryDto) {
+    const pagination = normalizePagination(query);
+    let countQuery = this.db
+      .selectFrom('admin.teams as teams')
+      .innerJoin('admin.divisions as divisions', 'divisions.id', 'teams.division_id')
+      .innerJoin(
+        'admin.league_seasons as league_seasons',
+        'league_seasons.id',
+        'divisions.league_season_id',
+      )
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('league_seasons.organization_id', '=', organizationId);
+    let dataQuery = this.db
       .selectFrom('admin.teams as teams')
       .innerJoin('admin.divisions as divisions', 'divisions.id', 'teams.division_id')
       .innerJoin(
@@ -51,9 +67,51 @@ export class TeamService {
         'teams.status',
         'teams.updated_at',
       ])
-      .where('league_seasons.organization_id', '=', organizationId)
-      .orderBy('teams.created_at asc')
-      .execute();
+      .where('league_seasons.organization_id', '=', organizationId);
+
+    if (query.search) {
+      const search = `%${query.search}%`;
+      countQuery = countQuery.where((eb) =>
+        eb.or([
+          eb('teams.name', 'ilike', search),
+          eb('teams.slug', 'ilike', search),
+        ]),
+      );
+      dataQuery = dataQuery.where((eb) =>
+        eb.or([
+          eb('teams.name', 'ilike', search),
+          eb('teams.slug', 'ilike', search),
+        ]),
+      );
+    }
+
+    if (query.divisionId) {
+      countQuery = countQuery.where('teams.division_id', '=', query.divisionId);
+      dataQuery = dataQuery.where('teams.division_id', '=', query.divisionId);
+    }
+
+    if (query.status) {
+      countQuery = countQuery.where('teams.status', '=', query.status);
+      dataQuery = dataQuery.where('teams.status', '=', query.status);
+    }
+
+    if (query.sortBy === 'name') {
+      dataQuery = dataQuery.orderBy('teams.name asc');
+    } else if (query.sortBy === 'division') {
+      dataQuery = dataQuery.orderBy('divisions.name asc').orderBy('teams.name asc');
+    } else {
+      dataQuery = dataQuery.orderBy('teams.updated_at desc');
+    }
+
+    const [total, data] = await Promise.all([
+      countQuery.executeTakeFirstOrThrow(),
+      dataQuery
+        .limit(pagination.limit)
+        .offset(pagination.offset)
+        .execute(),
+    ]);
+
+    return createPaginatedResponse(data, Number(total.count), pagination);
   }
 
   async findOne(organizationId: string, teamId: string) {

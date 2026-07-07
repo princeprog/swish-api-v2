@@ -4,6 +4,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import {
+  createPaginatedResponse,
+  normalizePagination,
+} from '../../common/pagination/pagination.types';
+import type { PaginationQueryDto } from '../../common/pagination/pagination.dto';
 import { DATABASE, type Database } from '../../database/database.tokens';
 import { CreateLeagueSeasonDto } from './dto/create-league-season.dto';
 import { UpdateLeagueSeasonDto } from './dto/update-league-season.dto';
@@ -32,13 +37,23 @@ export class LeagueSeasonService {
       .executeTakeFirstOrThrow();
   }
 
-  findAll(organizationId: string) {
-    return this.db
+  async findAll(organizationId: string, query: PaginationQueryDto) {
+    const pagination = normalizePagination(query);
+    const total = await this.db
+      .selectFrom('admin.league_seasons')
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('organization_id', '=', organizationId)
+      .executeTakeFirstOrThrow();
+    const data = await this.db
       .selectFrom('admin.league_seasons')
       .selectAll()
       .where('organization_id', '=', organizationId)
       .orderBy('created_at asc')
+      .limit(pagination.limit)
+      .offset(pagination.offset)
       .execute();
+
+    return createPaginatedResponse(data, Number(total.count), pagination);
   }
 
   async findOne(organizationId: string, leagueSeasonId: string) {

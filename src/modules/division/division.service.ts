@@ -4,6 +4,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import type { PaginationQueryDto } from '../../common/pagination/pagination.dto';
+import {
+  createPaginatedResponse,
+  normalizePagination,
+} from '../../common/pagination/pagination.types';
 import { DATABASE, type Database } from '../../database/database.tokens';
 import { CreateDivisionDto } from './dto/create-division.dto';
 import { UpdateDivisionDto } from './dto/update-division.dto';
@@ -34,8 +39,19 @@ export class DivisionService {
       .executeTakeFirstOrThrow();
   }
 
-  findAll(organizationId: string) {
-    return this.db
+  async findAll(organizationId: string, query: PaginationQueryDto) {
+    const pagination = normalizePagination(query);
+    const total = await this.db
+      .selectFrom('admin.divisions as divisions')
+      .innerJoin(
+        'admin.league_seasons as league_seasons',
+        'league_seasons.id',
+        'divisions.league_season_id',
+      )
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('league_seasons.organization_id', '=', organizationId)
+      .executeTakeFirstOrThrow();
+    const data = await this.db
       .selectFrom('admin.divisions as divisions')
       .innerJoin(
         'admin.league_seasons as league_seasons',
@@ -53,7 +69,11 @@ export class DivisionService {
       ])
       .where('league_seasons.organization_id', '=', organizationId)
       .orderBy('divisions.created_at asc')
+      .limit(pagination.limit)
+      .offset(pagination.offset)
       .execute();
+
+    return createPaginatedResponse(data, Number(total.count), pagination);
   }
 
   async findOne(organizationId: string, divisionId: string) {

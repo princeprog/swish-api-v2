@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { AUTH_ROLES } from '../../common/auth/roles';
@@ -13,6 +14,7 @@ import { OrganizationRoles } from '../../common/decorators/organization-roles.de
 import { OrganizationRolesGuard } from '../../common/guards/organization-roles.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreatePlayerDto } from './dto/create-player.dto';
+import { PlayerListQueryDto } from './dto/player-list-query.dto';
 import { UpdatePlayerDto } from './dto/update-player.dto';
 import { PlayerService } from './player.service';
 
@@ -31,8 +33,11 @@ export class PlayerController {
   }
 
   @Get()
-  findAll(@Param('organizationId') organizationId: string) {
-    return this.playerService.findAll(organizationId);
+  findAll(
+    @Param('organizationId') organizationId: string,
+    @Query() query: PlayerListQueryDto,
+  ) {
+    return this.playerService.findAll(organizationId, query);
   }
 
   @Get(':playerId')

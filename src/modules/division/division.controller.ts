@@ -6,11 +6,13 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { AUTH_ROLES } from '../../common/auth/roles';
 import { OrganizationRoles } from '../../common/decorators/organization-roles.decorator';
 import { OrganizationRolesGuard } from '../../common/guards/organization-roles.guard';
+import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateDivisionDto } from './dto/create-division.dto';
 import { UpdateDivisionDto } from './dto/update-division.dto';
@@ -31,8 +33,11 @@ export class DivisionController {
   }
 
   @Get()
-  findAll(@Param('organizationId') organizationId: string) {
-    return this.divisionService.findAll(organizationId);
+  findAll(
+    @Param('organizationId') organizationId: string,
+    @Query() query: PaginationQueryDto,
+  ) {
+    return this.divisionService.findAll(organizationId, query);
   }
 
   @Get(':divisionId')

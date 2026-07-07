@@ -6,11 +6,13 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { AUTH_ROLES } from '../../common/auth/roles';
 import { OrganizationRoles } from '../../common/decorators/organization-roles.decorator';
 import { OrganizationRolesGuard } from '../../common/guards/organization-roles.guard';
+import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateVenueDto } from './dto/create-venue.dto';
 import { UpdateVenueDto } from './dto/update-venue.dto';
@@ -31,8 +33,11 @@ export class VenueController {
   }
 
   @Get()
-  findAll(@Param('organizationId') organizationId: string) {
-    return this.venueService.findAll(organizationId);
+  findAll(
+    @Param('organizationId') organizationId: string,
+    @Query() query: PaginationQueryDto,
+  ) {
+    return this.venueService.findAll(organizationId, query);
   }
 
   @Get(':venueId')

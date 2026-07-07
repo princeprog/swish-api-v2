@@ -6,11 +6,13 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { AUTH_ROLES } from '../../common/auth/roles';
 import { OrganizationRoles } from '../../common/decorators/organization-roles.decorator';
 import { OrganizationRolesGuard } from '../../common/guards/organization-roles.guard';
+import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateLeagueSeasonDto } from './dto/create-league-season.dto';
 import { UpdateLeagueSeasonDto } from './dto/update-league-season.dto';
@@ -34,8 +36,11 @@ export class LeagueSeasonController {
   }
 
   @Get()
-  findAll(@Param('organizationId') organizationId: string) {
-    return this.leagueSeasonService.findAll(organizationId);
+  findAll(
+    @Param('organizationId') organizationId: string,
+    @Query() query: PaginationQueryDto,
+  ) {
+    return this.leagueSeasonService.findAll(organizationId, query);
   }
 
   @Get(':leagueSeasonId')

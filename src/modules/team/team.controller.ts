@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { AUTH_ROLES } from '../../common/auth/roles';
@@ -13,6 +14,7 @@ import { OrganizationRoles } from '../../common/decorators/organization-roles.de
 import { OrganizationRolesGuard } from '../../common/guards/organization-roles.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateTeamDto } from './dto/create-team.dto';
+import { TeamListQueryDto } from './dto/team-list-query.dto';
 import { UpdateTeamDto } from './dto/update-team.dto';
 import { TeamService } from './team.service';
 
@@ -31,8 +33,11 @@ export class TeamController {
   }
 
   @Get()
-  findAll(@Param('organizationId') organizationId: string) {
-    return this.teamService.findAll(organizationId);
+  findAll(
+    @Param('organizationId') organizationId: string,
+    @Query() query: TeamListQueryDto,
+  ) {
+    return this.teamService.findAll(organizationId, query);
   }
 
   @Get(':teamId')
