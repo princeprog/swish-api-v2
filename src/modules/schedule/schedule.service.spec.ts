@@ -1,0 +1,76 @@
+import { BadRequestException } from '@nestjs/common';
+import { ScheduleService } from './schedule.service';
+
+function createDbMock() {
+  const executeTakeFirst = jest.fn().mockResolvedValue({
+    away_team_id: 'team-b',
+    created_at: new Date('2026-07-09T00:00:00.000Z'),
+    division_id: 'division-1',
+    home_team_id: 'team-a',
+    id: 'game-1',
+    league_season_id: 'season-1',
+    published_at: null,
+    starts_at: new Date('2026-07-09T10:00:00.000Z'),
+    status: 'scheduled',
+    updated_at: new Date('2026-07-09T00:00:00.000Z'),
+    venue_id: 'venue-1',
+  });
+  const selectChain = {
+    innerJoin: jest.fn().mockReturnThis(),
+    select: jest.fn().mockReturnThis(),
+    selectAll: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    executeTakeFirst,
+  };
+  const updateSet = jest.fn().mockReturnThis();
+  const updateExecuteTakeFirstOrThrow = jest.fn().mockResolvedValue({});
+  const updateChain = {
+    executeTakeFirstOrThrow: updateExecuteTakeFirstOrThrow,
+    set: updateSet,
+    where: jest.fn().mockReturnThis(),
+  };
+
+  return {
+    db: {
+      selectFrom: jest.fn().mockReturnValue(selectChain),
+      updateTable: jest.fn().mockReturnValue(updateChain),
+    },
+    executeTakeFirst,
+    updateExecuteTakeFirstOrThrow,
+    updateSet,
+  };
+}
+
+describe('ScheduleService final score updates', () => {
+  it('rejects final status without both scores', async () => {
+    const { db } = createDbMock();
+    const service = new ScheduleService(db as never);
+
+    await expect(
+      service.update('org-1', 'game-1', {
+        homeScore: 82,
+        status: 'final',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('sets finalized_at when final status has both scores', async () => {
+    const { db, updateSet } = createDbMock();
+    const service = new ScheduleService(db as never);
+
+    await service.update('org-1', 'game-1', {
+      awayScore: 79,
+      homeScore: 82,
+      status: 'final',
+    });
+
+    expect(updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        away_score: 79,
+        finalized_at: expect.any(Date),
+        home_score: 82,
+        status: 'final',
+      }),
+    );
+  });
+});

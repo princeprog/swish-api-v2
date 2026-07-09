@@ -70,9 +70,9 @@ describe('PublicController', () => {
     await expect(controller.getOrganization('swish-league')).resolves.toEqual(
       publicOrganization,
     );
-    await expect(controller.getOrganization('swish-league')).resolves.not.toHaveProperty(
-      'user_id',
-    );
+    await expect(
+      controller.getOrganization('swish-league'),
+    ).resolves.not.toHaveProperty('user_id');
     expect(publicService.getOrganization).toHaveBeenCalledWith('swish-league');
   });
 

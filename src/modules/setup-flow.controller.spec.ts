@@ -89,6 +89,7 @@ describe('Admin setup flow controllers', () => {
       id: 'player-1',
       jersey_number: '23',
       name: 'Jordan Cruz',
+      position: 'point_guard',
       status: 'active',
       team_id: 'team-1',
       updated_at: new Date('2026-06-17T00:00:00.000Z'),
@@ -143,6 +144,7 @@ describe('Admin setup flow controllers', () => {
       playerController.create('org-1', {
         jerseyNumber: '23',
         name: 'Jordan Cruz',
+        position: 'point_guard',
         teamId: 'team-1',
       }),
     ).resolves.toEqual(

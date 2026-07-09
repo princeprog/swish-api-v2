@@ -1,4 +1,11 @@
-import { IsIn, IsOptional, IsString, IsUUID, Length, Matches } from 'class-validator';
+import {
+  IsIn,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Length,
+  Matches,
+} from 'class-validator';
 
 export class CreateVenueDto {
   @IsUUID()

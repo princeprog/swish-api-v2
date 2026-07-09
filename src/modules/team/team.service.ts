@@ -22,7 +22,10 @@ export class TeamService {
       organizationId,
       createTeamDto.divisionId,
     );
-    await this.ensureSlugAvailable(createTeamDto.divisionId, createTeamDto.slug);
+    await this.ensureSlugAvailable(
+      createTeamDto.divisionId,
+      createTeamDto.slug,
+    );
 
     return this.db
       .insertInto('admin.teams')
@@ -41,7 +44,11 @@ export class TeamService {
     const pagination = normalizePagination(query);
     let countQuery = this.db
       .selectFrom('admin.teams as teams')
-      .innerJoin('admin.divisions as divisions', 'divisions.id', 'teams.division_id')
+      .innerJoin(
+        'admin.divisions as divisions',
+        'divisions.id',
+        'teams.division_id',
+      )
       .innerJoin(
         'admin.league_seasons as league_seasons',
         'league_seasons.id',
@@ -51,7 +58,11 @@ export class TeamService {
       .where('league_seasons.organization_id', '=', organizationId);
     let dataQuery = this.db
       .selectFrom('admin.teams as teams')
-      .innerJoin('admin.divisions as divisions', 'divisions.id', 'teams.division_id')
+      .innerJoin(
+        'admin.divisions as divisions',
+        'divisions.id',
+        'teams.division_id',
+      )
       .innerJoin(
         'admin.league_seasons as league_seasons',
         'league_seasons.id',
@@ -98,17 +109,16 @@ export class TeamService {
     if (query.sortBy === 'name') {
       dataQuery = dataQuery.orderBy('teams.name asc');
     } else if (query.sortBy === 'division') {
-      dataQuery = dataQuery.orderBy('divisions.name asc').orderBy('teams.name asc');
+      dataQuery = dataQuery
+        .orderBy('divisions.name asc')
+        .orderBy('teams.name asc');
     } else {
       dataQuery = dataQuery.orderBy('teams.updated_at desc');
     }
 
     const [total, data] = await Promise.all([
       countQuery.executeTakeFirstOrThrow(),
-      dataQuery
-        .limit(pagination.limit)
-        .offset(pagination.offset)
-        .execute(),
+      dataQuery.limit(pagination.limit).offset(pagination.offset).execute(),
     ]);
 
     return createPaginatedResponse(data, Number(total.count), pagination);
@@ -117,7 +127,11 @@ export class TeamService {
   async findOne(organizationId: string, teamId: string) {
     const team = await this.db
       .selectFrom('admin.teams as teams')
-      .innerJoin('admin.divisions as divisions', 'divisions.id', 'teams.division_id')
+      .innerJoin(
+        'admin.divisions as divisions',
+        'divisions.id',
+        'teams.division_id',
+      )
       .innerJoin(
         'admin.league_seasons as league_seasons',
         'league_seasons.id',

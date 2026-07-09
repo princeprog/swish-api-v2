@@ -140,7 +140,9 @@ export class OrganizationMemberService {
     }
   }
 
-  private async assertOrganizationExists(organizationId: string): Promise<void> {
+  private async assertOrganizationExists(
+    organizationId: string,
+  ): Promise<void> {
     const organization = await this.db
       .selectFrom('admin.organizations')
       .select(['id'])

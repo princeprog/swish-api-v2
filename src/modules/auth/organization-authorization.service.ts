@@ -1,8 +1,5 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import type {
-  AuthRole,
-  OrganizationMembership,
-} from '../../common/auth/roles';
+import type { AuthRole, OrganizationMembership } from '../../common/auth/roles';
 import { AuthRepository } from './auth.repository';
 
 @Injectable()

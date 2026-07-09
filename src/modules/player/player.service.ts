@@ -32,6 +32,7 @@ export class PlayerService {
       .values({
         jersey_number: createPlayerDto.jerseyNumber,
         name: createPlayerDto.name,
+        position: createPlayerDto.position,
         status: createPlayerDto.status ?? 'active',
         team_id: createPlayerDto.teamId,
       })
@@ -44,7 +45,11 @@ export class PlayerService {
     let countQuery = this.db
       .selectFrom('admin.players as players')
       .innerJoin('admin.teams as teams', 'teams.id', 'players.team_id')
-      .innerJoin('admin.divisions as divisions', 'divisions.id', 'teams.division_id')
+      .innerJoin(
+        'admin.divisions as divisions',
+        'divisions.id',
+        'teams.division_id',
+      )
       .innerJoin(
         'admin.league_seasons as league_seasons',
         'league_seasons.id',
@@ -55,7 +60,11 @@ export class PlayerService {
     let dataQuery = this.db
       .selectFrom('admin.players as players')
       .innerJoin('admin.teams as teams', 'teams.id', 'players.team_id')
-      .innerJoin('admin.divisions as divisions', 'divisions.id', 'teams.division_id')
+      .innerJoin(
+        'admin.divisions as divisions',
+        'divisions.id',
+        'teams.division_id',
+      )
       .innerJoin(
         'admin.league_seasons as league_seasons',
         'league_seasons.id',
@@ -66,6 +75,7 @@ export class PlayerService {
         'players.id',
         'players.jersey_number',
         'players.name',
+        'players.position',
         'players.status',
         'players.team_id',
         'players.updated_at',
@@ -78,12 +88,14 @@ export class PlayerService {
         eb.or([
           eb('players.name', 'ilike', search),
           eb('players.jersey_number', 'ilike', search),
+          eb('players.position', 'ilike', search),
         ]),
       );
       dataQuery = dataQuery.where((eb) =>
         eb.or([
           eb('players.name', 'ilike', search),
           eb('players.jersey_number', 'ilike', search),
+          eb('players.position', 'ilike', search),
         ]),
       );
     }
@@ -106,17 +118,16 @@ export class PlayerService {
     if (query.sortBy === 'name') {
       dataQuery = dataQuery.orderBy('players.name asc');
     } else if (query.sortBy === 'team') {
-      dataQuery = dataQuery.orderBy('teams.name asc').orderBy('players.name asc');
+      dataQuery = dataQuery
+        .orderBy('teams.name asc')
+        .orderBy('players.name asc');
     } else {
       dataQuery = dataQuery.orderBy('players.updated_at desc');
     }
 
     const [total, data] = await Promise.all([
       countQuery.executeTakeFirstOrThrow(),
-      dataQuery
-        .limit(pagination.limit)
-        .offset(pagination.offset)
-        .execute(),
+      dataQuery.limit(pagination.limit).offset(pagination.offset).execute(),
     ]);
 
     return createPaginatedResponse(data, Number(total.count), pagination);
@@ -126,7 +137,11 @@ export class PlayerService {
     const player = await this.db
       .selectFrom('admin.players as players')
       .innerJoin('admin.teams as teams', 'teams.id', 'players.team_id')
-      .innerJoin('admin.divisions as divisions', 'divisions.id', 'teams.division_id')
+      .innerJoin(
+        'admin.divisions as divisions',
+        'divisions.id',
+        'teams.division_id',
+      )
       .innerJoin(
         'admin.league_seasons as league_seasons',
         'league_seasons.id',
@@ -137,6 +152,7 @@ export class PlayerService {
         'players.id',
         'players.jersey_number',
         'players.name',
+        'players.position',
         'players.status',
         'players.team_id',
         'players.updated_at',
@@ -183,6 +199,7 @@ export class PlayerService {
       .set({
         jersey_number: updatePlayerDto.jerseyNumber,
         name: updatePlayerDto.name,
+        position: updatePlayerDto.position,
         status: updatePlayerDto.status,
         team_id: updatePlayerDto.teamId,
         updated_at: new Date(),
@@ -195,7 +212,10 @@ export class PlayerService {
   async remove(organizationId: string, playerId: string) {
     await this.findOne(organizationId, playerId);
 
-    await this.db.deleteFrom('admin.players').where('id', '=', playerId).execute();
+    await this.db
+      .deleteFrom('admin.players')
+      .where('id', '=', playerId)
+      .execute();
 
     return { success: true };
   }
@@ -206,7 +226,11 @@ export class PlayerService {
   ): Promise<void> {
     const team = await this.db
       .selectFrom('admin.teams as teams')
-      .innerJoin('admin.divisions as divisions', 'divisions.id', 'teams.division_id')
+      .innerJoin(
+        'admin.divisions as divisions',
+        'divisions.id',
+        'teams.division_id',
+      )
       .innerJoin(
         'admin.league_seasons as league_seasons',
         'league_seasons.id',

@@ -12,6 +12,7 @@ import { OrganizationMemberModule } from './modules/organization-member/organiza
 import { PlayerModule } from './modules/player/player.module';
 import { PublicModule } from './modules/public/public.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
+import { StandingsModule } from './modules/standings/standings.module';
 import { TeamModule } from './modules/team/team.module';
 import { VenueModule } from './modules/venue/venue.module';
 
@@ -23,6 +24,7 @@ import { VenueModule } from './modules/venue/venue.module';
     AuthModule,
     PublicModule,
     ScheduleModule,
+    StandingsModule,
     OrganizationModule,
     OrganizationMemberModule,
     LeagueSeasonModule,

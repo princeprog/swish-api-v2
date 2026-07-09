@@ -1,6 +1,8 @@
 import {
   IsDateString,
   IsIn,
+  IsInt,
+  Min,
   IsOptional,
   IsString,
   IsUUID,
@@ -24,6 +26,16 @@ export class CreateScheduleDto {
 
   @IsDateString()
   startsAt!: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  homeScore?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  awayScore?: number;
 
   @IsOptional()
   @IsString()

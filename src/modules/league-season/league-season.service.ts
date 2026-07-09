@@ -82,7 +82,10 @@ export class LeagueSeasonService {
       updateLeagueSeasonDto.slug &&
       updateLeagueSeasonDto.slug !== leagueSeason.slug
     ) {
-      await this.ensureSlugAvailable(organizationId, updateLeagueSeasonDto.slug);
+      await this.ensureSlugAvailable(
+        organizationId,
+        updateLeagueSeasonDto.slug,
+      );
     }
 
     return this.db
@@ -112,7 +115,9 @@ export class LeagueSeasonService {
     return { success: true };
   }
 
-  private async assertOrganizationExists(organizationId: string): Promise<void> {
+  private async assertOrganizationExists(
+    organizationId: string,
+  ): Promise<void> {
     const organization = await this.db
       .selectFrom('admin.organizations')
       .select(['id'])

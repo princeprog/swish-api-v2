@@ -150,7 +150,10 @@ export class VenueService {
   async remove(organizationId: string, venueId: string) {
     await this.findOne(organizationId, venueId);
 
-    await this.db.deleteFrom('admin.venues').where('id', '=', venueId).execute();
+    await this.db
+      .deleteFrom('admin.venues')
+      .where('id', '=', venueId)
+      .execute();
 
     return { success: true };
   }

@@ -49,7 +49,11 @@ export class ScheduleController {
     @Param('gameId') gameId: string,
     @Body() updateScheduleDto: UpdateScheduleDto,
   ) {
-    return this.scheduleService.update(organizationId, gameId, updateScheduleDto);
+    return this.scheduleService.update(
+      organizationId,
+      gameId,
+      updateScheduleDto,
+    );
   }
 
   @Delete(':gameId')

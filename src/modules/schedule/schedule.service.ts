@@ -9,9 +9,12 @@ import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
 
 type ScheduleGameRecord = {
+  away_score: number | null;
   away_team_id: string;
   created_at: Date;
   division_id: string;
+  finalized_at: Date | null;
+  home_score: number | null;
   home_team_id: string;
   id: string;
   league_season_id: string;
@@ -44,7 +47,10 @@ export class ScheduleService {
       .insertInto('competition.games')
       .values({
         away_team_id: createScheduleDto.awayTeamId,
+        away_score: createScheduleDto.awayScore,
         division_id: createScheduleDto.divisionId,
+        finalized_at: this.resolveCreatedFinalizedAt(createScheduleDto),
+        home_score: createScheduleDto.homeScore,
         home_team_id: createScheduleDto.homeTeamId,
         league_season_id: createScheduleDto.leagueSeasonId,
         published_at:
@@ -91,7 +97,8 @@ export class ScheduleService {
     const existingGame = await this.findGameRecord(organizationId, gameId);
     const nextLeagueSeasonId =
       updateScheduleDto.leagueSeasonId ?? existingGame.league_season_id;
-    const nextDivisionId = updateScheduleDto.divisionId ?? existingGame.division_id;
+    const nextDivisionId =
+      updateScheduleDto.divisionId ?? existingGame.division_id;
     const nextVenueId = updateScheduleDto.venueId ?? existingGame.venue_id;
     const nextHomeTeamId =
       updateScheduleDto.homeTeamId ?? existingGame.home_team_id;
@@ -99,6 +106,7 @@ export class ScheduleService {
       updateScheduleDto.awayTeamId ?? existingGame.away_team_id;
 
     this.assertDistinctTeams(nextHomeTeamId, nextAwayTeamId);
+    this.assertFinalScoreState(existingGame, updateScheduleDto);
 
     await this.assertScheduleRelations(organizationId, {
       awayTeamId: nextAwayTeamId,
@@ -112,7 +120,10 @@ export class ScheduleService {
       .updateTable('competition.games')
       .set({
         away_team_id: updateScheduleDto.awayTeamId,
+        away_score: updateScheduleDto.awayScore,
         division_id: updateScheduleDto.divisionId,
+        finalized_at: this.resolveFinalizedAt(existingGame, updateScheduleDto),
+        home_score: updateScheduleDto.homeScore,
         home_team_id: updateScheduleDto.homeTeamId,
         league_season_id: updateScheduleDto.leagueSeasonId,
         published_at: this.resolvePublishedAt(existingGame, updateScheduleDto),
@@ -132,7 +143,10 @@ export class ScheduleService {
   async remove(organizationId: string, gameId: string) {
     await this.findGameRecord(organizationId, gameId);
 
-    await this.db.deleteFrom('competition.games').where('id', '=', gameId).execute();
+    await this.db
+      .deleteFrom('competition.games')
+      .where('id', '=', gameId)
+      .execute();
 
     return { success: true };
   }
@@ -165,8 +179,14 @@ export class ScheduleService {
       params.venueId,
       params.leagueSeasonId,
     );
-    await this.assertTeamBelongsToDivision(params.homeTeamId, params.divisionId);
-    await this.assertTeamBelongsToDivision(params.awayTeamId, params.divisionId);
+    await this.assertTeamBelongsToDivision(
+      params.homeTeamId,
+      params.divisionId,
+    );
+    await this.assertTeamBelongsToDivision(
+      params.awayTeamId,
+      params.divisionId,
+    );
   }
 
   private async assertLeagueSeasonBelongsToOrganization(
@@ -248,8 +268,11 @@ export class ScheduleService {
       )
       .select([
         'games.away_team_id',
+        'games.away_score',
         'games.created_at',
         'games.division_id',
+        'games.finalized_at',
+        'games.home_score',
         'games.home_team_id',
         'games.id',
         'games.league_season_id',
@@ -291,5 +314,64 @@ export class ScheduleService {
     }
 
     return existingGame.published_at;
+  }
+
+  private resolveCreatedFinalizedAt(
+    createScheduleDto: CreateScheduleDto,
+  ): Date | null {
+    if (createScheduleDto.status !== 'final') {
+      return null;
+    }
+
+    if (
+      createScheduleDto.homeScore === undefined ||
+      createScheduleDto.awayScore === undefined
+    ) {
+      throw new BadRequestException('Final games require home and away scores');
+    }
+
+    return new Date();
+  }
+
+  private assertFinalScoreState(
+    existingGame: ScheduleGameRecord,
+    updateScheduleDto: UpdateScheduleDto,
+  ): void {
+    const nextStatus = updateScheduleDto.status ?? existingGame.status;
+
+    if (nextStatus !== 'final') {
+      return;
+    }
+
+    const homeScore = updateScheduleDto.homeScore ?? existingGame.home_score;
+    const awayScore = updateScheduleDto.awayScore ?? existingGame.away_score;
+
+    if (
+      homeScore === null ||
+      homeScore === undefined ||
+      awayScore === null ||
+      awayScore === undefined
+    ) {
+      throw new BadRequestException('Final games require home and away scores');
+    }
+  }
+
+  private resolveFinalizedAt(
+    existingGame: ScheduleGameRecord,
+    updateScheduleDto: UpdateScheduleDto,
+  ): Date | null | undefined {
+    if (!updateScheduleDto.status) {
+      return undefined;
+    }
+
+    if (updateScheduleDto.status === 'final') {
+      return existingGame.finalized_at ?? new Date();
+    }
+
+    if (existingGame.status === 'final') {
+      return null;
+    }
+
+    return existingGame.finalized_at;
   }
 }

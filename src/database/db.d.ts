@@ -56,12 +56,14 @@ export interface AdminPlayers {
   id: Generated<string>;
   jersey_number: string;
   name: string;
+  position: Generated<string>;
   status: Generated<string>;
   team_id: string;
   updated_at: Generated<Timestamp>;
 }
 
 export interface AdminScheduleGames {
+  away_score: number | null;
   away_team_color: string | null;
   away_team_id: string | null;
   away_team_name: string | null;
@@ -70,6 +72,8 @@ export interface AdminScheduleGames {
   division_id: string | null;
   division_name: string | null;
   division_slug: string | null;
+  finalized_at: Timestamp | null;
+  home_score: number | null;
   home_team_color: string | null;
   home_team_id: string | null;
   home_team_name: string | null;
@@ -158,10 +162,25 @@ export interface AuthUsers {
   updated_at: Generated<Timestamp>;
 }
 
+export interface CompetitionFinalizedGameResults {
+  away_score: number | null;
+  away_team_id: string | null;
+  division_id: string | null;
+  finalized_at: Timestamp | null;
+  home_score: number | null;
+  home_team_id: string | null;
+  id: string | null;
+  league_season_id: string | null;
+  organization_id: string | null;
+}
+
 export interface CompetitionGames {
+  away_score: number | null;
   away_team_id: string;
   created_at: Generated<Timestamp>;
   division_id: string;
+  finalized_at: Timestamp | null;
+  home_score: number | null;
   home_team_id: string;
   id: Generated<string>;
   league_season_id: string;
@@ -214,6 +233,7 @@ export interface DB {
   "auth.password_credentials": AuthPasswordCredentials;
   "auth.refresh_tokens": AuthRefreshTokens;
   "auth.users": AuthUsers;
+  "competition.finalized_game_results": CompetitionFinalizedGameResults;
   "competition.games": CompetitionGames;
   "public_portal.league_shells": PublicPortalLeagueShells;
   "public_portal.organizations": PublicPortalOrganizations;

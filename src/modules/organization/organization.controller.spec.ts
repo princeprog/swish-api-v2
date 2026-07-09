@@ -74,7 +74,9 @@ describe('OrganizationController', () => {
 
     organizationService.remove.mockResolvedValue({ success: true });
 
-    await expect(controller.remove('org-1')).resolves.toEqual({ success: true });
+    await expect(controller.remove('org-1')).resolves.toEqual({
+      success: true,
+    });
     expect(organizationService.remove).toHaveBeenCalledWith('org-1');
   });
 });

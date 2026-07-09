@@ -50,7 +50,10 @@ export class OrganizationController {
     @Param('organizationId') organizationId: string,
     @Body() updateOrganizationDto: UpdateOrganizationDto,
   ) {
-    return this.organizationService.update(organizationId, updateOrganizationDto);
+    return this.organizationService.update(
+      organizationId,
+      updateOrganizationDto,
+    );
   }
 
   @Delete(':organizationId')

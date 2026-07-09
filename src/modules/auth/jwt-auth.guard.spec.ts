@@ -72,8 +72,8 @@ describe('JwtAuthGuard', () => {
       headers: {},
     };
 
-    await expect(guard.canActivate(createContext(request))).rejects.toBeInstanceOf(
-      UnauthorizedException,
-    );
+    await expect(
+      guard.canActivate(createContext(request)),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 });
