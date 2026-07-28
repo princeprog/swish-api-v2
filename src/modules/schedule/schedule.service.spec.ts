@@ -16,7 +16,9 @@ function createDbMock() {
     venue_id: 'venue-1',
   });
   const selectChain = {
+    execute: jest.fn().mockResolvedValue([]),
     innerJoin: jest.fn().mockReturnThis(),
+    orderBy: jest.fn().mockReturnThis(),
     select: jest.fn().mockReturnThis(),
     selectAll: jest.fn().mockReturnThis(),
     where: jest.fn().mockReturnThis(),
@@ -72,5 +74,27 @@ describe('ScheduleService final score updates', () => {
         status: 'final',
       }),
     );
+  });
+});
+
+describe('ScheduleService list filters', () => {
+  it('applies schedule filters and sorting in the database query', async () => {
+    const { db } = createDbMock();
+    const service = new ScheduleService(db as never);
+
+    await service.findAll('org-1', {
+      divisionId: 'division-1',
+      search: 'cebu',
+      sortBy: 'division',
+      status: 'scheduled',
+    });
+
+    const query = (db.selectFrom as jest.Mock).mock.results[0].value;
+    expect(query.where).toHaveBeenCalledWith('organization_id', '=', 'org-1');
+    expect(query.where).toHaveBeenCalledWith('division_id', '=', 'division-1');
+    expect(query.where).toHaveBeenCalledWith('status', '=', 'scheduled');
+    expect(query.where).toHaveBeenCalledWith(expect.any(Function));
+    expect(query.orderBy).toHaveBeenCalledWith('division_name asc');
+    expect(query.orderBy).toHaveBeenCalledWith('starts_at asc');
   });
 });

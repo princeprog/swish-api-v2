@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { AUTH_ROLES } from '../../common/auth/roles';
@@ -13,6 +14,7 @@ import { OrganizationRoles } from '../../common/decorators/organization-roles.de
 import { OrganizationRolesGuard } from '../../common/guards/organization-roles.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
+import { ScheduleListQueryDto } from './dto/schedule-list-query.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { ScheduleService } from './schedule.service';
 
@@ -31,8 +33,11 @@ export class ScheduleController {
   }
 
   @Get()
-  findAll(@Param('organizationId') organizationId: string) {
-    return this.scheduleService.findAll(organizationId);
+  findAll(
+    @Param('organizationId') organizationId: string,
+    @Query() query: ScheduleListQueryDto,
+  ) {
+    return this.scheduleService.findAll(organizationId, query);
   }
 
   @Get(':gameId')

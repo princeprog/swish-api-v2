@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { DATABASE, type Database } from '../../database/database.tokens';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
+import type { ScheduleListQueryDto } from './dto/schedule-list-query.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
 
 type ScheduleGameRecord = {
@@ -65,13 +66,44 @@ export class ScheduleService {
     return this.findOne(organizationId, inserted.id);
   }
 
-  findAll(organizationId: string) {
-    return (this.db as any)
+  findAll(organizationId: string, query: ScheduleListQueryDto = {}) {
+    let dataQuery = (this.db as any)
       .selectFrom('admin.schedule_games')
       .selectAll()
-      .where('organization_id', '=', organizationId)
-      .orderBy('starts_at asc')
-      .execute();
+      .where('organization_id', '=', organizationId);
+
+    if (query.search) {
+      const search = `%${query.search}%`;
+      dataQuery = dataQuery.where((eb) =>
+        eb.or([
+          eb('home_team_name', 'ilike', search),
+          eb('away_team_name', 'ilike', search),
+          eb('venue_name', 'ilike', search),
+          eb('division_name', 'ilike', search),
+          eb('league_season_name', 'ilike', search),
+        ]),
+      );
+    }
+
+    if (query.divisionId) {
+      dataQuery = dataQuery.where('division_id', '=', query.divisionId);
+    }
+
+    if (query.status) {
+      dataQuery = dataQuery.where('status', '=', query.status);
+    }
+
+    if (query.sortBy === 'division') {
+      dataQuery = dataQuery
+        .orderBy('division_name asc')
+        .orderBy('starts_at asc');
+    } else if (query.sortBy === 'venue') {
+      dataQuery = dataQuery.orderBy('venue_name asc').orderBy('starts_at asc');
+    } else {
+      dataQuery = dataQuery.orderBy('starts_at asc');
+    }
+
+    return dataQuery.execute();
   }
 
   async findOne(organizationId: string, gameId: string) {
