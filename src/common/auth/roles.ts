@@ -9,6 +9,8 @@ export type AuthRole = (typeof AUTH_ROLES)[keyof typeof AUTH_ROLES];
 
 export const ORGANIZATION_ROLE_METADATA_KEY = 'organization_roles';
 export const ORGANIZATION_PERMISSION_METADATA_KEY = 'organization_permissions';
+export const ORGANIZATION_ANY_PERMISSION_METADATA_KEY =
+  'organization_any_permissions';
 
 export const ORGANIZATION_PERMISSIONS = {
   DIVISIONS_MANAGE: 'divisions.manage',

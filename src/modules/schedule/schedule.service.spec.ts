@@ -29,6 +29,12 @@ function createDbMock() {
     where: jest.fn().mockReturnThis(),
     executeTakeFirst,
   };
+  const scoringStateExecuteTakeFirst = jest.fn().mockResolvedValue(undefined);
+  const scoringStateSelectChain = {
+    executeTakeFirst: scoringStateExecuteTakeFirst,
+    select: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+  };
   const updateSet = jest.fn().mockReturnThis();
   const updateExecuteTakeFirstOrThrow = jest.fn().mockResolvedValue({});
   const updateChain = {
@@ -39,10 +45,13 @@ function createDbMock() {
 
   return {
     db: {
-      selectFrom: jest.fn().mockReturnValue(selectChain),
+      selectFrom: jest.fn((table: string) =>
+        table === 'scoring.game_states' ? scoringStateSelectChain : selectChain,
+      ),
       updateTable: jest.fn().mockReturnValue(updateChain),
     },
     executeTakeFirst,
+    scoringStateExecuteTakeFirst,
     updateExecuteTakeFirstOrThrow,
     updateSet,
   };
@@ -117,6 +126,20 @@ describe('ScheduleService final score updates', () => {
         status: 'final',
       }),
     );
+  });
+
+  it('rejects direct result changes after scoring state exists', async () => {
+    const { db, scoringStateExecuteTakeFirst } = createDbMock();
+    scoringStateExecuteTakeFirst.mockResolvedValueOnce({ game_id: 'game-1' });
+    const service = new ScheduleService(db as never);
+
+    await expect(
+      service.update('org-1', 'game-1', {
+        awayScore: 79,
+        homeScore: 82,
+        status: 'final',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });
 

@@ -160,6 +160,7 @@ export class ScheduleService {
 
     this.assertDistinctTeams(nextHomeTeamId, nextAwayTeamId);
     this.assertFinalScoreState(existingGame, updateScheduleDto);
+    await this.assertScoringDomainDoesNotOwnResult(gameId, updateScheduleDto);
 
     await this.assertScheduleRelations(organizationId, {
       awayTeamId: nextAwayTeamId,
@@ -417,6 +418,32 @@ export class ScheduleService {
     }
 
     return undefined;
+  }
+
+  private async assertScoringDomainDoesNotOwnResult(
+    gameId: string,
+    updateScheduleDto: UpdateScheduleDto,
+  ): Promise<void> {
+    const touchesScoringState =
+      updateScheduleDto.awayScore !== undefined ||
+      updateScheduleDto.homeScore !== undefined ||
+      ['final', 'live', 'reopened'].includes(updateScheduleDto.status ?? '');
+
+    if (!touchesScoringState) {
+      return;
+    }
+
+    const scoringState = await this.db
+      .selectFrom('scoring.game_states')
+      .select(['game_id'])
+      .where('game_id', '=', gameId)
+      .executeTakeFirst();
+
+    if (scoringState) {
+      throw new BadRequestException(
+        'Scoring state exists; use scoring endpoints for live and official result changes',
+      );
+    }
   }
 
   private resolveQuery(

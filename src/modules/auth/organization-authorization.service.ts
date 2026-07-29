@@ -66,6 +66,40 @@ export class OrganizationAuthorizationService {
     };
   }
 
+  async assertAnyOrganizationPermission(
+    userId: string,
+    organizationId: string,
+    alternativePermissions: OrganizationPermission[],
+  ): Promise<OrganizationAccessContext> {
+    const membership =
+      await this.authRepository.findActiveOrganizationMembership(
+        userId,
+        organizationId,
+      );
+    const permissions = membership
+      ? getPermissionsForOrganizationRole(membership.role)
+      : [];
+
+    if (
+      !membership ||
+      !alternativePermissions.some((permission) =>
+        permissions.includes(permission),
+      )
+    ) {
+      throw new ForbiddenException(
+        'You do not have access to this organization resource',
+      );
+    }
+
+    return {
+      membershipId: membership.id,
+      organizationId: membership.organization_id,
+      permissions,
+      role: membership.role,
+      userId: membership.user_id,
+    };
+  }
+
   hasRequiredRole(role: AuthRole, requiredRoles: AuthRole[]): boolean {
     return requiredRoles.includes(role);
   }

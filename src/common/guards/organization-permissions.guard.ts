@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import {
+  ORGANIZATION_ANY_PERMISSION_METADATA_KEY,
   ORGANIZATION_PERMISSION_METADATA_KEY,
   type OrganizationPermission,
 } from '../auth/roles';
@@ -26,8 +27,14 @@ export class OrganizationPermissionsGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
+    const alternativePermissions = this.reflector.getAllAndOverride<
+      OrganizationPermission[]
+    >(ORGANIZATION_ANY_PERMISSION_METADATA_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
 
-    if (!requiredPermissions?.length) {
+    if (!requiredPermissions?.length && !alternativePermissions?.length) {
       return true;
     }
 
@@ -44,11 +51,16 @@ export class OrganizationPermissionsGuard implements CanActivate {
       throw new UnauthorizedException('Missing organization scope');
     }
 
-    request.organizationAccess =
-      await this.authorizationService.assertOrganizationPermissions(
+    request.organizationAccess = alternativePermissions?.length
+      ? await this.authorizationService.assertAnyOrganizationPermission(
+          request.user.id,
+          organizationId,
+          alternativePermissions,
+        )
+      : await this.authorizationService.assertOrganizationPermissions(
         request.user.id,
         organizationId,
-        requiredPermissions,
+          requiredPermissions ?? [],
       );
 
     return true;

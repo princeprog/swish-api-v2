@@ -13,6 +13,7 @@ import { OrganizationMemberModule } from './modules/organization-member/organiza
 import { PlayerModule } from './modules/player/player.module';
 import { PublicModule } from './modules/public/public.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
+import { ScoringModule } from './modules/scoring/scoring.module';
 import { StandingsModule } from './modules/standings/standings.module';
 import { TeamModule } from './modules/team/team.module';
 import { VenueModule } from './modules/venue/venue.module';
@@ -26,6 +27,7 @@ import { VenueModule } from './modules/venue/venue.module';
     InvitationModule,
     PublicModule,
     ScheduleModule,
+    ScoringModule,
     StandingsModule,
     OrganizationModule,
     OrganizationMemberModule,
