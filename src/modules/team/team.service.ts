@@ -1,9 +1,14 @@
 import {
+  ForbiddenException,
   ConflictException,
   Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import {
+  ORGANIZATION_PERMISSIONS,
+  type OrganizationAccessContext,
+} from '../../common/auth/roles';
 import {
   createPaginatedResponse,
   normalizePagination,
@@ -40,7 +45,11 @@ export class TeamService {
       .executeTakeFirstOrThrow();
   }
 
-  async findAll(organizationId: string, query: TeamListQueryDto) {
+  async findAll(
+    organizationId: string,
+    access: OrganizationAccessContext,
+    query: TeamListQueryDto,
+  ) {
     const pagination = normalizePagination(query);
     let countQuery = this.db
       .selectFrom('admin.teams as teams')
@@ -79,6 +88,40 @@ export class TeamService {
         'teams.updated_at',
       ])
       .where('league_seasons.organization_id', '=', organizationId);
+
+    if (
+      access.permissions.includes(
+        ORGANIZATION_PERMISSIONS.TEAMS_READ_ASSIGNED,
+      ) &&
+      !access.permissions.includes(ORGANIZATION_PERMISSIONS.TEAMS_READ)
+    ) {
+      countQuery = countQuery
+        .innerJoin(
+          'access.team_manager_assignments as assigned_teams',
+          'assigned_teams.team_id',
+          'teams.id',
+        )
+        .where(
+          'assigned_teams.organization_member_id',
+          '=',
+          access.membershipId,
+        );
+      dataQuery = dataQuery
+        .innerJoin(
+          'access.team_manager_assignments as assigned_teams',
+          'assigned_teams.team_id',
+          'teams.id',
+        )
+        .where(
+          'assigned_teams.organization_member_id',
+          '=',
+          access.membershipId,
+        );
+    } else if (
+      !access.permissions.includes(ORGANIZATION_PERMISSIONS.TEAMS_READ)
+    ) {
+      throw new ForbiddenException('You cannot read organization teams');
+    }
 
     if (query.search) {
       const search = `%${query.search}%`;
@@ -124,8 +167,12 @@ export class TeamService {
     return createPaginatedResponse(data, Number(total.count), pagination);
   }
 
-  async findOne(organizationId: string, teamId: string) {
-    const team = await this.db
+  async findOne(
+    organizationId: string,
+    teamId: string,
+    access?: OrganizationAccessContext,
+  ) {
+    let teamQuery = this.db
       .selectFrom('admin.teams as teams')
       .innerJoin(
         'admin.divisions as divisions',
@@ -148,8 +195,34 @@ export class TeamService {
         'teams.updated_at',
       ])
       .where('teams.id', '=', teamId)
-      .where('league_seasons.organization_id', '=', organizationId)
-      .executeTakeFirst();
+      .where('league_seasons.organization_id', '=', organizationId);
+
+    if (
+      access &&
+      access.permissions.includes(
+        ORGANIZATION_PERMISSIONS.TEAMS_READ_ASSIGNED,
+      ) &&
+      !access.permissions.includes(ORGANIZATION_PERMISSIONS.TEAMS_READ)
+    ) {
+      teamQuery = teamQuery
+        .innerJoin(
+          'access.team_manager_assignments as assigned_teams',
+          'assigned_teams.team_id',
+          'teams.id',
+        )
+        .where(
+          'assigned_teams.organization_member_id',
+          '=',
+          access.membershipId,
+        );
+    } else if (
+      access &&
+      !access.permissions.includes(ORGANIZATION_PERMISSIONS.TEAMS_READ)
+    ) {
+      throw new ForbiddenException('You cannot read organization teams');
+    }
+
+    const team = await teamQuery.executeTakeFirst();
 
     if (!team) {
       throw new NotFoundException('Team not found');
@@ -161,9 +234,26 @@ export class TeamService {
   async update(
     organizationId: string,
     teamId: string,
+    access: OrganizationAccessContext,
     updateTeamDto: UpdateTeamDto,
   ) {
-    const team = await this.findOne(organizationId, teamId);
+    if (
+      !access.permissions.includes(ORGANIZATION_PERMISSIONS.TEAMS_UPDATE) &&
+      !access.permissions.includes(
+        ORGANIZATION_PERMISSIONS.TEAMS_UPDATE_ASSIGNED,
+      )
+    ) {
+      throw new ForbiddenException('You cannot update teams');
+    }
+
+    const team = await this.findOne(organizationId, teamId, {
+      ...access,
+      permissions: access.permissions.includes(
+        ORGANIZATION_PERMISSIONS.TEAMS_UPDATE,
+      )
+        ? [ORGANIZATION_PERMISSIONS.TEAMS_READ]
+        : [ORGANIZATION_PERMISSIONS.TEAMS_READ_ASSIGNED],
+    });
     const targetDivisionId = updateTeamDto.divisionId ?? team.division_id;
 
     if (

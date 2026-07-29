@@ -5,7 +5,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DATABASE, type Database } from '../../database/database.tokens';
-import { AUTH_ROLES } from '../../common/auth/roles';
+import {
+  AUTH_ROLES,
+  getPermissionsForOrganizationRole,
+  type AuthRole,
+  type OrganizationAccessContext,
+} from '../../common/auth/roles';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 
@@ -78,11 +83,30 @@ export class OrganizationService {
         'organizations.slug',
         'organizations.status',
         'organizations.updated_at',
+        'organization_members.id as membership_id',
+        'organization_members.role',
       ])
       .where('organization_members.user_id', '=', userId)
       .where('organization_members.status', '=', 'active')
       .orderBy('organizations.created_at asc')
-      .execute();
+      .execute()
+      .then((organizations) =>
+        organizations.map((organization) => ({
+          created_at: organization.created_at,
+          id: organization.id,
+          name: organization.name,
+          slug: organization.slug,
+          status: organization.status,
+          updated_at: organization.updated_at,
+          access: {
+            membershipId: organization.membership_id,
+            permissions: getPermissionsForOrganizationRole(
+              organization.role as AuthRole,
+            ),
+            role: organization.role,
+          },
+        })),
+      );
   }
 
   async update(
@@ -117,8 +141,15 @@ export class OrganizationService {
       .executeTakeFirstOrThrow();
   }
 
-  async remove(organizationId: string) {
+  async remove(organizationId: string, access: OrganizationAccessContext) {
     await this.findOne(organizationId);
+    await this.writeAudit(
+      access,
+      'organization.deleted',
+      'organization',
+      organizationId,
+      {},
+    );
 
     await this.db
       .deleteFrom('admin.organizations')
@@ -126,5 +157,25 @@ export class OrganizationService {
       .execute();
 
     return { success: true };
+  }
+
+  private async writeAudit(
+    access: OrganizationAccessContext,
+    action: string,
+    targetType: string,
+    targetId: string,
+    metadata: Record<string, unknown>,
+  ) {
+    await (this.db as any)
+      .insertInto('access.audit_events')
+      .values({
+        action,
+        actor_member_id: access.membershipId,
+        metadata,
+        organization_id: access.organizationId,
+        target_id: targetId,
+        target_type: targetType,
+      })
+      .execute();
   }
 }

@@ -11,12 +11,21 @@ const membership = {
   user_id: 'user-2',
 };
 
+const access = {
+  membershipId: 'owner-member-1',
+  organizationId: 'org-1',
+  permissions: ['members.manage'],
+  role: 'owner',
+  userId: 'user-1',
+};
+
 function createController() {
   const organizationMemberService = {
     create: jest.fn(),
     findAll: jest.fn(),
     findOne: jest.fn(),
-    remove: jest.fn(),
+    updateGameAssignments: jest.fn(),
+    updateTeamAssignments: jest.fn(),
     update: jest.fn(),
   } as unknown as jest.Mocked<OrganizationMemberService>;
 
@@ -33,16 +42,20 @@ describe('OrganizationMemberController', () => {
     organizationMemberService.create.mockResolvedValue(membership);
 
     await expect(
-      controller.create('org-1', {
+      controller.create('org-1', access as never, {
         role: 'admin',
         userId: 'user-2',
       }),
     ).resolves.toEqual(membership);
 
-    expect(organizationMemberService.create).toHaveBeenCalledWith('org-1', {
-      role: 'admin',
-      userId: 'user-2',
-    });
+    expect(organizationMemberService.create).toHaveBeenCalledWith(
+      'org-1',
+      access,
+      {
+        role: 'admin',
+        userId: 'user-2',
+      },
+    );
   });
 
   it('lists members in the organization scope', async () => {
@@ -73,37 +86,45 @@ describe('OrganizationMemberController', () => {
 
     organizationMemberService.update.mockResolvedValue({
       ...membership,
-      role: 'coach',
+      role: 'team_manager',
     });
 
     await expect(
-      controller.update('org-1', 'member-1', {
-        role: 'coach',
+      controller.update('org-1', 'member-1', access as never, {
+        role: 'team_manager',
       }),
     ).resolves.toEqual({
       ...membership,
-      role: 'coach',
+      role: 'team_manager',
     });
     expect(organizationMemberService.update).toHaveBeenCalledWith(
       'org-1',
       'member-1',
+      access,
       {
-        role: 'coach',
+        role: 'team_manager',
       },
     );
   });
 
-  it('removes one organization member within the organization scope', async () => {
+  it('updates team assignments within the organization scope', async () => {
     const { controller, organizationMemberService } = createController();
 
-    organizationMemberService.remove.mockResolvedValue({ success: true });
-
-    await expect(controller.remove('org-1', 'member-1')).resolves.toEqual({
+    organizationMemberService.updateTeamAssignments.mockResolvedValue({
       success: true,
+      teamIds: ['team-1'],
     });
-    expect(organizationMemberService.remove).toHaveBeenCalledWith(
-      'org-1',
-      'member-1',
-    );
+
+    await expect(
+      controller.updateTeamAssignments('org-1', 'member-1', access as never, {
+        teamIds: ['team-1'],
+      }),
+    ).resolves.toEqual({
+      success: true,
+      teamIds: ['team-1'],
+    });
+    expect(
+      organizationMemberService.updateTeamAssignments,
+    ).toHaveBeenCalledWith('org-1', 'member-1', access, ['team-1']);
   });
 });

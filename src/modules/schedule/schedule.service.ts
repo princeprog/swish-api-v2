@@ -4,6 +4,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import {
+  ORGANIZATION_PERMISSIONS,
+  type OrganizationAccessContext,
+} from '../../common/auth/roles';
 import { DATABASE, type Database } from '../../database/database.tokens';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
 import type { ScheduleListQueryDto } from './dto/schedule-list-query.dto';
@@ -66,11 +70,19 @@ export class ScheduleService {
     return this.findOne(organizationId, inserted.id);
   }
 
-  findAll(organizationId: string, query: ScheduleListQueryDto = {}) {
+  findAll(
+    organizationId: string,
+    accessOrQuery: OrganizationAccessContext | ScheduleListQueryDto,
+    maybeQuery: ScheduleListQueryDto = {},
+  ) {
+    const access = this.resolveAccessContext(accessOrQuery);
+    const query = this.resolveQuery(accessOrQuery, maybeQuery);
     let dataQuery = (this.db as any)
       .selectFrom('admin.schedule_games')
       .selectAll()
       .where('organization_id', '=', organizationId);
+
+    dataQuery = this.applyGameReadScope(dataQuery, access);
 
     if (query.search) {
       const search = `%${query.search}%`;
@@ -106,13 +118,22 @@ export class ScheduleService {
     return dataQuery.execute();
   }
 
-  async findOne(organizationId: string, gameId: string) {
-    const game = await (this.db as any)
+  async findOne(
+    organizationId: string,
+    gameId: string,
+    access?: OrganizationAccessContext,
+  ) {
+    let gameQuery = (this.db as any)
       .selectFrom('admin.schedule_games')
       .selectAll()
       .where('organization_id', '=', organizationId)
-      .where('id', '=', gameId)
-      .executeTakeFirst();
+      .where('id', '=', gameId);
+
+    if (access) {
+      gameQuery = this.applyGameReadScope(gameQuery, access);
+    }
+
+    const game = await gameQuery.executeTakeFirst();
 
     if (!game) {
       throw new NotFoundException('Schedule game not found');
@@ -323,6 +344,90 @@ export class ScheduleService {
     }
 
     return game;
+  }
+
+  private applyGameReadScope(query: any, access?: OrganizationAccessContext) {
+    if (!access) {
+      return query;
+    }
+
+    if (access.permissions.includes(ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE)) {
+      return query;
+    }
+
+    if (
+      access.permissions.includes(ORGANIZATION_PERMISSIONS.TEAMS_READ_ASSIGNED)
+    ) {
+      return query.where((eb) =>
+        eb.or([
+          eb.exists(
+            eb
+              .selectFrom('access.team_manager_assignments as assigned_teams')
+              .select('assigned_teams.id')
+              .where(
+                'assigned_teams.organization_member_id',
+                '=',
+                access.membershipId,
+              )
+              .whereRef(
+                'assigned_teams.team_id',
+                '=',
+                'admin.schedule_games.home_team_id',
+              ),
+          ),
+          eb.exists(
+            eb
+              .selectFrom('access.team_manager_assignments as assigned_teams')
+              .select('assigned_teams.id')
+              .where(
+                'assigned_teams.organization_member_id',
+                '=',
+                access.membershipId,
+              )
+              .whereRef(
+                'assigned_teams.team_id',
+                '=',
+                'admin.schedule_games.away_team_id',
+              ),
+          ),
+        ]),
+      );
+    }
+
+    return query.where((eb) =>
+      eb.exists(
+        eb
+          .selectFrom('access.game_scorekeeper_assignments as assigned_games')
+          .select('assigned_games.id')
+          .where(
+            'assigned_games.organization_member_id',
+            '=',
+            access.membershipId,
+          )
+          .whereRef('assigned_games.game_id', '=', 'admin.schedule_games.id'),
+      ),
+    );
+  }
+
+  private resolveAccessContext(
+    input: OrganizationAccessContext | ScheduleListQueryDto,
+  ): OrganizationAccessContext | undefined {
+    if ('membershipId' in input) {
+      return input;
+    }
+
+    return undefined;
+  }
+
+  private resolveQuery(
+    input: OrganizationAccessContext | ScheduleListQueryDto,
+    query: ScheduleListQueryDto,
+  ): ScheduleListQueryDto {
+    if ('membershipId' in input) {
+      return query;
+    }
+
+    return input;
   }
 
   private resolvePublishedAt(

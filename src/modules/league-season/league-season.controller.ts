@@ -9,9 +9,9 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { AUTH_ROLES } from '../../common/auth/roles';
-import { OrganizationRoles } from '../../common/decorators/organization-roles.decorator';
-import { OrganizationRolesGuard } from '../../common/guards/organization-roles.guard';
+import { ORGANIZATION_PERMISSIONS } from '../../common/auth/roles';
+import { RequireOrganizationPermissions } from '../../common/decorators/organization-permissions.decorator';
+import { OrganizationPermissionsGuard } from '../../common/guards/organization-permissions.guard';
 import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateLeagueSeasonDto } from './dto/create-league-season.dto';
@@ -19,8 +19,8 @@ import { UpdateLeagueSeasonDto } from './dto/update-league-season.dto';
 import { LeagueSeasonService } from './league-season.service';
 
 @Controller('organizations/:organizationId/league-seasons')
-@UseGuards(JwtAuthGuard, OrganizationRolesGuard)
-@OrganizationRoles(AUTH_ROLES.OWNER, AUTH_ROLES.ADMIN)
+@UseGuards(JwtAuthGuard, OrganizationPermissionsGuard)
+@RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE)
 export class LeagueSeasonController {
   constructor(private readonly leagueSeasonService: LeagueSeasonService) {}
 

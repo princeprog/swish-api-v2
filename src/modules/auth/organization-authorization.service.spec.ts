@@ -15,6 +15,7 @@ const user = {
 
 function membership(role: AuthRole): OrganizationMembership {
   return {
+    id: 'member-1',
     organization_id: 'org-1',
     role,
     status: 'active',

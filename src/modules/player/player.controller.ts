@@ -9,9 +9,13 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { AUTH_ROLES } from '../../common/auth/roles';
-import { OrganizationRoles } from '../../common/decorators/organization-roles.decorator';
-import { OrganizationRolesGuard } from '../../common/guards/organization-roles.guard';
+import {
+  ORGANIZATION_PERMISSIONS,
+  type OrganizationAccessContext,
+} from '../../common/auth/roles';
+import { OrganizationAccess } from '../../common/decorators/organization-access.decorator';
+import { RequireOrganizationPermissions } from '../../common/decorators/organization-permissions.decorator';
+import { OrganizationPermissionsGuard } from '../../common/guards/organization-permissions.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreatePlayerDto } from './dto/create-player.dto';
 import { PlayerListQueryDto } from './dto/player-list-query.dto';
@@ -19,49 +23,63 @@ import { UpdatePlayerDto } from './dto/update-player.dto';
 import { PlayerService } from './player.service';
 
 @Controller('organizations/:organizationId/players')
-@UseGuards(JwtAuthGuard, OrganizationRolesGuard)
-@OrganizationRoles(AUTH_ROLES.OWNER, AUTH_ROLES.ADMIN)
+@UseGuards(JwtAuthGuard, OrganizationPermissionsGuard)
 export class PlayerController {
   constructor(private readonly playerService: PlayerService) {}
 
   @Post()
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.ORGANIZATION_READ)
   create(
     @Param('organizationId') organizationId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
     @Body() createPlayerDto: CreatePlayerDto,
   ) {
-    return this.playerService.create(organizationId, createPlayerDto);
+    return this.playerService.create(organizationId, access, createPlayerDto);
   }
 
   @Get()
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.ORGANIZATION_READ)
   findAll(
     @Param('organizationId') organizationId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
     @Query() query: PlayerListQueryDto,
   ) {
-    return this.playerService.findAll(organizationId, query);
+    return this.playerService.findAll(organizationId, access, query);
   }
 
   @Get(':playerId')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.ORGANIZATION_READ)
   findOne(
     @Param('organizationId') organizationId: string,
     @Param('playerId') playerId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
   ) {
-    return this.playerService.findOne(organizationId, playerId);
+    return this.playerService.findOne(organizationId, playerId, access);
   }
 
   @Patch(':playerId')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.ORGANIZATION_READ)
   update(
     @Param('organizationId') organizationId: string,
     @Param('playerId') playerId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
     @Body() updatePlayerDto: UpdatePlayerDto,
   ) {
-    return this.playerService.update(organizationId, playerId, updatePlayerDto);
+    return this.playerService.update(
+      organizationId,
+      playerId,
+      access,
+      updatePlayerDto,
+    );
   }
 
   @Delete(':playerId')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.ORGANIZATION_READ)
   remove(
     @Param('organizationId') organizationId: string,
     @Param('playerId') playerId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
   ) {
-    return this.playerService.remove(organizationId, playerId);
+    return this.playerService.remove(organizationId, playerId, access);
   }
 }

@@ -166,7 +166,7 @@ export class AuthRepository {
   ): Promise<OrganizationMembership | undefined> {
     const membership = await this.db
       .selectFrom('admin.organization_members')
-      .select(['organization_id', 'role', 'status', 'user_id'])
+      .select(['id', 'organization_id', 'role', 'status', 'user_id'])
       .where('organization_id', '=', organizationId)
       .where('user_id', '=', userId)
       .where('status', '=', 'active')

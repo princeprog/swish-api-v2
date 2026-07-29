@@ -10,6 +10,14 @@ const organization = {
   updated_at: new Date('2026-06-17T00:00:00.000Z'),
 };
 
+const access = {
+  membershipId: 'member-1',
+  organizationId: 'org-1',
+  permissions: ['organization.manage'],
+  role: 'owner',
+  userId: 'user-1',
+};
+
 function createController() {
   const organizationService = {
     create: jest.fn(),
@@ -74,9 +82,9 @@ describe('OrganizationController', () => {
 
     organizationService.remove.mockResolvedValue({ success: true });
 
-    await expect(controller.remove('org-1')).resolves.toEqual({
+    await expect(controller.remove('org-1', access as never)).resolves.toEqual({
       success: true,
     });
-    expect(organizationService.remove).toHaveBeenCalledWith('org-1');
+    expect(organizationService.remove).toHaveBeenCalledWith('org-1', access);
   });
 });

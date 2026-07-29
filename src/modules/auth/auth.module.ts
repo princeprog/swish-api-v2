@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
 import { OrganizationRolesGuard } from '../../common/guards/organization-roles.guard';
+import { OrganizationPermissionsGuard } from '../../common/guards/organization-permissions.guard';
 import { DatabaseModule } from '../../database/database.module';
 import { AuthController } from './auth.controller';
 import { AuthRepository } from './auth.repository';
@@ -19,6 +20,7 @@ import { TokenService } from './token.service';
     AuthService,
     JwtAuthGuard,
     OrganizationAuthorizationService,
+    OrganizationPermissionsGuard,
     OrganizationRolesGuard,
     PasswordService,
     Reflector,
@@ -28,6 +30,7 @@ import { TokenService } from './token.service';
     AuthRepository,
     JwtAuthGuard,
     OrganizationAuthorizationService,
+    OrganizationPermissionsGuard,
     OrganizationRolesGuard,
     TokenService,
   ],

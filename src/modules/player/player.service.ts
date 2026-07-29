@@ -1,9 +1,14 @@
 import {
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import {
+  ORGANIZATION_PERMISSIONS,
+  type OrganizationAccessContext,
+} from '../../common/auth/roles';
 import {
   createPaginatedResponse,
   normalizePagination,
@@ -17,7 +22,12 @@ import { UpdatePlayerDto } from './dto/update-player.dto';
 export class PlayerService {
   constructor(@Inject(DATABASE) private readonly db: Database) {}
 
-  async create(organizationId: string, createPlayerDto: CreatePlayerDto) {
+  async create(
+    organizationId: string,
+    access: OrganizationAccessContext,
+    createPlayerDto: CreatePlayerDto,
+  ) {
+    await this.assertCanManageTeamRoster(access, createPlayerDto.teamId);
     await this.assertTeamBelongsToOrganization(
       organizationId,
       createPlayerDto.teamId,
@@ -40,7 +50,11 @@ export class PlayerService {
       .executeTakeFirstOrThrow();
   }
 
-  async findAll(organizationId: string, query: PlayerListQueryDto) {
+  async findAll(
+    organizationId: string,
+    access: OrganizationAccessContext,
+    query: PlayerListQueryDto,
+  ) {
     const pagination = normalizePagination(query);
     let countQuery = this.db
       .selectFrom('admin.players as players')
@@ -81,6 +95,40 @@ export class PlayerService {
         'players.updated_at',
       ])
       .where('league_seasons.organization_id', '=', organizationId);
+
+    if (
+      access.permissions.includes(
+        ORGANIZATION_PERMISSIONS.PLAYERS_READ_ASSIGNED_TEAM,
+      ) &&
+      !access.permissions.includes(ORGANIZATION_PERMISSIONS.PLAYERS_MANAGE)
+    ) {
+      countQuery = countQuery
+        .innerJoin(
+          'access.team_manager_assignments as assigned_teams',
+          'assigned_teams.team_id',
+          'players.team_id',
+        )
+        .where(
+          'assigned_teams.organization_member_id',
+          '=',
+          access.membershipId,
+        );
+      dataQuery = dataQuery
+        .innerJoin(
+          'access.team_manager_assignments as assigned_teams',
+          'assigned_teams.team_id',
+          'players.team_id',
+        )
+        .where(
+          'assigned_teams.organization_member_id',
+          '=',
+          access.membershipId,
+        );
+    } else if (
+      !access.permissions.includes(ORGANIZATION_PERMISSIONS.PLAYERS_MANAGE)
+    ) {
+      throw new ForbiddenException('You cannot read organization players');
+    }
 
     if (query.search) {
       const search = `%${query.search}%`;
@@ -133,8 +181,12 @@ export class PlayerService {
     return createPaginatedResponse(data, Number(total.count), pagination);
   }
 
-  async findOne(organizationId: string, playerId: string) {
-    const player = await this.db
+  async findOne(
+    organizationId: string,
+    playerId: string,
+    access: OrganizationAccessContext,
+  ) {
+    let playerQuery = this.db
       .selectFrom('admin.players as players')
       .innerJoin('admin.teams as teams', 'teams.id', 'players.team_id')
       .innerJoin(
@@ -158,8 +210,32 @@ export class PlayerService {
         'players.updated_at',
       ])
       .where('players.id', '=', playerId)
-      .where('league_seasons.organization_id', '=', organizationId)
-      .executeTakeFirst();
+      .where('league_seasons.organization_id', '=', organizationId);
+
+    if (
+      access.permissions.includes(
+        ORGANIZATION_PERMISSIONS.PLAYERS_READ_ASSIGNED_TEAM,
+      ) &&
+      !access.permissions.includes(ORGANIZATION_PERMISSIONS.PLAYERS_MANAGE)
+    ) {
+      playerQuery = playerQuery
+        .innerJoin(
+          'access.team_manager_assignments as assigned_teams',
+          'assigned_teams.team_id',
+          'players.team_id',
+        )
+        .where(
+          'assigned_teams.organization_member_id',
+          '=',
+          access.membershipId,
+        );
+    } else if (
+      !access.permissions.includes(ORGANIZATION_PERMISSIONS.PLAYERS_MANAGE)
+    ) {
+      throw new ForbiddenException('You cannot read organization players');
+    }
+
+    const player = await playerQuery.executeTakeFirst();
 
     if (!player) {
       throw new NotFoundException('Player not found');
@@ -171,10 +247,12 @@ export class PlayerService {
   async update(
     organizationId: string,
     playerId: string,
+    access: OrganizationAccessContext,
     updatePlayerDto: UpdatePlayerDto,
   ) {
-    const player = await this.findOne(organizationId, playerId);
+    const player = await this.findOne(organizationId, playerId, access);
     const targetTeamId = updatePlayerDto.teamId ?? player.team_id;
+    await this.assertCanManageTeamRoster(access, targetTeamId);
 
     if (updatePlayerDto.teamId && updatePlayerDto.teamId !== player.team_id) {
       await this.assertTeamBelongsToOrganization(
@@ -209,8 +287,13 @@ export class PlayerService {
       .executeTakeFirstOrThrow();
   }
 
-  async remove(organizationId: string, playerId: string) {
-    await this.findOne(organizationId, playerId);
+  async remove(
+    organizationId: string,
+    playerId: string,
+    access: OrganizationAccessContext,
+  ) {
+    const player = await this.findOne(organizationId, playerId, access);
+    await this.assertCanManageTeamRoster(access, player.team_id);
 
     await this.db
       .deleteFrom('admin.players')
@@ -243,6 +326,34 @@ export class PlayerService {
 
     if (!team) {
       throw new NotFoundException('Team not found in this organization');
+    }
+  }
+
+  private async assertCanManageTeamRoster(
+    access: OrganizationAccessContext,
+    teamId: string,
+  ): Promise<void> {
+    if (access.permissions.includes(ORGANIZATION_PERMISSIONS.PLAYERS_MANAGE)) {
+      return;
+    }
+
+    if (
+      !access.permissions.includes(
+        ORGANIZATION_PERMISSIONS.PLAYERS_MANAGE_ASSIGNED_TEAM,
+      )
+    ) {
+      throw new ForbiddenException('You cannot manage players');
+    }
+
+    const assignment = await (this.db as any)
+      .selectFrom('access.team_manager_assignments')
+      .select(['id'])
+      .where('organization_member_id', '=', access.membershipId)
+      .where('team_id', '=', teamId)
+      .executeTakeFirst();
+
+    if (!assignment) {
+      throw new NotFoundException('Team not found in your assignments');
     }
   }
 

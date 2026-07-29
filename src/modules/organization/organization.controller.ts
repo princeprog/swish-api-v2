@@ -9,9 +9,13 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { OrganizationRoles } from '../../common/decorators/organization-roles.decorator';
-import { AUTH_ROLES } from '../../common/auth/roles';
-import { OrganizationRolesGuard } from '../../common/guards/organization-roles.guard';
+import {
+  ORGANIZATION_PERMISSIONS,
+  type OrganizationAccessContext,
+} from '../../common/auth/roles';
+import { OrganizationAccess } from '../../common/decorators/organization-access.decorator';
+import { RequireOrganizationPermissions } from '../../common/decorators/organization-permissions.decorator';
+import { OrganizationPermissionsGuard } from '../../common/guards/organization-permissions.guard';
 import type { AuthUser } from '../auth/auth.types';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
@@ -37,15 +41,15 @@ export class OrganizationController {
   }
 
   @Get(':organizationId')
-  @UseGuards(OrganizationRolesGuard)
-  @OrganizationRoles(AUTH_ROLES.OWNER, AUTH_ROLES.ADMIN)
+  @UseGuards(OrganizationPermissionsGuard)
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.ORGANIZATION_READ)
   findOne(@Param('organizationId') organizationId: string) {
     return this.organizationService.findOne(organizationId);
   }
 
   @Patch(':organizationId')
-  @UseGuards(OrganizationRolesGuard)
-  @OrganizationRoles(AUTH_ROLES.OWNER, AUTH_ROLES.ADMIN)
+  @UseGuards(OrganizationPermissionsGuard)
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.ORGANIZATION_MANAGE)
   update(
     @Param('organizationId') organizationId: string,
     @Body() updateOrganizationDto: UpdateOrganizationDto,
@@ -57,9 +61,12 @@ export class OrganizationController {
   }
 
   @Delete(':organizationId')
-  @UseGuards(OrganizationRolesGuard)
-  @OrganizationRoles(AUTH_ROLES.OWNER)
-  remove(@Param('organizationId') organizationId: string) {
-    return this.organizationService.remove(organizationId);
+  @UseGuards(OrganizationPermissionsGuard)
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.ORGANIZATION_MANAGE)
+  remove(
+    @Param('organizationId') organizationId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+  ) {
+    return this.organizationService.remove(organizationId, access);
   }
 }

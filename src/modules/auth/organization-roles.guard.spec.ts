@@ -59,6 +59,7 @@ describe('OrganizationRolesGuard', () => {
     const { authorizationService, guard } = createGuard([AUTH_ROLES.ADMIN]);
 
     authorizationService.assertOrganizationAccess.mockResolvedValue({
+      id: 'member-1',
       organization_id: 'org-1',
       role: AUTH_ROLES.ADMIN,
       status: 'active',

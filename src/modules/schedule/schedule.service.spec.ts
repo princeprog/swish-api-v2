@@ -89,7 +89,7 @@ describe('ScheduleService list filters', () => {
       status: 'scheduled',
     });
 
-    const query = (db.selectFrom as jest.Mock).mock.results[0].value;
+    const query = db.selectFrom.mock.results[0].value;
     expect(query.where).toHaveBeenCalledWith('organization_id', '=', 'org-1');
     expect(query.where).toHaveBeenCalledWith('division_id', '=', 'division-1');
     expect(query.where).toHaveBeenCalledWith('status', '=', 'scheduled');

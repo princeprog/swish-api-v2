@@ -6,6 +6,7 @@ import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { DivisionModule } from './modules/division/division.module';
+import { InvitationModule } from './modules/invitation/invitation.module';
 import { LeagueSeasonModule } from './modules/league-season/league-season.module';
 import { OrganizationModule } from './modules/organization/organization.module';
 import { OrganizationMemberModule } from './modules/organization-member/organization-member.module';
@@ -22,6 +23,7 @@ import { VenueModule } from './modules/venue/venue.module';
     DatabaseModule,
     HealthModule,
     AuthModule,
+    InvitationModule,
     PublicModule,
     ScheduleModule,
     StandingsModule,

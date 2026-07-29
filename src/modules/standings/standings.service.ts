@@ -1,4 +1,8 @@
 import { Inject, Injectable } from '@nestjs/common';
+import {
+  ORGANIZATION_PERMISSIONS,
+  type OrganizationAccessContext,
+} from '../../common/auth/roles';
 import { DATABASE, type Database } from '../../database/database.tokens';
 import { calculateStandings } from './standings-calculator';
 import type { StandingsQueryDto } from './dto/standings-query.dto';
@@ -8,7 +12,18 @@ import type { FinalizedGameResult, StandingsTeam } from './standings.types';
 export class StandingsService {
   constructor(@Inject(DATABASE) private readonly db: Database) {}
 
-  async findAll(organizationId: string, query: StandingsQueryDto) {
+  async findAll(
+    organizationId: string,
+    accessOrQuery: OrganizationAccessContext | StandingsQueryDto,
+    maybeQuery?: StandingsQueryDto,
+  ) {
+    const access = 'membershipId' in accessOrQuery ? accessOrQuery : undefined;
+    const query = 'membershipId' in accessOrQuery ? maybeQuery : accessOrQuery;
+
+    if (!query) {
+      throw new Error('Standings query is required');
+    }
+
     let teamsQuery = this.db
       .selectFrom('admin.teams as teams')
       .innerJoin(
@@ -53,6 +68,59 @@ export class StandingsService {
         'results.division_id',
         '=',
         query.divisionId,
+      );
+    }
+
+    if (
+      access &&
+      access.permissions.includes(
+        ORGANIZATION_PERMISSIONS.STANDINGS_READ_ASSIGNED_DIVISION,
+      ) &&
+      !access.permissions.includes(ORGANIZATION_PERMISSIONS.STANDINGS_READ)
+    ) {
+      teamsQuery = teamsQuery.where((eb) =>
+        eb.exists(
+          eb
+            .selectFrom('access.team_manager_assignments as assigned_teams')
+            .innerJoin(
+              'admin.teams as assigned_team_records',
+              'assigned_team_records.id',
+              'assigned_teams.team_id',
+            )
+            .select('assigned_teams.id')
+            .where(
+              'assigned_teams.organization_member_id',
+              '=',
+              access.membershipId,
+            )
+            .whereRef(
+              'assigned_team_records.division_id',
+              '=',
+              'teams.division_id',
+            ),
+        ),
+      );
+      resultsQuery = resultsQuery.where((eb) =>
+        eb.exists(
+          eb
+            .selectFrom('access.team_manager_assignments as assigned_teams')
+            .innerJoin(
+              'admin.teams as assigned_team_records',
+              'assigned_team_records.id',
+              'assigned_teams.team_id',
+            )
+            .select('assigned_teams.id')
+            .where(
+              'assigned_teams.organization_member_id',
+              '=',
+              access.membershipId,
+            )
+            .whereRef(
+              'assigned_team_records.division_id',
+              '=',
+              'results.division_id',
+            ),
+        ),
       );
     }
 

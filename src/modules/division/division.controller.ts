@@ -9,9 +9,9 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { AUTH_ROLES } from '../../common/auth/roles';
-import { OrganizationRoles } from '../../common/decorators/organization-roles.decorator';
-import { OrganizationRolesGuard } from '../../common/guards/organization-roles.guard';
+import { ORGANIZATION_PERMISSIONS } from '../../common/auth/roles';
+import { RequireOrganizationPermissions } from '../../common/decorators/organization-permissions.decorator';
+import { OrganizationPermissionsGuard } from '../../common/guards/organization-permissions.guard';
 import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateDivisionDto } from './dto/create-division.dto';
@@ -19,8 +19,8 @@ import { UpdateDivisionDto } from './dto/update-division.dto';
 import { DivisionService } from './division.service';
 
 @Controller('organizations/:organizationId/divisions')
-@UseGuards(JwtAuthGuard, OrganizationRolesGuard)
-@OrganizationRoles(AUTH_ROLES.OWNER, AUTH_ROLES.ADMIN)
+@UseGuards(JwtAuthGuard, OrganizationPermissionsGuard)
+@RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.DIVISIONS_MANAGE)
 export class DivisionController {
   constructor(private readonly divisionService: DivisionService) {}
 

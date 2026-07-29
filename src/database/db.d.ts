@@ -9,7 +9,60 @@ export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
   ? ColumnType<S, I | undefined, U>
   : ColumnType<T, T | undefined, T>;
 
+export type Json = JsonValue;
+
+export type JsonArray = JsonValue[];
+
+export type JsonObject = {
+  [x: string]: JsonValue | undefined;
+};
+
+export type JsonPrimitive = boolean | number | string | null;
+
+export type JsonValue = JsonArray | JsonObject | JsonPrimitive;
+
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
+
+export interface AccessAuditEvents {
+  action: string;
+  actor_member_id: string | null;
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  metadata: Generated<Json>;
+  organization_id: string;
+  target_id: string | null;
+  target_type: string;
+}
+
+export interface AccessGameScorekeeperAssignments {
+  created_at: Generated<Timestamp>;
+  game_id: string;
+  id: Generated<string>;
+  organization_member_id: string;
+}
+
+export interface AccessOrganizationInvitations {
+  accepted_at: Timestamp | null;
+  accepted_by_member_id: string | null;
+  created_at: Generated<Timestamp>;
+  email: string;
+  expires_at: Timestamp;
+  id: Generated<string>;
+  invited_by_member_id: string;
+  organization_id: string;
+  revoked_at: Timestamp | null;
+  role: string;
+  status: Generated<string>;
+  token_hash: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface AccessTeamManagerAssignments {
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  organization_member_id: string;
+  team_id: string;
+}
 
 export interface AdminDivisions {
   created_at: Generated<Timestamp>;
@@ -220,6 +273,10 @@ export interface PublicPortalOrganizations {
 }
 
 export interface DB {
+  "access.audit_events": AccessAuditEvents;
+  "access.game_scorekeeper_assignments": AccessGameScorekeeperAssignments;
+  "access.organization_invitations": AccessOrganizationInvitations;
+  "access.team_manager_assignments": AccessTeamManagerAssignments;
   "admin.divisions": AdminDivisions;
   "admin.league_seasons": AdminLeagueSeasons;
   "admin.organization_members": AdminOrganizationMembers;

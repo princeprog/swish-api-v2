@@ -1,13 +1,19 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AUTH_ROLES } from '../../common/auth/roles';
+import {
+  AUTH_ROLES,
+  type AuthRole,
+  type OrganizationAccessContext,
+} from '../../common/auth/roles';
 import { DATABASE, type Database } from '../../database/database.tokens';
 import { CreateOrganizationMemberDto } from './dto/create-organization-member.dto';
+import { TransferOwnershipDto } from './dto/transfer-ownership.dto';
 import { UpdateOrganizationMemberDto } from './dto/update-organization-member.dto';
 
 @Injectable()
@@ -16,6 +22,7 @@ export class OrganizationMemberService {
 
   async create(
     organizationId: string,
+    access: OrganizationAccessContext,
     createOrganizationMemberDto: CreateOrganizationMemberDto,
   ) {
     await this.assertOrganizationExists(organizationId);
@@ -34,7 +41,7 @@ export class OrganizationMemberService {
       );
     }
 
-    return this.db
+    const member = await this.db
       .insertInto('admin.organization_members')
       .values({
         organization_id: organizationId,
@@ -44,15 +51,45 @@ export class OrganizationMemberService {
       })
       .returningAll()
       .executeTakeFirstOrThrow();
+
+    await this.writeAudit(access, 'member.created', 'member', member.id, {
+      role: member.role,
+      status: member.status,
+    });
+
+    return member;
   }
 
-  findAll(organizationId: string) {
-    return this.db
-      .selectFrom('admin.organization_members')
-      .selectAll()
-      .where('organization_id', '=', organizationId)
-      .orderBy('created_at asc')
+  async findAll(organizationId: string) {
+    const members = await this.db
+      .selectFrom('admin.organization_members as members')
+      .innerJoin('auth.users as users', 'users.id', 'members.user_id')
+      .select([
+        'members.created_at',
+        'members.id',
+        'members.organization_id',
+        'members.role',
+        'members.status',
+        'members.updated_at',
+        'members.user_id',
+        'users.email',
+        'users.name',
+      ])
+      .where('members.organization_id', '=', organizationId)
+      .orderBy('members.created_at asc')
       .execute();
+
+    const memberIds = members.map((member) => member.id);
+    const [teamAssignments, gameAssignments] = await Promise.all([
+      this.findTeamAssignments(memberIds),
+      this.findGameAssignments(memberIds),
+    ]);
+
+    return members.map((member) => ({
+      ...member,
+      gameAssignments: gameAssignments.get(member.id) ?? [],
+      teamAssignments: teamAssignments.get(member.id) ?? [],
+    }));
   }
 
   async findOne(organizationId: string, memberId: string) {
@@ -73,70 +110,360 @@ export class OrganizationMemberService {
   async update(
     organizationId: string,
     memberId: string,
+    access: OrganizationAccessContext,
     updateOrganizationMemberDto: UpdateOrganizationMemberDto,
   ) {
     const member = await this.findOne(organizationId, memberId);
 
-    if (
-      member.role === AUTH_ROLES.OWNER &&
-      updateOrganizationMemberDto.role &&
-      updateOrganizationMemberDto.role !== AUTH_ROLES.OWNER
-    ) {
-      await this.assertAnotherOwnerExists(organizationId, memberId);
+    if (member.id === access.membershipId) {
+      if (
+        updateOrganizationMemberDto.role &&
+        updateOrganizationMemberDto.role !== member.role
+      ) {
+        throw new ForbiddenException('Owners cannot change their own role');
+      }
+
+      if (
+        updateOrganizationMemberDto.status &&
+        updateOrganizationMemberDto.status !== member.status
+      ) {
+        throw new ForbiddenException('Owners cannot suspend themselves');
+      }
     }
-
-    if (
-      member.role === AUTH_ROLES.OWNER &&
-      updateOrganizationMemberDto.status &&
-      updateOrganizationMemberDto.status !== 'active'
-    ) {
-      await this.assertAnotherOwnerExists(organizationId, memberId);
-    }
-
-    return this.db
-      .updateTable('admin.organization_members')
-      .set({
-        role: updateOrganizationMemberDto.role,
-        status: updateOrganizationMemberDto.status,
-        updated_at: new Date(),
-      })
-      .where('id', '=', memberId)
-      .returningAll()
-      .executeTakeFirstOrThrow();
-  }
-
-  async remove(organizationId: string, memberId: string) {
-    const member = await this.findOne(organizationId, memberId);
 
     if (member.role === AUTH_ROLES.OWNER) {
-      await this.assertAnotherOwnerExists(organizationId, memberId);
+      throw new BadRequestException('Use ownership transfer to change owner');
     }
 
-    await this.db
-      .deleteFrom('admin.organization_members')
-      .where('id', '=', memberId)
-      .execute();
+    const updated = await (this.db as any)
+      .transaction()
+      .execute(async (trx) => {
+        const nextRole =
+          (updateOrganizationMemberDto.role as AuthRole | undefined) ??
+          (member.role as AuthRole);
+
+        if (updateOrganizationMemberDto.role) {
+          await this.clearIncompatibleAssignmentsInTransaction(
+            trx,
+            memberId,
+            nextRole,
+          );
+        }
+
+        return trx
+          .updateTable('admin.organization_members')
+          .set({
+            role: updateOrganizationMemberDto.role,
+            status: updateOrganizationMemberDto.status,
+            updated_at: new Date(),
+          })
+          .where('id', '=', memberId)
+          .returningAll()
+          .executeTakeFirstOrThrow();
+      });
+
+    await this.writeAudit(access, 'member.updated', 'member', memberId, {
+      role: updated.role,
+      status: updated.status,
+    });
+
+    return updated;
+  }
+
+  async updateTeamAssignments(
+    organizationId: string,
+    memberId: string,
+    access: OrganizationAccessContext,
+    teamIds: string[],
+  ) {
+    const member = await this.findOne(organizationId, memberId);
+
+    if (member.role !== AUTH_ROLES.TEAM_MANAGER || member.status !== 'active') {
+      throw new BadRequestException(
+        'Team assignments require an active team manager',
+      );
+    }
+
+    await this.assertTeamsBelongToOrganization(organizationId, teamIds);
+
+    await (this.db as any).transaction().execute(async (trx) => {
+      await trx
+        .deleteFrom('access.team_manager_assignments')
+        .where('organization_member_id', '=', memberId)
+        .execute();
+
+      if (teamIds.length) {
+        await trx
+          .insertInto('access.team_manager_assignments')
+          .values(
+            teamIds.map((teamId) => ({
+              organization_member_id: memberId,
+              team_id: teamId,
+            })),
+          )
+          .execute();
+      }
+    });
+
+    await this.writeAudit(
+      access,
+      'member.team_assignments.updated',
+      'member',
+      memberId,
+      {
+        teamIds,
+      },
+    );
+
+    return { success: true, teamIds };
+  }
+
+  async updateGameAssignments(
+    organizationId: string,
+    memberId: string,
+    access: OrganizationAccessContext,
+    gameIds: string[],
+  ) {
+    const member = await this.findOne(organizationId, memberId);
+
+    if (member.role !== AUTH_ROLES.SCOREKEEPER || member.status !== 'active') {
+      throw new BadRequestException(
+        'Game assignments require an active scorekeeper',
+      );
+    }
+
+    await this.assertGamesBelongToOrganization(organizationId, gameIds);
+
+    await (this.db as any).transaction().execute(async (trx) => {
+      await trx
+        .deleteFrom('access.game_scorekeeper_assignments')
+        .where('organization_member_id', '=', memberId)
+        .execute();
+
+      if (gameIds.length) {
+        await trx
+          .insertInto('access.game_scorekeeper_assignments')
+          .values(
+            gameIds.map((gameId) => ({
+              game_id: gameId,
+              organization_member_id: memberId,
+            })),
+          )
+          .execute();
+      }
+    });
+
+    await this.writeAudit(
+      access,
+      'member.game_assignments.updated',
+      'member',
+      memberId,
+      {
+        gameIds,
+      },
+    );
+
+    return { gameIds, success: true };
+  }
+
+  async transferOwnership(
+    organizationId: string,
+    access: OrganizationAccessContext,
+    transferOwnershipDto: TransferOwnershipDto,
+  ) {
+    const organization = await this.db
+      .selectFrom('admin.organizations')
+      .select(['slug'])
+      .where('id', '=', organizationId)
+      .executeTakeFirst();
+
+    if (!organization) {
+      throw new NotFoundException('Organization not found');
+    }
+
+    if (transferOwnershipDto.confirmationSlug !== organization.slug) {
+      throw new BadRequestException('Confirmation slug does not match');
+    }
+
+    const target = await this.findOne(
+      organizationId,
+      transferOwnershipDto.targetMemberId,
+    );
+
+    if (target.role !== AUTH_ROLES.ADMIN || target.status !== 'active') {
+      throw new BadRequestException(
+        'Ownership can transfer only to an active admin',
+      );
+    }
+
+    await (this.db as any).transaction().execute(async (trx) => {
+      await trx
+        .updateTable('admin.organization_members')
+        .set({
+          role: AUTH_ROLES.ADMIN,
+          updated_at: new Date(),
+        })
+        .where('id', '=', access.membershipId)
+        .where('organization_id', '=', organizationId)
+        .where('role', '=', AUTH_ROLES.OWNER)
+        .execute();
+
+      await trx
+        .updateTable('admin.organization_members')
+        .set({
+          role: AUTH_ROLES.OWNER,
+          updated_at: new Date(),
+        })
+        .where('id', '=', target.id)
+        .where('organization_id', '=', organizationId)
+        .where('status', '=', 'active')
+        .execute();
+    });
+
+    await this.writeAudit(
+      access,
+      'ownership.transferred',
+      'member',
+      transferOwnershipDto.targetMemberId,
+      { previousOwnerMemberId: access.membershipId },
+    );
 
     return { success: true };
   }
 
-  private async assertAnotherOwnerExists(
-    organizationId: string,
+  private async clearIncompatibleAssignmentsInTransaction(
+    trx: any,
     memberId: string,
-  ): Promise<void> {
-    const anotherOwner = await this.db
-      .selectFrom('admin.organization_members')
-      .select(['id'])
-      .where('organization_id', '=', organizationId)
-      .where('id', '!=', memberId)
-      .where('role', '=', AUTH_ROLES.OWNER)
-      .where('status', '=', 'active')
-      .executeTakeFirst();
+    role: AuthRole,
+  ) {
+    if (role !== AUTH_ROLES.TEAM_MANAGER) {
+      await trx
+        .deleteFrom('access.team_manager_assignments')
+        .where('organization_member_id', '=', memberId)
+        .execute();
+    }
 
-    if (!anotherOwner) {
-      throw new BadRequestException(
-        'Organization must keep at least one active owner',
-      );
+    if (role !== AUTH_ROLES.SCOREKEEPER) {
+      await trx
+        .deleteFrom('access.game_scorekeeper_assignments')
+        .where('organization_member_id', '=', memberId)
+        .execute();
+    }
+  }
+
+  private async findTeamAssignments(memberIds: string[]) {
+    const byMember = new Map<string, unknown[]>();
+
+    if (!memberIds.length) {
+      return byMember;
+    }
+
+    const rows = await (this.db as any)
+      .selectFrom('access.team_manager_assignments as assignments')
+      .innerJoin('admin.teams as teams', 'teams.id', 'assignments.team_id')
+      .select([
+        'assignments.organization_member_id',
+        'teams.id',
+        'teams.name',
+        'teams.slug',
+      ])
+      .where('assignments.organization_member_id', 'in', memberIds)
+      .execute();
+
+    for (const row of rows) {
+      const values = byMember.get(row.organization_member_id) ?? [];
+      values.push({ id: row.id, name: row.name, slug: row.slug });
+      byMember.set(row.organization_member_id, values);
+    }
+
+    return byMember;
+  }
+
+  private async findGameAssignments(memberIds: string[]) {
+    const byMember = new Map<string, unknown[]>();
+
+    if (!memberIds.length) {
+      return byMember;
+    }
+
+    const rows = await (this.db as any)
+      .selectFrom('access.game_scorekeeper_assignments as assignments')
+      .innerJoin(
+        'admin.schedule_games as games',
+        'games.id',
+        'assignments.game_id',
+      )
+      .select([
+        'assignments.organization_member_id',
+        'games.away_team_name',
+        'games.home_team_name',
+        'games.id',
+        'games.starts_at',
+      ])
+      .where('assignments.organization_member_id', 'in', memberIds)
+      .execute();
+
+    for (const row of rows) {
+      const values = byMember.get(row.organization_member_id) ?? [];
+      values.push({
+        awayTeamName: row.away_team_name,
+        homeTeamName: row.home_team_name,
+        id: row.id,
+        startsAt: row.starts_at,
+      });
+      byMember.set(row.organization_member_id, values);
+    }
+
+    return byMember;
+  }
+
+  private async assertTeamsBelongToOrganization(
+    organizationId: string,
+    teamIds: string[],
+  ) {
+    if (!teamIds.length) {
+      return;
+    }
+
+    const rows = await this.db
+      .selectFrom('admin.teams as teams')
+      .innerJoin(
+        'admin.divisions as divisions',
+        'divisions.id',
+        'teams.division_id',
+      )
+      .innerJoin(
+        'admin.league_seasons as league_seasons',
+        'league_seasons.id',
+        'divisions.league_season_id',
+      )
+      .select(['teams.id'])
+      .where('teams.id', 'in', teamIds)
+      .where('league_seasons.organization_id', '=', organizationId)
+      .execute();
+
+    if (rows.length !== teamIds.length) {
+      throw new NotFoundException('One or more teams were not found');
+    }
+  }
+
+  private async assertGamesBelongToOrganization(
+    organizationId: string,
+    gameIds: string[],
+  ) {
+    if (!gameIds.length) {
+      return;
+    }
+
+    const rows = await (this.db as any)
+      .selectFrom('admin.schedule_games')
+      .select(['id'])
+      .where('id', 'in', gameIds)
+      .where('organization_id', '=', organizationId)
+      .execute();
+
+    if (rows.length !== gameIds.length) {
+      throw new NotFoundException('One or more games were not found');
     }
   }
 
@@ -164,5 +491,25 @@ export class OrganizationMemberService {
     if (!user) {
       throw new NotFoundException('User not found');
     }
+  }
+
+  private async writeAudit(
+    access: OrganizationAccessContext,
+    action: string,
+    targetType: string,
+    targetId: string,
+    metadata: Record<string, unknown>,
+  ) {
+    await (this.db as any)
+      .insertInto('access.audit_events')
+      .values({
+        action,
+        actor_member_id: access.membershipId,
+        metadata,
+        organization_id: access.organizationId,
+        target_id: targetId,
+        target_type: targetType,
+      })
+      .execute();
   }
 }
