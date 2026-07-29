@@ -272,6 +272,67 @@ export interface PublicPortalOrganizations {
   season_slug: string | null;
 }
 
+export interface ScoringGameControlSessions {
+  claimed_at: Generated<Timestamp>;
+  control_token_hash: string;
+  created_at: Generated<Timestamp>;
+  device_label: string | null;
+  expires_at: Timestamp;
+  game_id: string;
+  id: Generated<string>;
+  last_heartbeat_at: Generated<Timestamp>;
+  organization_member_id: string;
+  release_reason: string | null;
+  released_at: Timestamp | null;
+  taken_over_by_session_id: string | null;
+  takeover_reason: string | null;
+}
+
+export interface ScoringGameEvents {
+  actor_member_id: string | null;
+  created_at: Generated<Timestamp>;
+  game_clock_remaining_ms: number;
+  game_id: string;
+  id: Generated<string>;
+  idempotency_key: string;
+  occurred_at_client: Timestamp | null;
+  occurred_at_server: Generated<Timestamp>;
+  overtime_number: Generated<number>;
+  payload: Generated<Json>;
+  period_number: number;
+  reverses_event_id: string | null;
+  sequence: number;
+  shot_clock_remaining_ms: number;
+  type: string;
+}
+
+export interface ScoringGameStates {
+  away_score: Generated<number>;
+  away_team_fouls: Generated<number>;
+  created_at: Generated<Timestamp>;
+  current_period_number: Generated<number>;
+  game_clock_remaining_ms: Generated<number>;
+  game_clock_running: Generated<boolean>;
+  game_clock_started_at: Timestamp | null;
+  game_id: string;
+  home_score: Generated<number>;
+  home_team_fouls: Generated<number>;
+  id: Generated<string>;
+  latest_reversible_event_id: string | null;
+  overtime_duration_ms: Generated<number>;
+  overtime_number: Generated<number>;
+  period_duration_ms: Generated<number>;
+  phase: Generated<string>;
+  regulation_periods: Generated<number>;
+  shot_clock_full_ms: Generated<number>;
+  shot_clock_remaining_ms: Generated<number>;
+  shot_clock_running: Generated<boolean>;
+  shot_clock_short_ms: Generated<number>;
+  shot_clock_started_at: Timestamp | null;
+  updated_at: Generated<Timestamp>;
+  version: Generated<number>;
+}
+
 export interface DB {
   "access.audit_events": AccessAuditEvents;
   "access.game_scorekeeper_assignments": AccessGameScorekeeperAssignments;
@@ -294,4 +355,7 @@ export interface DB {
   "competition.games": CompetitionGames;
   "public_portal.league_shells": PublicPortalLeagueShells;
   "public_portal.organizations": PublicPortalOrganizations;
+  "scoring.game_control_sessions": ScoringGameControlSessions;
+  "scoring.game_events": ScoringGameEvents;
+  "scoring.game_states": ScoringGameStates;
 }
