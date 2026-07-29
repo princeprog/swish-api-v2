@@ -51,7 +51,12 @@ export class ScoringController {
     @OrganizationAccess() access: OrganizationAccessContext,
     @Query() query: ScoringEventsQueryDto,
   ) {
-    return this.scoringService.listEvents(organizationId, gameId, access, query);
+    return this.scoringService.listEvents(
+      organizationId,
+      gameId,
+      access,
+      query,
+    );
   }
 
   @Post('control/claim')

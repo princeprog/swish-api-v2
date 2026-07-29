@@ -51,9 +51,7 @@ describe('scoring engine', () => {
     );
 
     expect(twoPoints.state.homeScore).toBe(2);
-    expect(twoPoints.state.latestReversibleEvent?.summary).toBe(
-      'Home +2',
-    );
+    expect(twoPoints.state.latestReversibleEvent?.summary).toBe('Home +2');
 
     expect(() =>
       applyScoringCommand(
@@ -126,7 +124,9 @@ describe('scoring engine', () => {
     );
 
     expect(reversed.state.awayScore).toBe(0);
-    expect(reversed.event.reversesEventId).toBe(scored.latestReversibleEvent?.id);
+    expect(reversed.event.reversesEventId).toBe(
+      scored.latestReversibleEvent?.id,
+    );
     expect(reversed.state.latestReversibleEvent).toBeNull();
   });
 

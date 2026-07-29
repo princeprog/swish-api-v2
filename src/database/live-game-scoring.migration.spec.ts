@@ -24,9 +24,7 @@ describe('live game scoring migration', () => {
   });
 
   it('enforces nonnegative basketball state and one active scoring controller', () => {
-    expect(migrationSource).toContain(
-      'game_states_nonnegative_values_check',
-    );
+    expect(migrationSource).toContain('game_states_nonnegative_values_check');
     expect(migrationSource).toContain(
       'game_control_sessions_one_active_per_game',
     );
@@ -40,9 +38,9 @@ describe('live game scoring migration', () => {
     expect(
       downSource.indexOf("dropTable('scoring.game_control_sessions')"),
     ).toBeLessThan(downSource.indexOf("dropTable('scoring.game_events')"));
-    expect(
-      downSource.indexOf("dropTable('scoring.game_events')"),
-    ).toBeLessThan(downSource.indexOf("dropTable('scoring.game_states')"));
+    expect(downSource.indexOf("dropTable('scoring.game_events')")).toBeLessThan(
+      downSource.indexOf("dropTable('scoring.game_states')"),
+    );
     expect(downSource).toContain("dropSchema('scoring')");
   });
 });

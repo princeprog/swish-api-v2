@@ -72,10 +72,7 @@ export class ScoringService {
   ) {
     const now = new Date();
     const game = await this.findGameForScoring(organizationId, gameId, access);
-    const state = materializeClocks(
-      await this.ensureScoringState(game),
-      now,
-    );
+    const state = materializeClocks(await this.ensureScoringState(game), now);
     const control = await this.getControlStatus(gameId, access, now);
 
     return this.toStateResponse(game, state, control, now);
@@ -135,10 +132,16 @@ export class ScoringService {
       .returning(['id', 'expires_at'])
       .executeTakeFirstOrThrow();
 
-    await this.audit(organizationId, access, 'scoring.control.claimed', gameId, {
-      deviceLabel,
-      sessionId: session.id,
-    });
+    await this.audit(
+      organizationId,
+      access,
+      'scoring.control.claimed',
+      gameId,
+      {
+        deviceLabel,
+        sessionId: session.id,
+      },
+    );
 
     return {
       controlToken,
@@ -197,37 +200,45 @@ export class ScoringService {
     }
 
     const controlToken = randomBytes(32).toString('base64url');
-    const session = await (this.db as any).transaction().execute(async (trx) => {
-      if (existing) {
-        await trx
-          .updateTable('scoring.game_control_sessions')
-          .set({
-            released_at: now,
-            release_reason: 'takeover',
-            takeover_reason: input.reason,
+    const session = await (this.db as any)
+      .transaction()
+      .execute(async (trx) => {
+        if (existing) {
+          await trx
+            .updateTable('scoring.game_control_sessions')
+            .set({
+              released_at: now,
+              release_reason: 'takeover',
+              takeover_reason: input.reason,
+            })
+            .where('id', '=', existing.id)
+            .execute();
+        }
+
+        return trx
+          .insertInto('scoring.game_control_sessions')
+          .values({
+            control_token_hash: this.hashToken(controlToken),
+            device_label: input.deviceLabel,
+            expires_at: new Date(now.getTime() + 120000),
+            game_id: gameId,
+            last_heartbeat_at: now,
+            organization_member_id: access.membershipId,
           })
-          .where('id', '=', existing.id)
-          .execute();
-      }
+          .returning(['id', 'expires_at'])
+          .executeTakeFirstOrThrow();
+      });
 
-      return trx
-        .insertInto('scoring.game_control_sessions')
-        .values({
-          control_token_hash: this.hashToken(controlToken),
-          device_label: input.deviceLabel,
-          expires_at: new Date(now.getTime() + 120000),
-          game_id: gameId,
-          last_heartbeat_at: now,
-          organization_member_id: access.membershipId,
-        })
-        .returning(['id', 'expires_at'])
-        .executeTakeFirstOrThrow();
-    });
-
-    await this.audit(organizationId, access, 'scoring.control.taken_over', gameId, {
-      reason: input.reason,
-      sessionId: session.id,
-    });
+    await this.audit(
+      organizationId,
+      access,
+      'scoring.control.taken_over',
+      gameId,
+      {
+        reason: input.reason,
+        sessionId: session.id,
+      },
+    );
 
     return {
       controlToken,
@@ -260,9 +271,15 @@ export class ScoringService {
       .where('id', '=', session.id)
       .execute();
 
-    await this.audit(organizationId, access, 'scoring.control.released', gameId, {
-      sessionId: session.id,
-    });
+    await this.audit(
+      organizationId,
+      access,
+      'scoring.control.released',
+      gameId,
+      {
+        sessionId: session.id,
+      },
+    );
 
     return { success: true };
   }
@@ -280,104 +297,102 @@ export class ScoringService {
   ) {
     const now = new Date();
     const game = await this.findGameForScoring(organizationId, gameId, access);
-    await this.assertControlSession(
-      gameId,
-      access,
-      input.controlToken,
-      false,
-    );
+    await this.assertControlSession(gameId, access, input.controlToken, false);
 
     try {
-      const result = await (this.db as any).transaction().execute(async (trx) => {
-        const existingEvent = await trx
-          .selectFrom('scoring.game_events')
-          .selectAll()
-          .where('game_id', '=', gameId)
-          .where('idempotency_key', '=', input.command.idempotencyKey)
-          .executeTakeFirst();
+      const result = await (this.db as any)
+        .transaction()
+        .execute(async (trx) => {
+          const existingEvent = await trx
+            .selectFrom('scoring.game_events')
+            .selectAll()
+            .where('game_id', '=', gameId)
+            .where('idempotency_key', '=', input.command.idempotencyKey)
+            .executeTakeFirst();
 
-        if (existingEvent) {
-          const state = await this.ensureScoringState(game, trx);
+          if (existingEvent) {
+            const state = await this.ensureScoringState(game, trx);
+            return {
+              event: existingEvent,
+              state: this.toStateResponse(
+                game,
+                state,
+                await this.getControlStatus(gameId, access, now, trx),
+                now,
+              ),
+            };
+          }
+
+          const lockedState = await this.ensureScoringState(game, trx, true);
+          if (lockedState.version !== input.expectedVersion) {
+            throw new ConflictException({
+              code: 'STALE_SCORING_STATE',
+              message: 'The scoring state has changed',
+            });
+          }
+
+          const applied = applyScoringCommand(lockedState, input.command, now);
+
+          const insertedEvent = await this.insertEvent(
+            trx,
+            gameId,
+            access.membershipId,
+            applied.event,
+            input.occurredAt,
+          );
+          await this.updateProjection(
+            trx,
+            gameId,
+            applied.state,
+            insertedEvent.id,
+          );
+
+          if (input.command.type === 'game.finalize') {
+            await trx
+              .updateTable('competition.games')
+              .set({
+                away_score: applied.state.awayScore,
+                finalized_at: now,
+                home_score: applied.state.homeScore,
+                status: 'final',
+                updated_at: now,
+              })
+              .where('id', '=', gameId)
+              .execute();
+          }
+
+          if (input.command.type === 'game.reopen') {
+            await trx
+              .updateTable('competition.games')
+              .set({
+                finalized_at: null,
+                status: 'reopened',
+                updated_at: now,
+              })
+              .where('id', '=', gameId)
+              .execute();
+          }
+
+          const responseState = {
+            ...applied.state,
+            latestReversibleEvent: applied.state.latestReversibleEvent
+              ? {
+                  ...applied.state.latestReversibleEvent,
+                  id: insertedEvent.id,
+                }
+              : null,
+          };
+
           return {
-            event: existingEvent,
+            event: insertedEvent,
             state: this.toStateResponse(
               game,
-              state,
+              responseState,
               await this.getControlStatus(gameId, access, now, trx),
               now,
             ),
           };
-        }
-
-        const lockedState = await this.ensureScoringState(game, trx, true);
-        if (lockedState.version !== input.expectedVersion) {
-          throw new ConflictException({
-            code: 'STALE_SCORING_STATE',
-            message: 'The scoring state has changed',
-          });
-        }
-
-        const applied = applyScoringCommand(
-          lockedState,
-          input.command,
-          now,
-        );
-
-        const insertedEvent = await this.insertEvent(
-          trx,
-          gameId,
-          access.membershipId,
-          applied.event,
-          input.occurredAt,
-        );
-        await this.updateProjection(trx, gameId, applied.state, insertedEvent.id);
-
-        if (input.command.type === 'game.finalize') {
-          await trx
-            .updateTable('competition.games')
-            .set({
-              away_score: applied.state.awayScore,
-              finalized_at: now,
-              home_score: applied.state.homeScore,
-              status: 'final',
-              updated_at: now,
-            })
-            .where('id', '=', gameId)
-            .execute();
-        }
-
-        if (input.command.type === 'game.reopen') {
-          await trx
-            .updateTable('competition.games')
-            .set({
-              finalized_at: null,
-              status: 'reopened',
-              updated_at: now,
-            })
-            .where('id', '=', gameId)
-            .execute();
-        }
-
-        const responseState = {
-          ...applied.state,
-          latestReversibleEvent: applied.state.latestReversibleEvent
-            ? {
-                ...applied.state.latestReversibleEvent,
-                id: insertedEvent.id,
-              }
-            : null,
-        };
-
-        return {
-          event: insertedEvent,
-          state: this.toStateResponse(
-            game,
-            responseState,
-            await this.getControlStatus(gameId, access, now, trx),
-            now,
-          ),
-        };
-      });
+        });
 
       return result;
     } catch (error) {
@@ -532,13 +547,19 @@ export class ScoringService {
       .where('organization_id', '=', organizationId)
       .where('id', '=', gameId);
 
-    if (!access.permissions.includes(ORGANIZATION_PERMISSIONS.GAME_SCORE_OVERRIDE)) {
+    if (
+      !access.permissions.includes(ORGANIZATION_PERMISSIONS.GAME_SCORE_OVERRIDE)
+    ) {
       query = query.where((eb) =>
         eb.exists(
           eb
             .selectFrom('access.game_scorekeeper_assignments as assignments')
             .select('assignments.id')
-            .where('assignments.organization_member_id', '=', access.membershipId)
+            .where(
+              'assignments.organization_member_id',
+              '=',
+              access.membershipId,
+            )
             .whereRef('assignments.game_id', '=', 'admin.schedule_games.id'),
         ),
       );

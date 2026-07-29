@@ -392,7 +392,10 @@ export function applyScoringCommand(
   };
 }
 
-export function materializeClocks(state: ScoringState, now: Date): ScoringState {
+export function materializeClocks(
+  state: ScoringState,
+  now: Date,
+): ScoringState {
   const next = cloneState(state);
 
   if (next.gameClockRunning && next.gameClockStartedAt) {
@@ -400,9 +403,11 @@ export function materializeClocks(state: ScoringState, now: Date): ScoringState 
       0,
       now.getTime() - next.gameClockStartedAt.getTime(),
     );
-    next.gameClockRemainingMs = Math.max(0, next.gameClockRemainingMs - elapsedMs);
-    next.gameClockStartedAt =
-      next.gameClockRemainingMs > 0 ? now : null;
+    next.gameClockRemainingMs = Math.max(
+      0,
+      next.gameClockRemainingMs - elapsedMs,
+    );
+    next.gameClockStartedAt = next.gameClockRemainingMs > 0 ? now : null;
 
     if (next.gameClockRemainingMs === 0) {
       next.gameClockRunning = false;
@@ -416,7 +421,10 @@ export function materializeClocks(state: ScoringState, now: Date): ScoringState 
       0,
       now.getTime() - next.shotClockStartedAt.getTime(),
     );
-    next.shotClockRemainingMs = Math.max(0, next.shotClockRemainingMs - elapsedMs);
+    next.shotClockRemainingMs = Math.max(
+      0,
+      next.shotClockRemainingMs - elapsedMs,
+    );
     next.shotClockStartedAt =
       next.shotClockRemainingMs > 0 && next.shotClockRunning ? now : null;
 
@@ -535,10 +543,7 @@ function currentPeriodDuration(state: ScoringState) {
     : state.periodDurationMs;
 }
 
-function resolveTeamSide(
-  state: ScoringState,
-  teamId: string,
-): ScoringTeamSide {
+function resolveTeamSide(state: ScoringState, teamId: string): ScoringTeamSide {
   if (teamId === state.homeTeamId) {
     return 'home';
   }

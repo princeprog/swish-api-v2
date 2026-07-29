@@ -58,10 +58,10 @@ export class OrganizationPermissionsGuard implements CanActivate {
           alternativePermissions,
         )
       : await this.authorizationService.assertOrganizationPermissions(
-        request.user.id,
-        organizationId,
+          request.user.id,
+          organizationId,
           requiredPermissions ?? [],
-      );
+        );
 
     return true;
   }

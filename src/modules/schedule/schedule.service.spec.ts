@@ -234,9 +234,9 @@ describe('ScheduleService assigned game access', () => {
     const service = new ScheduleService(db as never);
     const access = createOrganizationAccessContext();
 
-    await expect(service.findOne('org-1', 'game-2', access)).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
+    await expect(
+      service.findOne('org-1', 'game-2', access),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('keeps owner and admin game reads organization-wide', async () => {
