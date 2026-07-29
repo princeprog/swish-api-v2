@@ -163,4 +163,98 @@ describe('scoring engine', () => {
       ),
     ).toThrow('Tied games must continue to overtime');
   });
+
+  it('validates pregame clock settings and blocks a short reset longer than full reset', () => {
+    const state = createInitialScoringState(game);
+
+    const configured = applyScoringCommand(
+      state,
+      {
+        idempotencyKey: 'configure',
+        payload: {
+          overtimeDurationMs: 240000,
+          periodDurationMs: 480000,
+          shotClockFullMs: 30000,
+          shotClockShortMs: 15000,
+        },
+        type: 'game.configure',
+      },
+      new Date('2026-07-29T10:00:00.000Z'),
+    ).state;
+
+    expect(configured.gameClockRemainingMs).toBe(480000);
+    expect(configured.shotClockFullMs).toBe(30000);
+
+    expect(() =>
+      applyScoringCommand(
+        state,
+        {
+          idempotencyKey: 'bad-configure',
+          payload: {
+            shotClockFullMs: 12000,
+            shotClockShortMs: 14000,
+          },
+          type: 'game.configure',
+        },
+        new Date('2026-07-29T10:00:01.000Z'),
+      ),
+    ).toThrow('Short reset cannot exceed the full shot clock');
+  });
+
+  it('stops only the shot clock when the shot clock expires first', () => {
+    const state = createInitialScoringState(game);
+    const started = applyScoringCommand(
+      {
+        ...state,
+        gameClockRemainingMs: 120000,
+        shotClockRemainingMs: 5000,
+      },
+      {
+        idempotencyKey: 'start',
+        type: 'clocks.start',
+      },
+      new Date('2026-07-29T10:00:00.000Z'),
+    ).state;
+
+    const materialized = applyScoringCommand(
+      started,
+      {
+        idempotencyKey: 'score-after-expired-shot',
+        payload: { points: 1, teamId: 'home-team' },
+        type: 'score.record',
+      },
+      new Date('2026-07-29T10:00:06.000Z'),
+    ).state;
+
+    expect(materialized.shotClockRemainingMs).toBe(0);
+    expect(materialized.shotClockRunning).toBe(false);
+    expect(materialized.gameClockRemainingMs).toBe(114000);
+    expect(materialized.gameClockRunning).toBe(true);
+  });
+
+  it('advances tied regulation to overtime before finalization can succeed', () => {
+    const tiedAtEndOfRegulation = {
+      ...createInitialScoringState(game),
+      awayScore: 62,
+      currentPeriodNumber: 4,
+      gameClockRemainingMs: 0,
+      homeScore: 62,
+      phase: 'period_break' as const,
+      shotClockRemainingMs: 0,
+    };
+
+    const overtime = applyScoringCommand(
+      tiedAtEndOfRegulation,
+      {
+        idempotencyKey: 'start-ot',
+        type: 'period.start',
+      },
+      new Date('2026-07-29T11:30:00.000Z'),
+    ).state;
+
+    expect(overtime.overtimeNumber).toBe(1);
+    expect(overtime.currentPeriodNumber).toBe(4);
+    expect(overtime.gameClockRemainingMs).toBe(300000);
+    expect(overtime.homeTeamFouls).toBe(0);
+  });
 });
