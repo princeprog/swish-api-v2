@@ -1,4 +1,9 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  AUTH_ROLES,
+  ORGANIZATION_PERMISSIONS,
+  type OrganizationAccessContext,
+} from '../../common/auth/roles';
 import { ScheduleService } from './schedule.service';
 
 function createDbMock() {
@@ -40,6 +45,44 @@ function createDbMock() {
     executeTakeFirst,
     updateExecuteTakeFirstOrThrow,
     updateSet,
+  };
+}
+
+function createOrganizationAccessContext(
+  overrides: Partial<OrganizationAccessContext> = {},
+): OrganizationAccessContext {
+  return {
+    membershipId: 'membership-1',
+    organizationId: 'org-1',
+    permissions: [ORGANIZATION_PERMISSIONS.GAMES_READ_ASSIGNED],
+    role: AUTH_ROLES.SCOREKEEPER,
+    userId: 'user-1',
+    ...overrides,
+  };
+}
+
+function createExpressionBuilderMock() {
+  const assignedGamesSubquery = {
+    select: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    whereRef: jest.fn().mockReturnThis(),
+  };
+  const expressionBuilder = Object.assign(
+    jest.fn((left: string, operator: string, right: string) => ({
+      left,
+      operator,
+      right,
+    })),
+    {
+      exists: jest.fn((query) => ({ kind: 'exists', query })),
+      or: jest.fn((expressions) => ({ kind: 'or', expressions })),
+      selectFrom: jest.fn().mockReturnValue(assignedGamesSubquery),
+    },
+  );
+
+  return {
+    assignedGamesSubquery,
+    expressionBuilder,
   };
 }
 
@@ -96,5 +139,97 @@ describe('ScheduleService list filters', () => {
     expect(query.where).toHaveBeenCalledWith(expect.any(Function));
     expect(query.orderBy).toHaveBeenCalledWith('division_name asc');
     expect(query.orderBy).toHaveBeenCalledWith('starts_at asc');
+  });
+});
+
+describe('ScheduleService assigned game access', () => {
+  it('scopes scorekeeper list queries to games assigned to their membership', async () => {
+    const { db } = createDbMock();
+    const service = new ScheduleService(db as never);
+    const access = createOrganizationAccessContext();
+
+    await service.findAll('org-1', access);
+
+    const query = db.selectFrom.mock.results[0].value;
+    const scopeCallback = query.where.mock.calls.find(
+      ([argument]) => typeof argument === 'function',
+    )?.[0];
+    const { assignedGamesSubquery, expressionBuilder } =
+      createExpressionBuilderMock();
+
+    scopeCallback(expressionBuilder);
+
+    expect(expressionBuilder.selectFrom).toHaveBeenCalledWith(
+      'access.game_scorekeeper_assignments as assigned_games',
+    );
+    expect(assignedGamesSubquery.where).toHaveBeenCalledWith(
+      'assigned_games.organization_member_id',
+      '=',
+      'membership-1',
+    );
+    expect(assignedGamesSubquery.whereRef).toHaveBeenCalledWith(
+      'assigned_games.game_id',
+      '=',
+      'admin.schedule_games.id',
+    );
+  });
+
+  it('uses the same scorekeeper assignment scope when retrieving one assigned game', async () => {
+    const { db } = createDbMock();
+    const service = new ScheduleService(db as never);
+    const access = createOrganizationAccessContext();
+
+    await service.findOne('org-1', 'game-1', access);
+
+    const query = db.selectFrom.mock.results[0].value;
+    expect(query.where).toHaveBeenCalledWith('organization_id', '=', 'org-1');
+    expect(query.where).toHaveBeenCalledWith('id', '=', 'game-1');
+
+    const scopeCallback = query.where.mock.calls.find(
+      ([argument]) => typeof argument === 'function',
+    )?.[0];
+    const { assignedGamesSubquery, expressionBuilder } =
+      createExpressionBuilderMock();
+
+    scopeCallback(expressionBuilder);
+
+    expect(assignedGamesSubquery.where).toHaveBeenCalledWith(
+      'assigned_games.organization_member_id',
+      '=',
+      'membership-1',
+    );
+    expect(assignedGamesSubquery.whereRef).toHaveBeenCalledWith(
+      'assigned_games.game_id',
+      '=',
+      'admin.schedule_games.id',
+    );
+  });
+
+  it('returns not found when an unassigned game is outside the scorekeeper scope', async () => {
+    const { db, executeTakeFirst } = createDbMock();
+    executeTakeFirst.mockResolvedValueOnce(undefined);
+    const service = new ScheduleService(db as never);
+    const access = createOrganizationAccessContext();
+
+    await expect(service.findOne('org-1', 'game-2', access)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it('keeps owner and admin game reads organization-wide', async () => {
+    const { db } = createDbMock();
+    const service = new ScheduleService(db as never);
+    const adminAccess = createOrganizationAccessContext({
+      permissions: [
+        ORGANIZATION_PERMISSIONS.GAMES_READ_ASSIGNED,
+        ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE,
+      ],
+      role: AUTH_ROLES.ADMIN,
+    });
+
+    await service.findAll('org-1', adminAccess);
+
+    const query = db.selectFrom.mock.results[0].value;
+    expect(query.where).not.toHaveBeenCalledWith(expect.any(Function));
   });
 });
