@@ -313,6 +313,7 @@ export function applyScoringCommand(
       next.shotClockStartedAt = next.shotClockRunning ? now : null;
       break;
     case 'score.record': {
+      assertPeriodActionAvailable(next);
       const side = resolveTeamSide(next, command.payload.teamId);
       if (![1, 2, 3].includes(command.payload.points)) {
         throw new ScoringActionError(
@@ -334,6 +335,7 @@ export function applyScoringCommand(
       break;
     }
     case 'timeout.record': {
+      assertPeriodActionAvailable(next);
       assertTimeoutPhase(next);
       const side = resolveTeamSide(next, command.payload.teamId);
 
@@ -369,6 +371,7 @@ export function applyScoringCommand(
       break;
     }
     case 'team_foul.record': {
+      assertPeriodActionAvailable(next);
       const side = resolveTeamSide(next, command.payload.teamId);
       if (side === 'home') {
         next.homeTeamFouls += 1;
@@ -535,6 +538,15 @@ function assertDurationRange(
     throw new ScoringActionError(
       'INVALID_DURATION',
       `${field} must be between ${min} and ${max} milliseconds`,
+    );
+  }
+}
+
+function assertPeriodActionAvailable(state: ScoringState) {
+  if (state.gameClockRemainingMs <= 0) {
+    throw new ScoringActionError(
+      'PERIOD_ENDED',
+      'This period has ended. Start the next period before recording more actions.',
     );
   }
 }

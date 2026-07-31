@@ -163,6 +163,42 @@ describe('scoring engine', () => {
     );
   });
 
+  it('blocks scoring actions when the period clock has reached zero', () => {
+    const endedPeriod = {
+      ...createInitialScoringState(game),
+      phase: 'paused' as const,
+      gameClockRemainingMs: 0,
+    };
+
+    for (const command of [
+      {
+        idempotencyKey: 'score-after-period',
+        payload: { points: 2, teamId: 'home-team' },
+        type: 'score.record' as const,
+      },
+      {
+        idempotencyKey: 'foul-after-period',
+        payload: { teamId: 'home-team' },
+        type: 'team_foul.record' as const,
+      },
+      {
+        idempotencyKey: 'timeout-after-period',
+        payload: { teamId: 'home-team' },
+        type: 'timeout.record' as const,
+      },
+    ]) {
+      expect(() =>
+        applyScoringCommand(
+          endedPeriod,
+          command,
+          new Date('2026-07-29T10:01:00.000Z'),
+        ),
+      ).toThrow(
+        'This period has ended. Start the next period before recording more actions.',
+      );
+    }
+  });
+
   it('marks a team in the penalty on its fourth team foul', () => {
     let state = createInitialScoringState(game);
 
