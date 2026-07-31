@@ -23,7 +23,13 @@
 
 ## Description
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+Swish League OS NestJS API.
+
+The local frontend expects this API to be running at
+`http://localhost:3001` unless `NEXT_PUBLIC_API_BASE_URL` or
+`NEXT_PUBLIC_API_URL` is configured differently. If the frontend is running but
+this API is stopped or unreachable, protected pages will keep the current
+session intact and show a temporary server connection message.
 
 ## Project setup
 

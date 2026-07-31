@@ -15,7 +15,7 @@ describe('createAppConfig', () => {
     expect(createAppConfig(validEnv)).toEqual({
       app: {
         environment: 'development',
-        port: 3000,
+        port: 3001,
         serviceName: 'swish-api-v2',
       },
       auth: {

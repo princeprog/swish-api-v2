@@ -40,7 +40,7 @@ function requireAppEnv(
 
 function parsePort(value: string | undefined): number {
   if (!value) {
-    return 3000;
+    return 3001;
   }
 
   const port = Number(value);
