@@ -101,10 +101,12 @@ describe('scoring engine', () => {
     ).state;
 
     const periodBreak = applyScoringCommand(
-      withFoul,
+      {
+        ...withFoul,
+        gameClockRemainingMs: 0,
+      },
       {
         idempotencyKey: 'period-end',
-        payload: { reason: 'Manual period advance in test' },
         type: 'period.end',
       },
       new Date('2026-07-29T10:01:00.000Z'),
@@ -122,6 +124,43 @@ describe('scoring engine', () => {
     expect(nextPeriod.currentPeriodNumber).toBe(2);
     expect(nextPeriod.awayTeamFouls).toBe(0);
     expect(nextPeriod.gameClockRemainingMs).toBe(600000);
+  });
+
+  it('blocks ending a period while time remains on the game clock', () => {
+    expect(() =>
+      applyScoringCommand(
+        {
+          ...createInitialScoringState(game),
+          phase: 'paused',
+          gameClockRemainingMs: 1000,
+        },
+        {
+          idempotencyKey: 'early-period-end',
+          payload: { reason: 'Scorekeeper pressed End period early' },
+          type: 'period.end',
+        },
+        new Date('2026-07-29T10:01:00.000Z'),
+      ),
+    ).toThrow('The period can only be ended when the game clock reaches 0:00');
+  });
+
+  it('blocks starting the next period while the previous period still has time', () => {
+    expect(() =>
+      applyScoringCommand(
+        {
+          ...createInitialScoringState(game),
+          phase: 'period_break',
+          gameClockRemainingMs: 1000,
+        },
+        {
+          idempotencyKey: 'early-next-period',
+          type: 'period.start',
+        },
+        new Date('2026-07-29T10:01:00.000Z'),
+      ),
+    ).toThrow(
+      'The next period can only start after the game clock reaches 0:00',
+    );
   });
 
   it('marks a team in the penalty on its fourth team foul', () => {
@@ -211,26 +250,32 @@ describe('scoring engine', () => {
       ),
     ).toThrow('No timeouts remain for this team in the current segment');
 
+    const quarterOneBreak = applyScoringCommand(
+      {
+        ...state,
+        gameClockRemainingMs: 0,
+      },
+      {
+        idempotencyKey: 'end-q1',
+        type: 'period.end',
+      },
+      new Date('2026-07-29T10:01:00.000Z'),
+    ).state;
+    const quarterTwo = applyScoringCommand(
+      quarterOneBreak,
+      {
+        idempotencyKey: 'start-q2',
+        type: 'period.start',
+      },
+      new Date('2026-07-29T10:01:01.000Z'),
+    ).state;
     const secondHalf = applyScoringCommand(
-      applyScoringCommand(
-        applyScoringCommand(
-          state,
-          {
-            idempotencyKey: 'end-q1',
-            payload: { reason: 'Advance timeout segment test' },
-            type: 'period.end',
-          },
-          new Date('2026-07-29T10:01:00.000Z'),
-        ).state,
-        {
-          idempotencyKey: 'start-q2',
-          type: 'period.start',
-        },
-        new Date('2026-07-29T10:01:01.000Z'),
-      ).state,
+      {
+        ...quarterTwo,
+        gameClockRemainingMs: 0,
+      },
       {
         idempotencyKey: 'end-q2',
-        payload: { reason: 'Advance timeout segment test' },
         type: 'period.end',
       },
       new Date('2026-07-29T10:02:00.000Z'),

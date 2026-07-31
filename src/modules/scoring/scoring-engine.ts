@@ -401,7 +401,10 @@ export function applyScoringCommand(
     case 'period.end':
       assertNotFinal(next);
       if (next.gameClockRemainingMs > 0) {
-        assertReason(command.payload?.reason);
+        throw new ScoringActionError(
+          'PERIOD_TIME_REMAINING',
+          'The period can only be ended when the game clock reaches 0:00',
+        );
       }
       next.phase = 'period_break';
       next.gameClockRunning = false;
@@ -411,6 +414,12 @@ export function applyScoringCommand(
       break;
     case 'period.start':
       assertNotFinal(next);
+      if (next.gameClockRemainingMs > 0) {
+        throw new ScoringActionError(
+          'PERIOD_TIME_REMAINING',
+          'The next period can only start after the game clock reaches 0:00',
+        );
+      }
       if (next.phase !== 'period_break' && next.gameClockRemainingMs > 0) {
         throw new ScoringActionError(
           'PERIOD_NOT_READY',
