@@ -411,7 +411,7 @@ export function applyScoringCommand(
       break;
     case 'period.start':
       assertNotFinal(next);
-      if (next.phase !== 'period_break') {
+      if (next.phase !== 'period_break' && next.gameClockRemainingMs > 0) {
         throw new ScoringActionError(
           'PERIOD_NOT_READY',
           'The current period must be ended before starting the next one',

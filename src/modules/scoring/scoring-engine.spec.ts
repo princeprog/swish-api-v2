@@ -455,4 +455,34 @@ describe('scoring engine', () => {
     expect(overtime.gameClockRemainingMs).toBe(300000);
     expect(overtime.homeTeamFouls).toBe(0);
   });
+
+  it('starts the next period directly when the game clock has already expired', () => {
+    const started = applyScoringCommand(
+      {
+        ...createInitialScoringState(game),
+        gameClockRemainingMs: 1000,
+      },
+      {
+        idempotencyKey: 'start-expiring-period',
+        type: 'game.start',
+      },
+      new Date('2026-07-29T10:00:00.000Z'),
+    ).state;
+
+    const nextPeriod = applyScoringCommand(
+      started,
+      {
+        idempotencyKey: 'next-period-after-expiry',
+        type: 'period.start',
+      },
+      new Date('2026-07-29T10:00:01.500Z'),
+    ).state;
+
+    expect(nextPeriod.currentPeriodNumber).toBe(2);
+    expect(nextPeriod.phase).toBe('paused');
+    expect(nextPeriod.gameClockRemainingMs).toBe(600000);
+    expect(nextPeriod.shotClockRemainingMs).toBe(24000);
+    expect(nextPeriod.gameClockRunning).toBe(false);
+    expect(nextPeriod.shotClockRunning).toBe(false);
+  });
 });
