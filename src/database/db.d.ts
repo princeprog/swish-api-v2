@@ -309,6 +309,7 @@ export interface ScoringGameEvents {
 export interface ScoringGameStates {
   away_score: Generated<number>;
   away_team_fouls: Generated<number>;
+  away_timeouts_used: Generated<number>;
   created_at: Generated<Timestamp>;
   current_period_number: Generated<number>;
   game_clock_remaining_ms: Generated<number>;
@@ -317,6 +318,7 @@ export interface ScoringGameStates {
   game_id: string;
   home_score: Generated<number>;
   home_team_fouls: Generated<number>;
+  home_timeouts_used: Generated<number>;
   id: Generated<string>;
   latest_reversible_event_id: string | null;
   overtime_duration_ms: Generated<number>;

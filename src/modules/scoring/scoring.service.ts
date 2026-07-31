@@ -41,12 +41,14 @@ type ScheduleGame = {
 type ScoringStateRow = {
   away_score: number;
   away_team_fouls: number;
+  away_timeouts_used: number;
   current_period_number: number;
   game_clock_remaining_ms: number;
   game_clock_running: boolean;
   game_clock_started_at: Date | null;
   home_score: number;
   home_team_fouls: number;
+  home_timeouts_used: number;
   latest_reversible_event_id: string | null;
   overtime_duration_ms: number;
   overtime_number: number;
@@ -331,7 +333,15 @@ export class ScoringService {
             });
           }
 
+          if (input.command.type === 'game.start' && game.status !== 'scheduled') {
+            throw new ScoringActionError(
+              'GAME_START_STATUS_INVALID',
+              'Only scheduled games can be started',
+            );
+          }
+
           const applied = applyScoringCommand(lockedState, input.command, now);
+          let responseGame = game;
 
           const insertedEvent = await this.insertEvent(
             trx,
@@ -347,6 +357,18 @@ export class ScoringService {
             insertedEvent.id,
           );
 
+          if (input.command.type === 'game.start') {
+            await trx
+              .updateTable('competition.games')
+              .set({
+                status: 'live',
+                updated_at: now,
+              })
+              .where('id', '=', gameId)
+              .execute();
+            responseGame = { ...game, status: 'live' };
+          }
+
           if (input.command.type === 'game.finalize') {
             await trx
               .updateTable('competition.games')
@@ -359,6 +381,7 @@ export class ScoringService {
               })
               .where('id', '=', gameId)
               .execute();
+            responseGame = { ...game, status: 'final' };
           }
 
           if (input.command.type === 'game.reopen') {
@@ -371,6 +394,7 @@ export class ScoringService {
               })
               .where('id', '=', gameId)
               .execute();
+            responseGame = { ...game, status: 'reopened' };
           }
 
           const responseState = {
@@ -386,7 +410,7 @@ export class ScoringService {
           return {
             event: insertedEvent,
             state: this.toStateResponse(
-              game,
+              responseGame,
               responseState,
               await this.getControlStatus(gameId, access, now, trx),
               now,
@@ -507,11 +531,13 @@ export class ScoringService {
       .values({
         away_score: initial.awayScore,
         away_team_fouls: initial.awayTeamFouls,
+        away_timeouts_used: initial.awayTimeoutsUsed,
         game_clock_remaining_ms: initial.gameClockRemainingMs,
         game_clock_running: initial.gameClockRunning,
         game_id: game.id,
         home_score: initial.homeScore,
         home_team_fouls: initial.homeTeamFouls,
+        home_timeouts_used: initial.homeTimeoutsUsed,
         overtime_duration_ms: initial.overtimeDurationMs,
         period_duration_ms: initial.periodDurationMs,
         phase: initial.phase,
@@ -587,7 +613,12 @@ export class ScoringService {
       .where('id', '=', row.latest_reversible_event_id)
       .executeTakeFirst();
 
-    if (!event || !['score.record', 'team_foul.record'].includes(event.type)) {
+    if (
+      !event ||
+      !['score.record', 'team_foul.record', 'timeout.record'].includes(
+        event.type,
+      )
+    ) {
       return null;
     }
 
@@ -664,7 +695,16 @@ export class ScoringService {
 
   private summarizeEvent(type: string, payload: Record<string, unknown>) {
     if (type === 'score.record') {
-      return `Score +${payload.points ?? ''}`.trim();
+      const points =
+        typeof payload.points === 'number' || typeof payload.points === 'string'
+          ? payload.points
+          : '';
+
+      return `Score +${points}`.trim();
+    }
+
+    if (type === 'timeout.record') {
+      return 'Timeout';
     }
 
     return 'Team foul';
@@ -675,9 +715,28 @@ export class ScoringService {
     row: ScoringStateRow,
     latestReversibleEvent: LatestReversibleScoringEvent | null,
   ): ScoringState {
+    const timeoutSegment =
+      row.overtime_number > 0
+        ? 'overtime'
+        : row.current_period_number <= 2
+          ? 'first_half'
+          : 'second_half';
+    const timeoutAllowancePerTeam =
+      timeoutSegment === 'overtime'
+        ? 1
+        : timeoutSegment === 'first_half'
+          ? 2
+          : 3;
+
     return {
       awayScore: row.away_score,
       awayTeamFouls: row.away_team_fouls,
+      awayTimeoutsRemaining: Math.max(
+        0,
+        timeoutAllowancePerTeam - row.away_timeouts_used,
+      ),
+      awayTimeoutsUsed: row.away_timeouts_used,
+      awayInPenalty: row.away_team_fouls >= 4,
       awayTeamId: game.away_team_id,
       currentPeriodNumber: row.current_period_number,
       gameClockRemainingMs: row.game_clock_remaining_ms,
@@ -686,6 +745,12 @@ export class ScoringService {
       gameId: game.id,
       homeScore: row.home_score,
       homeTeamFouls: row.home_team_fouls,
+      homeTimeoutsRemaining: Math.max(
+        0,
+        timeoutAllowancePerTeam - row.home_timeouts_used,
+      ),
+      homeTimeoutsUsed: row.home_timeouts_used,
+      homeInPenalty: row.home_team_fouls >= 4,
       homeTeamId: game.home_team_id,
       latestReversibleEvent,
       overtimeDurationMs: row.overtime_duration_ms,
@@ -699,6 +764,8 @@ export class ScoringService {
       shotClockRunning: row.shot_clock_running,
       shotClockShortMs: row.shot_clock_short_ms,
       shotClockStartedAt: row.shot_clock_started_at,
+      timeoutAllowancePerTeam,
+      timeoutSegment,
       version: row.version,
     };
   }
@@ -728,7 +795,10 @@ export class ScoringService {
       control,
       fouls: {
         away: state.awayTeamFouls,
+        awayInPenalty: state.awayInPenalty,
         home: state.homeTeamFouls,
+        homeInPenalty: state.homeInPenalty,
+        penaltyAt: 4,
       },
       game: {
         awayTeam: {
@@ -760,6 +830,18 @@ export class ScoringService {
         home: state.homeScore,
       },
       serverTime: now,
+      timeouts: {
+        allowancePerTeam: state.timeoutAllowancePerTeam,
+        away: {
+          remaining: state.awayTimeoutsRemaining,
+          used: state.awayTimeoutsUsed,
+        },
+        home: {
+          remaining: state.homeTimeoutsRemaining,
+          used: state.homeTimeoutsUsed,
+        },
+        segment: state.timeoutSegment,
+      },
       version: state.version,
     };
   }
@@ -775,12 +857,14 @@ export class ScoringService {
       .set({
         away_score: state.awayScore,
         away_team_fouls: state.awayTeamFouls,
+        away_timeouts_used: state.awayTimeoutsUsed,
         current_period_number: state.currentPeriodNumber,
         game_clock_remaining_ms: state.gameClockRemainingMs,
         game_clock_running: state.gameClockRunning,
         game_clock_started_at: state.gameClockStartedAt,
         home_score: state.homeScore,
         home_team_fouls: state.homeTeamFouls,
+        home_timeouts_used: state.homeTimeoutsUsed,
         latest_reversible_event_id: state.latestReversibleEvent
           ? insertedEventId
           : null,

@@ -22,11 +22,14 @@ export type LatestReversibleScoringEvent = {
   id: string;
   payload: Record<string, unknown>;
   summary: string;
-  type: 'score.record' | 'team_foul.record';
+  type: 'score.record' | 'team_foul.record' | 'timeout.record';
 };
 
 export type ScoringState = {
   awayScore: number;
+  awayTimeoutsRemaining: number;
+  awayTimeoutsUsed: number;
+  awayInPenalty: boolean;
   awayTeamFouls: number;
   awayTeamId: string;
   currentPeriodNumber: number;
@@ -35,6 +38,9 @@ export type ScoringState = {
   gameClockStartedAt: Date | null;
   gameId: string;
   homeScore: number;
+  homeTimeoutsRemaining: number;
+  homeTimeoutsUsed: number;
+  homeInPenalty: boolean;
   homeTeamFouls: number;
   homeTeamId: string;
   latestReversibleEvent: LatestReversibleScoringEvent | null;
@@ -49,6 +55,8 @@ export type ScoringState = {
   shotClockRunning: boolean;
   shotClockShortMs: number;
   shotClockStartedAt: Date | null;
+  timeoutAllowancePerTeam: number;
+  timeoutSegment: 'first_half' | 'second_half' | 'overtime';
   version: number;
 };
 
@@ -97,12 +105,16 @@ export type ScoringCommand =
       type: 'shot_clock.adjust';
     })
   | (BaseCommand & {
-      payload: { points: 1 | 2 | 3 | number; teamId: string };
+      payload: { points: number; teamId: string };
       type: 'score.record';
     })
   | (BaseCommand & {
       payload: { teamId: string };
       type: 'team_foul.record';
+    })
+  | (BaseCommand & {
+      payload: { teamId: string };
+      type: 'timeout.record';
     })
   | (BaseCommand & {
       payload: { eventId?: string | null; reason?: string };
@@ -130,8 +142,11 @@ export function createInitialScoringState(params: {
   homeTeamId: string;
   phase?: ScoringPhase;
 }): ScoringState {
-  return {
+  return withDerivedState({
     awayScore: params.awayScore ?? 0,
+    awayTimeoutsRemaining: 2,
+    awayTimeoutsUsed: 0,
+    awayInPenalty: false,
     awayTeamFouls: 0,
     awayTeamId: params.awayTeamId,
     currentPeriodNumber: 1,
@@ -140,6 +155,9 @@ export function createInitialScoringState(params: {
     gameClockStartedAt: null,
     gameId: params.gameId,
     homeScore: params.homeScore ?? 0,
+    homeTimeoutsRemaining: 2,
+    homeTimeoutsUsed: 0,
+    homeInPenalty: false,
     homeTeamFouls: 0,
     homeTeamId: params.homeTeamId,
     latestReversibleEvent: null,
@@ -154,8 +172,10 @@ export function createInitialScoringState(params: {
     shotClockRunning: false,
     shotClockShortMs: SCORING_DEFAULTS.shotClockShortMs,
     shotClockStartedAt: null,
+    timeoutAllowancePerTeam: 2,
+    timeoutSegment: 'first_half',
     version: 0,
-  };
+  });
 }
 
 export function applyScoringCommand(
@@ -165,7 +185,7 @@ export function applyScoringCommand(
 ): { event: ScoringEventDraft; state: ScoringState } {
   const next = materializeClocks(state, now);
   const eventId = randomUUID();
-  const eventPayload: Record<string, unknown> = commandPayload(command);
+  let eventPayload: Record<string, unknown> = commandPayload(command);
   let reversesEventId: string | null = null;
 
   switch (command.type) {
@@ -205,9 +225,28 @@ export function applyScoringCommand(
       next.shotClockRemainingMs = shotClockFullMs;
       break;
     }
-    case 'game.start':
+    case 'game.start': {
+      if (next.phase !== 'pregame') {
+        throw new ScoringActionError(
+          'GAME_ALREADY_STARTED',
+          'Game can only be started from pregame',
+        );
+      }
+      next.phase = 'live';
+      next.gameClockRunning = true;
+      next.shotClockRunning = true;
+      next.gameClockStartedAt = now;
+      next.shotClockStartedAt = now;
+      break;
+    }
     case 'clocks.start': {
       assertNotFinal(next);
+      if (next.phase === 'pregame') {
+        throw new ScoringActionError(
+          'GAME_NOT_STARTED',
+          'Use game.start before running the clocks',
+        );
+      }
       if (next.phase === 'period_break') {
         throw new ScoringActionError(
           'PERIOD_BREAK_ACTIVE',
@@ -294,6 +333,41 @@ export function applyScoringCommand(
       };
       break;
     }
+    case 'timeout.record': {
+      assertTimeoutPhase(next);
+      const side = resolveTeamSide(next, command.payload.teamId);
+
+      if (timeoutRemaining(next, side) <= 0) {
+        throw new ScoringActionError(
+          'NO_TIMEOUTS_REMAINING',
+          'No timeouts remain for this team in the current segment',
+        );
+      }
+
+      if (side === 'home') {
+        next.homeTimeoutsUsed += 1;
+      } else {
+        next.awayTimeoutsUsed += 1;
+      }
+
+      next.phase = 'paused';
+      next.gameClockRunning = false;
+      next.shotClockRunning = false;
+      next.gameClockStartedAt = null;
+      next.shotClockStartedAt = null;
+
+      eventPayload = {
+        ...eventPayload,
+        segment: timeoutSegment(next),
+      };
+      next.latestReversibleEvent = {
+        id: eventId,
+        payload: eventPayload,
+        summary: `${capitalize(side)} timeout`,
+        type: 'timeout.record',
+      };
+      break;
+    }
     case 'team_foul.record': {
       const side = resolveTeamSide(next, command.payload.teamId);
       if (side === 'home') {
@@ -353,6 +427,12 @@ export function applyScoringCommand(
       next.gameClockRemainingMs = currentPeriodDuration(next);
       next.shotClockRemainingMs = next.shotClockFullMs;
       next.phase = 'paused';
+      next.latestReversibleEvent = null;
+
+      if (next.currentPeriodNumber === 3 || next.overtimeNumber > 0) {
+        next.homeTimeoutsUsed = 0;
+        next.awayTimeoutsUsed = 0;
+      }
       break;
     case 'game.finalize':
       assertFinalizable(next);
@@ -388,7 +468,7 @@ export function applyScoringCommand(
       shotClockRemainingMs: next.shotClockRemainingMs,
       type: command.type,
     },
-    state: next,
+    state: withDerivedState(next),
   };
 }
 
@@ -433,7 +513,7 @@ export function materializeClocks(
     }
   }
 
-  return next;
+  return withDerivedState(next);
 }
 
 function assertDurationRange(
@@ -512,7 +592,7 @@ function assertReason(reason?: string) {
 }
 
 function cloneState(state: ScoringState): ScoringState {
-  return {
+  return withDerivedState({
     ...state,
     gameClockStartedAt: state.gameClockStartedAt
       ? new Date(state.gameClockStartedAt)
@@ -526,7 +606,7 @@ function cloneState(state: ScoringState): ScoringState {
     shotClockStartedAt: state.shotClockStartedAt
       ? new Date(state.shotClockStartedAt)
       : null,
-  };
+  });
 }
 
 function commandPayload(command: ScoringCommand): Record<string, unknown> {
@@ -541,6 +621,49 @@ function currentPeriodDuration(state: ScoringState) {
   return state.overtimeNumber > 0
     ? state.overtimeDurationMs
     : state.periodDurationMs;
+}
+
+function assertTimeoutPhase(state: ScoringState) {
+  if (!['live', 'paused'].includes(state.phase)) {
+    throw new ScoringActionError(
+      'TIMEOUT_PHASE_INVALID',
+      'Timeouts can only be recorded during live or paused play',
+    );
+  }
+}
+
+function timeoutAllowancePerTeam(state: ScoringState) {
+  if (state.overtimeNumber > 0) {
+    return 1;
+  }
+
+  return state.currentPeriodNumber <= 2 ? 2 : 3;
+}
+
+function timeoutRemaining(state: ScoringState, side: ScoringTeamSide) {
+  const used =
+    side === 'home' ? state.homeTimeoutsUsed : state.awayTimeoutsUsed;
+
+  return Math.max(0, timeoutAllowancePerTeam(state) - used);
+}
+
+function timeoutSegment(state: ScoringState): ScoringState['timeoutSegment'] {
+  if (state.overtimeNumber > 0) {
+    return 'overtime';
+  }
+
+  return state.currentPeriodNumber <= 2 ? 'first_half' : 'second_half';
+}
+
+function withDerivedState<T extends ScoringState>(state: T): T {
+  state.homeInPenalty = state.homeTeamFouls >= 4;
+  state.awayInPenalty = state.awayTeamFouls >= 4;
+  state.timeoutAllowancePerTeam = timeoutAllowancePerTeam(state);
+  state.timeoutSegment = timeoutSegment(state);
+  state.homeTimeoutsRemaining = timeoutRemaining(state, 'home');
+  state.awayTimeoutsRemaining = timeoutRemaining(state, 'away');
+
+  return state;
 }
 
 function resolveTeamSide(state: ScoringState, teamId: string): ScoringTeamSide {
@@ -579,6 +702,30 @@ function reverseLatestEvent(
     } else {
       state.awayScore = Math.max(0, state.awayScore - points);
     }
+    return;
+  }
+
+  if (event.type === 'timeout.record') {
+    const teamId = event.payload.teamId;
+    if (typeof teamId !== 'string') {
+      throw new ScoringActionError(
+        'INVALID_REVERSAL_PAYLOAD',
+        'Cannot reverse timeout event payload',
+      );
+    }
+
+    const side = resolveTeamSide(state, teamId);
+    if (side === 'home') {
+      state.homeTimeoutsUsed = Math.max(0, state.homeTimeoutsUsed - 1);
+    } else {
+      state.awayTimeoutsUsed = Math.max(0, state.awayTimeoutsUsed - 1);
+    }
+    state.phase = state.phase === 'live' ? 'paused' : state.phase;
+    state.gameClockRunning = false;
+    state.shotClockRunning = false;
+    state.gameClockStartedAt = null;
+    state.shotClockStartedAt = null;
+    withDerivedState(state);
     return;
   }
 
