@@ -18,6 +18,7 @@ function createContext(request: Record<string, unknown>): ExecutionContext {
 
 function createGuard() {
   const authRepository = {
+    findActiveSessionForUser: jest.fn(),
     findUserById: jest.fn(),
   };
   const tokenService = {
@@ -41,8 +42,14 @@ describe('JwtAuthGuard', () => {
       headers: {},
     };
 
-    tokenService.verifyAccessToken.mockResolvedValue({ sub: user.id });
+    tokenService.verifyAccessToken.mockResolvedValue({
+      sid: 'session-1',
+      sub: user.id,
+    });
     authRepository.findUserById.mockResolvedValue(user);
+    authRepository.findActiveSessionForUser.mockResolvedValue({
+      id: 'session-1',
+    });
 
     await expect(guard.canActivate(createContext(request))).resolves.toBe(true);
     expect(tokenService.verifyAccessToken).toHaveBeenCalledWith('cookie-token');
@@ -58,8 +65,14 @@ describe('JwtAuthGuard', () => {
       },
     };
 
-    tokenService.verifyAccessToken.mockResolvedValue({ sub: user.id });
+    tokenService.verifyAccessToken.mockResolvedValue({
+      sid: 'session-1',
+      sub: user.id,
+    });
     authRepository.findUserById.mockResolvedValue(user);
+    authRepository.findActiveSessionForUser.mockResolvedValue({
+      id: 'session-1',
+    });
 
     await expect(guard.canActivate(createContext(request))).resolves.toBe(true);
     expect(tokenService.verifyAccessToken).toHaveBeenCalledWith('header-token');
@@ -75,5 +88,44 @@ describe('JwtAuthGuard', () => {
     await expect(
       guard.canActivate(createContext(request)),
     ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('rejects access tokens without an active matching session', async () => {
+    const { authRepository, guard, tokenService } = createGuard();
+    const request = {
+      cookies: {
+        swish_access_token: 'cookie-token',
+      },
+      headers: {},
+    };
+
+    tokenService.verifyAccessToken.mockResolvedValue({
+      sid: 'session-1',
+      sub: user.id,
+    });
+    authRepository.findActiveSessionForUser.mockResolvedValue(undefined);
+
+    await expect(
+      guard.canActivate(createContext(request)),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(authRepository.findUserById).not.toHaveBeenCalled();
+  });
+
+  it('rejects legacy access tokens without a session id', async () => {
+    const { authRepository, guard, tokenService } = createGuard();
+    const request = {
+      cookies: {
+        swish_access_token: 'cookie-token',
+      },
+      headers: {},
+    };
+
+    tokenService.verifyAccessToken.mockResolvedValue({ sub: user.id });
+
+    await expect(
+      guard.canActivate(createContext(request)),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(authRepository.findActiveSessionForUser).not.toHaveBeenCalled();
+    expect(authRepository.findUserById).not.toHaveBeenCalled();
   });
 });

@@ -22,5 +22,17 @@ export type RefreshTokenRecord = {
 
 export type AccessTokenPayload = {
   email: string;
+  sid: string;
   sub: string;
 };
+
+export type RefreshTokenRotationResult =
+  | {
+      sessionId: string;
+      status: 'rotated';
+      user: AuthUser;
+    }
+  | {
+      status: 'expired' | 'inactive' | 'not_found' | 'reused';
+      sessionId?: string;
+    };

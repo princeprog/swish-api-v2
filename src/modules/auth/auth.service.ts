@@ -1,6 +1,7 @@
 import {
   ConflictException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { AuthRepository } from './auth.repository';
@@ -20,6 +21,8 @@ function sanitizeName(name: string): string {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly authRepository: AuthRepository,
     private readonly passwordService: PasswordService,
@@ -68,7 +71,7 @@ export class AuthService {
       await this.authRepository.findRefreshTokenByHash(tokenHash);
 
     if (tokenRecord) {
-      await this.authRepository.revokeRefreshToken(tokenRecord.id);
+      await this.authRepository.revokeSession(tokenRecord.session_id);
     }
   }
 
@@ -78,29 +81,40 @@ export class AuthService {
     }
 
     const tokenHash = this.tokenService.hashRefreshToken(refreshToken);
-    const tokenRecord =
-      await this.authRepository.findRefreshTokenByHash(tokenHash);
-
-    if (!tokenRecord) {
-      throw new UnauthorizedException('Invalid refresh token');
-    }
-
-    if (tokenRecord.revoked_at) {
-      await this.authRepository.revokeSession(tokenRecord.session_id);
-      throw new UnauthorizedException('Invalid refresh token');
-    }
-
-    if (tokenRecord.expires_at.getTime() <= Date.now()) {
-      await this.authRepository.revokeRefreshToken(tokenRecord.id);
-      throw new UnauthorizedException('Refresh token expired');
-    }
-
-    await this.authRepository.revokeRefreshToken(tokenRecord.id);
-
-    return this.createSessionResult(tokenRecord.user, {
-      rotatedFromTokenId: tokenRecord.id,
-      sessionId: tokenRecord.session_id,
+    const replacementRefreshToken = this.tokenService.createRefreshToken();
+    const rotation = await this.authRepository.rotateRefreshToken({
+      newExpiresAt: replacementRefreshToken.expiresAt,
+      newTokenHash: replacementRefreshToken.hash,
+      presentedTokenHash: tokenHash,
     });
+
+    if (rotation.status === 'rotated') {
+      this.logger.log({
+        event: 'auth.refresh.rotated',
+        sessionId: rotation.sessionId,
+        userId: rotation.user.id,
+      });
+
+      return {
+        accessToken: await this.tokenService.signAccessToken(rotation.user, {
+          sessionId: rotation.sessionId,
+        }),
+        refreshCookieMaxAgeMs: this.tokenService.getRefreshCookieMaxAgeMs(),
+        refreshToken: replacementRefreshToken.refreshToken,
+        user: rotation.user,
+      };
+    }
+
+    this.logger.warn({
+      event: `auth.refresh.${rotation.status}`,
+      sessionId: rotation.sessionId,
+    });
+
+    throw new UnauthorizedException(
+      rotation.status === 'expired'
+        ? 'Refresh token expired'
+        : 'Invalid refresh token',
+    );
   }
 
   async register(input: RegisterDto): Promise<AuthSessionResult> {

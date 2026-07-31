@@ -15,6 +15,12 @@ type IssuedSessionTokens = {
   refreshToken: string;
 };
 
+type CreatedRefreshToken = {
+  expiresAt: Date;
+  hash: string;
+  refreshToken: string;
+};
+
 function parseDurationToMs(duration: string): number {
   const match = /^(\d+)([smhd])$/.exec(duration);
 
@@ -57,41 +63,53 @@ export class TokenService {
       .digest('hex');
   }
 
+  createRefreshToken(): CreatedRefreshToken {
+    const refreshToken = randomToken();
+
+    return {
+      expiresAt: new Date(Date.now() + this.getRefreshCookieMaxAgeMs()),
+      hash: this.hashRefreshToken(refreshToken),
+      refreshToken,
+    };
+  }
+
   async issueSessionTokens(
     user: AuthUser,
     options: IssueSessionTokenOptions = {},
   ): Promise<IssuedSessionTokens> {
-    const refreshToken = randomToken();
-    const refreshTokenHash = this.hashRefreshToken(refreshToken);
-    const expiresAt = new Date(Date.now() + this.getRefreshCookieMaxAgeMs());
+    const refreshToken = this.createRefreshToken();
     const sessionId =
       options.sessionId ??
       (
         await this.authRepository.createSession(
           user.id,
           createHash('sha256').update(randomToken()).digest('hex'),
-          expiresAt,
+          refreshToken.expiresAt,
         )
       ).id;
 
     await this.authRepository.createRefreshToken({
-      expiresAt,
+      expiresAt: refreshToken.expiresAt,
       rotatedFromTokenId: options.rotatedFromTokenId,
       sessionId,
-      tokenHash: refreshTokenHash,
+      tokenHash: refreshToken.hash,
       userId: user.id,
     });
 
     return {
-      accessToken: await this.signAccessToken(user),
-      refreshToken,
+      accessToken: await this.signAccessToken(user, { sessionId }),
+      refreshToken: refreshToken.refreshToken,
     };
   }
 
-  async signAccessToken(user: AuthUser): Promise<string> {
+  async signAccessToken(
+    user: AuthUser,
+    options: { sessionId: string },
+  ): Promise<string> {
     return this.jwtService.signAsync(
       {
         email: user.email,
+        sid: options.sessionId,
         sub: user.id,
       } satisfies AccessTokenPayload,
       {

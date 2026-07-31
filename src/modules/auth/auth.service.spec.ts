@@ -17,6 +17,7 @@ function createAuthServiceMocks() {
     findPasswordCredentialByUserId: jest.fn(),
     findRefreshTokenByHash: jest.fn(),
     findUserByEmail: jest.fn(),
+    rotateRefreshToken: jest.fn(),
     revokeRefreshToken: jest.fn(),
     revokeSession: jest.fn(),
   } as unknown as jest.Mocked<AuthRepository>;
@@ -25,6 +26,7 @@ function createAuthServiceMocks() {
     verify: jest.fn(),
   } as unknown as jest.Mocked<PasswordService>;
   const tokenService = {
+    createRefreshToken: jest.fn(),
     getRefreshCookieMaxAgeMs: jest.fn(),
     hashRefreshToken: jest.fn(),
     issueSessionTokens: jest.fn(),
@@ -131,34 +133,33 @@ describe('AuthService', () => {
     ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
-  it('rotates refresh tokens and revokes the previous token', async () => {
+  it('rotates refresh tokens through one repository transaction', async () => {
     const { authRepository, service, tokenService } = createAuthServiceMocks();
 
     tokenService.hashRefreshToken.mockReturnValue('old-token-hash');
-    authRepository.findRefreshTokenByHash.mockResolvedValue({
-      expires_at: new Date(Date.now() + 60_000),
-      id: 'refresh-token-1',
-      revoked_at: null,
-      session_id: 'session-1',
-      user,
-      user_id: user.id,
-    });
-    authRepository.revokeRefreshToken.mockResolvedValue(undefined);
-    tokenService.issueSessionTokens.mockResolvedValue({
-      accessToken: 'new-access-token',
+    tokenService.createRefreshToken.mockReturnValue({
+      expiresAt: new Date('2026-08-30T00:00:00.000Z'),
+      hash: 'new-token-hash',
       refreshToken: 'new-refresh-token',
     });
+    authRepository.rotateRefreshToken.mockResolvedValue({
+      status: 'rotated',
+      sessionId: 'session-1',
+      user,
+    });
+    tokenService.signAccessToken.mockResolvedValue('new-access-token');
 
     await expect(service.refresh('old-refresh-token')).resolves.toMatchObject({
       accessToken: 'new-access-token',
       refreshToken: 'new-refresh-token',
       user,
     });
-    expect(authRepository.revokeRefreshToken).toHaveBeenCalledWith(
-      'refresh-token-1',
-    );
-    expect(tokenService.issueSessionTokens).toHaveBeenCalledWith(user, {
-      rotatedFromTokenId: 'refresh-token-1',
+    expect(authRepository.rotateRefreshToken).toHaveBeenCalledWith({
+      newExpiresAt: new Date('2026-08-30T00:00:00.000Z'),
+      newTokenHash: 'new-token-hash',
+      presentedTokenHash: 'old-token-hash',
+    });
+    expect(tokenService.signAccessToken).toHaveBeenCalledWith(user, {
       sessionId: 'session-1',
     });
   });
@@ -167,18 +168,19 @@ describe('AuthService', () => {
     const { authRepository, service, tokenService } = createAuthServiceMocks();
 
     tokenService.hashRefreshToken.mockReturnValue('old-token-hash');
-    authRepository.findRefreshTokenByHash.mockResolvedValue({
-      expires_at: new Date(Date.now() + 60_000),
-      id: 'refresh-token-1',
-      revoked_at: new Date(),
-      session_id: 'session-1',
-      user,
-      user_id: user.id,
+    tokenService.createRefreshToken.mockReturnValue({
+      expiresAt: new Date('2026-08-30T00:00:00.000Z'),
+      hash: 'new-token-hash',
+      refreshToken: 'new-refresh-token',
+    });
+    authRepository.rotateRefreshToken.mockResolvedValue({
+      status: 'reused',
+      sessionId: 'session-1',
     });
 
     await expect(service.refresh('old-refresh-token')).rejects.toBeInstanceOf(
       UnauthorizedException,
     );
-    expect(authRepository.revokeSession).toHaveBeenCalledWith('session-1');
+    expect(tokenService.signAccessToken).not.toHaveBeenCalled();
   });
 });
