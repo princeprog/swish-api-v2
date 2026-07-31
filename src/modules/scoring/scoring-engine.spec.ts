@@ -163,11 +163,31 @@ describe('scoring engine', () => {
     );
   });
 
+  it('starts the next period when the visible game clock shows 0:00', () => {
+    const nextPeriod = applyScoringCommand(
+      {
+        ...createInitialScoringState(game),
+        phase: 'paused',
+        gameClockRemainingMs: 999,
+        shotClockRemainingMs: 24000,
+      },
+      {
+        idempotencyKey: 'visible-zero-next-period',
+        type: 'period.start',
+      },
+      new Date('2026-07-29T10:01:00.000Z'),
+    ).state;
+
+    expect(nextPeriod.currentPeriodNumber).toBe(2);
+    expect(nextPeriod.gameClockRemainingMs).toBe(600000);
+    expect(nextPeriod.shotClockRemainingMs).toBe(24000);
+  });
+
   it('blocks scoring actions when the period clock has reached zero', () => {
     const endedPeriod = {
       ...createInitialScoringState(game),
       phase: 'paused' as const,
-      gameClockRemainingMs: 0,
+      gameClockRemainingMs: 999,
     };
 
     for (const command of [

@@ -8,6 +8,8 @@ export const SCORING_DEFAULTS = {
   shotClockShortMs: 14 * 1000,
 } as const;
 
+const PERIOD_CLOCK_DISPLAY_ZERO_THRESHOLD_MS = 1000;
+
 export type ScoringPhase =
   | 'pregame'
   | 'live'
@@ -403,7 +405,7 @@ export function applyScoringCommand(
     }
     case 'period.end':
       assertNotFinal(next);
-      if (next.gameClockRemainingMs > 0) {
+      if (hasVisiblePeriodTimeRemaining(next)) {
         throw new ScoringActionError(
           'PERIOD_TIME_REMAINING',
           'The period can only be ended when the game clock reaches 0:00',
@@ -417,13 +419,16 @@ export function applyScoringCommand(
       break;
     case 'period.start':
       assertNotFinal(next);
-      if (next.gameClockRemainingMs > 0) {
+      if (hasVisiblePeriodTimeRemaining(next)) {
         throw new ScoringActionError(
           'PERIOD_TIME_REMAINING',
           'The next period can only start after the game clock reaches 0:00',
         );
       }
-      if (next.phase !== 'period_break' && next.gameClockRemainingMs > 0) {
+      if (
+        next.phase !== 'period_break' &&
+        hasVisiblePeriodTimeRemaining(next)
+      ) {
         throw new ScoringActionError(
           'PERIOD_NOT_READY',
           'The current period must be ended before starting the next one',
@@ -543,12 +548,16 @@ function assertDurationRange(
 }
 
 function assertPeriodActionAvailable(state: ScoringState) {
-  if (state.gameClockRemainingMs <= 0) {
+  if (!hasVisiblePeriodTimeRemaining(state)) {
     throw new ScoringActionError(
       'PERIOD_ENDED',
       'This period has ended. Start the next period before recording more actions.',
     );
   }
+}
+
+function hasVisiblePeriodTimeRemaining(state: ScoringState) {
+  return state.gameClockRemainingMs >= PERIOD_CLOCK_DISPLAY_ZERO_THRESHOLD_MS;
 }
 
 function assertFinalizable(state: ScoringState) {
