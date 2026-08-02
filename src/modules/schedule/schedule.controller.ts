@@ -36,7 +36,11 @@ export class ScheduleController {
     @OrganizationAccess() access: OrganizationAccessContext,
     @Body() createScheduleDto: CreateScheduleDto,
   ) {
-    return this.scheduleService.create(organizationId, access, createScheduleDto);
+    return this.scheduleService.create(
+      organizationId,
+      access,
+      createScheduleDto,
+    );
   }
 
   @Get('scorekeepers')

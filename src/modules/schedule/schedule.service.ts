@@ -62,47 +62,49 @@ export class ScheduleService {
       );
     }
 
-    const inserted = await (this.db as any).transaction().execute(async (trx) => {
-      const game = await trx
-        .insertInto('competition.games')
-        .values({
-          away_team_id: createScheduleDto.awayTeamId,
-          away_score: createScheduleDto.awayScore,
-          division_id: createScheduleDto.divisionId,
-          finalized_at: this.resolveCreatedFinalizedAt(createScheduleDto),
-          home_score: createScheduleDto.homeScore,
-          home_team_id: createScheduleDto.homeTeamId,
-          league_season_id: createScheduleDto.leagueSeasonId,
-          published_at:
-            createScheduleDto.status === 'scheduled' ? new Date() : null,
-          starts_at: new Date(createScheduleDto.startsAt),
-          status: createScheduleDto.status ?? 'draft',
-          venue_id: createScheduleDto.venueId,
-        })
-        .returning(['id'])
-        .executeTakeFirstOrThrow();
+    const inserted = await (this.db as any)
+      .transaction()
+      .execute(async (trx) => {
+        const game = await trx
+          .insertInto('competition.games')
+          .values({
+            away_team_id: createScheduleDto.awayTeamId,
+            away_score: createScheduleDto.awayScore,
+            division_id: createScheduleDto.divisionId,
+            finalized_at: this.resolveCreatedFinalizedAt(createScheduleDto),
+            home_score: createScheduleDto.homeScore,
+            home_team_id: createScheduleDto.homeTeamId,
+            league_season_id: createScheduleDto.leagueSeasonId,
+            published_at:
+              createScheduleDto.status === 'scheduled' ? new Date() : null,
+            starts_at: new Date(createScheduleDto.startsAt),
+            status: createScheduleDto.status ?? 'draft',
+            venue_id: createScheduleDto.venueId,
+          })
+          .returning(['id'])
+          .executeTakeFirstOrThrow();
 
-      if (createScheduleDto.scorekeeperMemberId) {
-        await this.replaceScorekeeperAssignmentInTransaction(
-          trx,
-          game.id,
-          createScheduleDto.scorekeeperMemberId,
-        );
+        if (createScheduleDto.scorekeeperMemberId) {
+          await this.replaceScorekeeperAssignmentInTransaction(
+            trx,
+            game.id,
+            createScheduleDto.scorekeeperMemberId,
+          );
 
-        await this.writeAuditInTransaction(
-          trx,
-          access,
-          'game.scorekeeper_assigned',
-          game.id,
-          {
-            previousScorekeeperMemberId: null,
-            scorekeeperMemberId: createScheduleDto.scorekeeperMemberId,
-          },
-        );
-      }
+          await this.writeAuditInTransaction(
+            trx,
+            access,
+            'game.scorekeeper_assigned',
+            game.id,
+            {
+              previousScorekeeperMemberId: null,
+              scorekeeperMemberId: createScheduleDto.scorekeeperMemberId,
+            },
+          );
+        }
 
-      return game;
-    });
+        return game;
+      });
 
     return this.findOne(organizationId, inserted.id);
   }

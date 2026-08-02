@@ -20,7 +20,6 @@ import { OrganizationMemberService } from './organization-member.service';
 import { CreateOrganizationMemberDto } from './dto/create-organization-member.dto';
 import { UpdateOrganizationMemberDto } from './dto/update-organization-member.dto';
 import { UpdateTeamAssignmentsDto } from './dto/update-assignments.dto';
-import { TransferOwnershipDto } from './dto/transfer-ownership.dto';
 
 @Controller('organizations/:organizationId/members')
 @UseGuards(JwtAuthGuard, OrganizationPermissionsGuard)
