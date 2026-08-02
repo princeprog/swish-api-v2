@@ -137,6 +137,8 @@ export interface AdminScheduleGames {
   league_season_slug: string | null;
   organization_id: string | null;
   published_at: Timestamp | null;
+  scorekeeper_member_id: string | null;
+  scorekeeper_name: string | null;
   starts_at: Timestamp | null;
   status: string | null;
   updated_at: Timestamp | null;
