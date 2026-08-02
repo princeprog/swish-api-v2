@@ -11,6 +11,7 @@ function createDbMock() {
     away_team_id: 'team-b',
     created_at: new Date('2026-07-09T00:00:00.000Z'),
     division_id: 'division-1',
+    finalized_at: null,
     home_team_id: 'team-a',
     id: 'game-1',
     league_season_id: 'season-1',
@@ -42,15 +43,22 @@ function createDbMock() {
     set: updateSet,
     where: jest.fn().mockReturnThis(),
   };
+  const deleteExecute = jest.fn().mockResolvedValue([]);
+  const deleteChain = {
+    execute: deleteExecute,
+    where: jest.fn().mockReturnThis(),
+  };
 
   return {
     db: {
+      deleteFrom: jest.fn().mockReturnValue(deleteChain),
       selectFrom: jest.fn((table: string) =>
         table === 'scoring.game_states' ? scoringStateSelectChain : selectChain,
       ),
       updateTable: jest.fn().mockReturnValue(updateChain),
     },
     executeTakeFirst,
+    deleteExecute,
     scoringStateExecuteTakeFirst,
     updateExecuteTakeFirstOrThrow,
     updateSet,
@@ -140,6 +148,63 @@ describe('ScheduleService final score updates', () => {
         status: 'final',
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('ScheduleService finalized game protection', () => {
+  it('rejects schedule edits after a game is final', async () => {
+    const { db, executeTakeFirst, updateExecuteTakeFirstOrThrow } =
+      createDbMock();
+    executeTakeFirst.mockResolvedValueOnce({
+      away_score: 79,
+      away_team_id: 'team-b',
+      created_at: new Date('2026-07-09T00:00:00.000Z'),
+      division_id: 'division-1',
+      finalized_at: new Date('2026-07-09T12:00:00.000Z'),
+      home_score: 82,
+      home_team_id: 'team-a',
+      id: 'game-1',
+      league_season_id: 'season-1',
+      published_at: new Date('2026-07-09T00:00:00.000Z'),
+      starts_at: new Date('2026-07-09T10:00:00.000Z'),
+      status: 'final',
+      updated_at: new Date('2026-07-09T12:00:00.000Z'),
+      venue_id: 'venue-1',
+    });
+    const service = new ScheduleService(db as never);
+
+    await expect(
+      service.update('org-1', 'game-1', {
+        startsAt: '2026-07-10T10:00:00.000Z',
+      }),
+    ).rejects.toThrow('This game is final and can no longer be edited.');
+    expect(updateExecuteTakeFirstOrThrow).not.toHaveBeenCalled();
+  });
+
+  it('rejects deleting finalized games', async () => {
+    const { db, executeTakeFirst, deleteExecute } = createDbMock();
+    executeTakeFirst.mockResolvedValueOnce({
+      away_score: 79,
+      away_team_id: 'team-b',
+      created_at: new Date('2026-07-09T00:00:00.000Z'),
+      division_id: 'division-1',
+      finalized_at: new Date('2026-07-09T12:00:00.000Z'),
+      home_score: 82,
+      home_team_id: 'team-a',
+      id: 'game-1',
+      league_season_id: 'season-1',
+      published_at: new Date('2026-07-09T00:00:00.000Z'),
+      starts_at: new Date('2026-07-09T10:00:00.000Z'),
+      status: 'final',
+      updated_at: new Date('2026-07-09T12:00:00.000Z'),
+      venue_id: 'venue-1',
+    });
+    const service = new ScheduleService(db as never);
+
+    await expect(service.remove('org-1', 'game-1')).rejects.toThrow(
+      'Finalized games cannot be deleted because they are part of the official league record.',
+    );
+    expect(deleteExecute).not.toHaveBeenCalled();
   });
 });
 

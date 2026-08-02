@@ -200,6 +200,8 @@ export class ScheduleService {
     updateScheduleDto: UpdateScheduleDto,
   ) {
     const existingGame = await this.findGameRecord(organizationId, gameId);
+    this.assertGameIsNotFinal(existingGame.status);
+
     const nextLeagueSeasonId =
       updateScheduleDto.leagueSeasonId ?? existingGame.league_season_id;
     const nextDivisionId =
@@ -247,7 +249,8 @@ export class ScheduleService {
   }
 
   async remove(organizationId: string, gameId: string) {
-    await this.findGameRecord(organizationId, gameId);
+    const existingGame = await this.findGameRecord(organizationId, gameId);
+    this.assertGameCanBeDeleted(existingGame.status);
 
     await this.db
       .deleteFrom('competition.games')
@@ -456,6 +459,26 @@ export class ScheduleService {
 
     throw new BadRequestException(
       'Scorekeeper assignments lock after the game begins. Reopen this only before game day action starts.',
+    );
+  }
+
+  private assertGameIsNotFinal(status: string): void {
+    if (status !== 'final') {
+      return;
+    }
+
+    throw new BadRequestException(
+      'This game is final and can no longer be edited.',
+    );
+  }
+
+  private assertGameCanBeDeleted(status: string): void {
+    if (status !== 'final') {
+      return;
+    }
+
+    throw new BadRequestException(
+      'Finalized games cannot be deleted because they are part of the official league record.',
     );
   }
 
