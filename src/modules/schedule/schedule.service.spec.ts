@@ -256,3 +256,152 @@ describe('ScheduleService assigned game access', () => {
     expect(query.where).not.toHaveBeenCalledWith(expect.any(Function));
   });
 });
+
+describe('ScheduleService scorekeeper assignments', () => {
+  it('creates a game and scorekeeper assignment in one transaction', async () => {
+    const insertInto = jest
+      .fn()
+      .mockReturnValueOnce({
+        values: jest.fn().mockReturnThis(),
+        returning: jest.fn().mockReturnThis(),
+        executeTakeFirstOrThrow: jest.fn().mockResolvedValue({
+          id: 'game-1',
+        }),
+      })
+      .mockReturnValueOnce({
+        values: jest.fn().mockReturnThis(),
+        execute: jest.fn().mockResolvedValue([]),
+      })
+      .mockReturnValueOnce({
+        values: jest.fn().mockReturnThis(),
+        execute: jest.fn().mockResolvedValue([]),
+      });
+    const transactionExecute = jest.fn(async (callback) =>
+      callback({
+        deleteFrom: jest.fn().mockReturnValue({
+          execute: jest.fn().mockResolvedValue([]),
+          where: jest.fn().mockReturnThis(),
+        }),
+        insertInto,
+      }),
+    );
+    const db = {
+      insertInto: jest.fn(),
+      selectFrom: jest.fn().mockReturnValue({
+        executeTakeFirst: jest.fn().mockResolvedValue({ id: 'related-1' }),
+        innerJoin: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        selectAll: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+      }),
+      transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
+    };
+    const service = new ScheduleService(db as never);
+    jest.spyOn(service, 'findOne').mockResolvedValue({ id: 'game-1' });
+
+    await service.create(
+      'org-1',
+      createOrganizationAccessContext({
+        permissions: [ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE],
+        role: AUTH_ROLES.ADMIN,
+      }),
+      {
+        awayTeamId: 'team-b',
+        divisionId: 'division-1',
+        homeTeamId: 'team-a',
+        leagueSeasonId: 'season-1',
+        scorekeeperMemberId: 'member-scorekeeper-1',
+        startsAt: '2026-07-09T10:00:00.000Z',
+        status: 'scheduled',
+        venueId: 'venue-1',
+      },
+    );
+
+    expect(db.transaction).toHaveBeenCalled();
+    expect(transactionExecute).toHaveBeenCalled();
+    expect(insertInto).toHaveBeenCalledWith('competition.games');
+    expect(insertInto).toHaveBeenCalledWith(
+      'access.game_scorekeeper_assignments',
+    );
+    expect(insertInto).toHaveBeenCalledWith('access.audit_events');
+  });
+
+  it('lists active scorekeepers for schedule assignment', async () => {
+    const execute = jest.fn().mockResolvedValue([
+      {
+        email: 'scorekeeper@example.com',
+        id: 'member-scorekeeper-1',
+        name: 'Sam Scorekeeper',
+      },
+    ]);
+    const selectChain = {
+      execute,
+      innerJoin: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const service = new ScheduleService({
+      selectFrom: jest.fn().mockReturnValue(selectChain),
+    } as never);
+
+    await expect(service.findEligibleScorekeepers('org-1')).resolves.toEqual([
+      {
+        email: 'scorekeeper@example.com',
+        id: 'member-scorekeeper-1',
+        name: 'Sam Scorekeeper',
+      },
+    ]);
+
+    expect(selectChain.where).toHaveBeenCalledWith(
+      'members.organization_id',
+      '=',
+      'org-1',
+    );
+    expect(selectChain.where).toHaveBeenCalledWith(
+      'members.role',
+      '=',
+      AUTH_ROLES.SCOREKEEPER,
+    );
+    expect(selectChain.where).toHaveBeenCalledWith(
+      'members.status',
+      '=',
+      'active',
+    );
+  });
+
+  it('blocks scorekeeper changes after the game begins', async () => {
+    const { db, executeTakeFirst } = createDbMock();
+    executeTakeFirst.mockResolvedValueOnce({
+      away_score: null,
+      away_team_id: 'team-b',
+      created_at: new Date('2026-07-09T00:00:00.000Z'),
+      division_id: 'division-1',
+      finalized_at: null,
+      home_score: null,
+      home_team_id: 'team-a',
+      id: 'game-1',
+      league_season_id: 'season-1',
+      published_at: null,
+      starts_at: new Date('2026-07-09T10:00:00.000Z'),
+      status: 'live',
+      updated_at: new Date('2026-07-09T00:00:00.000Z'),
+      venue_id: 'venue-1',
+    });
+    const service = new ScheduleService(db as never);
+
+    await expect(
+      service.updateScorekeeperAssignment(
+        'org-1',
+        'game-1',
+        createOrganizationAccessContext({
+          permissions: [ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE],
+          role: AUTH_ROLES.ADMIN,
+        }),
+        { scorekeeperMemberId: 'member-scorekeeper-1' },
+      ),
+    ).rejects.toThrow(
+      'Scorekeeper assignments lock after the game begins. Reopen this only before game day action starts.',
+    );
+  });
+});

@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  ValidateIf,
 } from 'class-validator';
 
 export class CreateScheduleDto {
@@ -49,4 +50,8 @@ export class CreateScheduleDto {
     'cancelled',
   ])
   status?: string;
+
+  @ValidateIf((_, value) => value !== null && value !== undefined)
+  @IsUUID()
+  scorekeeperMemberId?: string | null;
 }

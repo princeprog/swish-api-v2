@@ -5,12 +5,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AUTH_ROLES,
   ORGANIZATION_PERMISSIONS,
   type OrganizationAccessContext,
 } from '../../common/auth/roles';
 import { DATABASE, type Database } from '../../database/database.tokens';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
 import type { ScheduleListQueryDto } from './dto/schedule-list-query.dto';
+import type { UpdateScorekeeperAssignmentDto } from './dto/update-scorekeeper-assignment.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
 
 type ScheduleGameRecord = {
@@ -34,7 +36,11 @@ type ScheduleGameRecord = {
 export class ScheduleService {
   constructor(@Inject(DATABASE) private readonly db: Database) {}
 
-  async create(organizationId: string, createScheduleDto: CreateScheduleDto) {
+  async create(
+    organizationId: string,
+    access: OrganizationAccessContext,
+    createScheduleDto: CreateScheduleDto,
+  ) {
     this.assertDistinctTeams(
       createScheduleDto.homeTeamId,
       createScheduleDto.awayTeamId,
@@ -48,26 +54,70 @@ export class ScheduleService {
       venueId: createScheduleDto.venueId,
     });
 
-    const inserted = await this.db
-      .insertInto('competition.games')
-      .values({
-        away_team_id: createScheduleDto.awayTeamId,
-        away_score: createScheduleDto.awayScore,
-        division_id: createScheduleDto.divisionId,
-        finalized_at: this.resolveCreatedFinalizedAt(createScheduleDto),
-        home_score: createScheduleDto.homeScore,
-        home_team_id: createScheduleDto.homeTeamId,
-        league_season_id: createScheduleDto.leagueSeasonId,
-        published_at:
-          createScheduleDto.status === 'scheduled' ? new Date() : null,
-        starts_at: new Date(createScheduleDto.startsAt),
-        status: createScheduleDto.status ?? 'draft',
-        venue_id: createScheduleDto.venueId,
-      })
-      .returning(['id'])
-      .executeTakeFirstOrThrow();
+    if (createScheduleDto.scorekeeperMemberId) {
+      await this.assertScorekeeperCanBeAssigned(
+        this.db,
+        organizationId,
+        createScheduleDto.scorekeeperMemberId,
+      );
+    }
+
+    const inserted = await (this.db as any).transaction().execute(async (trx) => {
+      const game = await trx
+        .insertInto('competition.games')
+        .values({
+          away_team_id: createScheduleDto.awayTeamId,
+          away_score: createScheduleDto.awayScore,
+          division_id: createScheduleDto.divisionId,
+          finalized_at: this.resolveCreatedFinalizedAt(createScheduleDto),
+          home_score: createScheduleDto.homeScore,
+          home_team_id: createScheduleDto.homeTeamId,
+          league_season_id: createScheduleDto.leagueSeasonId,
+          published_at:
+            createScheduleDto.status === 'scheduled' ? new Date() : null,
+          starts_at: new Date(createScheduleDto.startsAt),
+          status: createScheduleDto.status ?? 'draft',
+          venue_id: createScheduleDto.venueId,
+        })
+        .returning(['id'])
+        .executeTakeFirstOrThrow();
+
+      if (createScheduleDto.scorekeeperMemberId) {
+        await this.replaceScorekeeperAssignmentInTransaction(
+          trx,
+          game.id,
+          createScheduleDto.scorekeeperMemberId,
+        );
+
+        await this.writeAuditInTransaction(
+          trx,
+          access,
+          'game.scorekeeper_assigned',
+          game.id,
+          {
+            previousScorekeeperMemberId: null,
+            scorekeeperMemberId: createScheduleDto.scorekeeperMemberId,
+          },
+        );
+      }
+
+      return game;
+    });
 
     return this.findOne(organizationId, inserted.id);
+  }
+
+  findEligibleScorekeepers(organizationId: string) {
+    return this.db
+      .selectFrom('admin.organization_members as members')
+      .innerJoin('auth.users as users', 'users.id', 'members.user_id')
+      .select(['members.id', 'users.name', 'users.email'])
+      .where('members.organization_id', '=', organizationId)
+      .where('members.role', '=', AUTH_ROLES.SCOREKEEPER)
+      .where('members.status', '=', 'active')
+      .orderBy('users.name asc')
+      .orderBy('users.email asc')
+      .execute();
   }
 
   findAll(
@@ -203,6 +253,56 @@ export class ScheduleService {
       .execute();
 
     return { success: true };
+  }
+
+  async updateScorekeeperAssignment(
+    organizationId: string,
+    gameId: string,
+    access: OrganizationAccessContext,
+    updateScorekeeperAssignmentDto: UpdateScorekeeperAssignmentDto,
+  ) {
+    const existingGame = await this.findGameRecord(organizationId, gameId);
+
+    this.assertScorekeeperAssignmentIsOpen(existingGame.status);
+
+    const nextScorekeeperMemberId =
+      updateScorekeeperAssignmentDto.scorekeeperMemberId;
+
+    if (nextScorekeeperMemberId) {
+      await this.assertScorekeeperCanBeAssigned(
+        this.db,
+        organizationId,
+        nextScorekeeperMemberId,
+      );
+    }
+
+    const previousAssignment = await this.db
+      .selectFrom('access.game_scorekeeper_assignments')
+      .select(['organization_member_id'])
+      .where('game_id', '=', gameId)
+      .executeTakeFirst();
+
+    await (this.db as any).transaction().execute(async (trx) => {
+      await this.replaceScorekeeperAssignmentInTransaction(
+        trx,
+        gameId,
+        nextScorekeeperMemberId,
+      );
+
+      await this.writeAuditInTransaction(
+        trx,
+        access,
+        'game.scorekeeper_assignment.updated',
+        gameId,
+        {
+          previousScorekeeperMemberId:
+            previousAssignment?.organization_member_id ?? null,
+          scorekeeperMemberId: nextScorekeeperMemberId ?? null,
+        },
+      );
+    });
+
+    return this.findOne(organizationId, gameId);
   }
 
   private assertDistinctTeams(homeTeamId: string, awayTeamId: string): void {
@@ -345,6 +445,80 @@ export class ScheduleService {
     }
 
     return game;
+  }
+
+  private assertScorekeeperAssignmentIsOpen(status: string): void {
+    if (['draft', 'scheduled', 'postponed'].includes(status)) {
+      return;
+    }
+
+    throw new BadRequestException(
+      'Scorekeeper assignments lock after the game begins. Reopen this only before game day action starts.',
+    );
+  }
+
+  private async assertScorekeeperCanBeAssigned(
+    db: Database | any,
+    organizationId: string,
+    scorekeeperMemberId: string,
+  ): Promise<void> {
+    const scorekeeper = await db
+      .selectFrom('admin.organization_members')
+      .select(['id'])
+      .where('id', '=', scorekeeperMemberId)
+      .where('organization_id', '=', organizationId)
+      .where('role', '=', AUTH_ROLES.SCOREKEEPER)
+      .where('status', '=', 'active')
+      .executeTakeFirst();
+
+    if (!scorekeeper) {
+      throw new BadRequestException(
+        'Choose an active scorekeeper from this organization.',
+      );
+    }
+  }
+
+  private async replaceScorekeeperAssignmentInTransaction(
+    trx: any,
+    gameId: string,
+    scorekeeperMemberId: string | null | undefined,
+  ): Promise<void> {
+    await trx
+      .deleteFrom('access.game_scorekeeper_assignments')
+      .where('game_id', '=', gameId)
+      .execute();
+
+    if (!scorekeeperMemberId) {
+      return;
+    }
+
+    await trx
+      .insertInto('access.game_scorekeeper_assignments')
+      .values({
+        game_id: gameId,
+        organization_member_id: scorekeeperMemberId,
+      })
+      .execute();
+  }
+
+  private async writeAuditInTransaction(
+    trx: any,
+    access: OrganizationAccessContext,
+    action: string,
+    gameId: string,
+    metadata: Record<string, unknown>,
+  ): Promise<void> {
+    await trx
+      .insertInto('access.audit_events')
+      .values({
+        action,
+        actor_member_id: access.membershipId,
+        metadata,
+        organization_id: access.organizationId,
+        target_id: gameId,
+        target_type: 'game',
+      })
+      .execute();
   }
 
   private applyGameReadScope(query: any, access?: OrganizationAccessContext) {
