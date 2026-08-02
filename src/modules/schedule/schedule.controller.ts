@@ -19,6 +19,7 @@ import { RequireOrganizationPermissions } from '../../common/decorators/organiza
 import { OrganizationPermissionsGuard } from '../../common/guards/organization-permissions.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
+import { FinalizeScheduleGameDto } from './dto/finalize-schedule-game.dto';
 import { ScheduleListQueryDto } from './dto/schedule-list-query.dto';
 import { UpdateScorekeeperAssignmentDto } from './dto/update-scorekeeper-assignment.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
@@ -80,6 +81,22 @@ export class ScheduleController {
       organizationId,
       gameId,
       updateScheduleDto,
+    );
+  }
+
+  @Post(':gameId/finalize')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE)
+  finalize(
+    @Param('organizationId') organizationId: string,
+    @Param('gameId') gameId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+    @Body() finalizeScheduleGameDto: FinalizeScheduleGameDto,
+  ) {
+    return this.scheduleService.finalizeManually(
+      organizationId,
+      gameId,
+      access,
+      finalizeScheduleGameDto,
     );
   }
 

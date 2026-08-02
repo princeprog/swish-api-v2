@@ -12,6 +12,8 @@ function createDbMock() {
     created_at: new Date('2026-07-09T00:00:00.000Z'),
     division_id: 'division-1',
     finalized_at: null,
+    away_score: null,
+    home_score: null,
     home_team_id: 'team-a',
     id: 'game-1',
     league_season_id: 'season-1',
@@ -205,6 +207,142 @@ describe('ScheduleService finalized game protection', () => {
       'Finalized games cannot be deleted because they are part of the official league record.',
     );
     expect(deleteExecute).not.toHaveBeenCalled();
+  });
+});
+
+describe('ScheduleService manual finalization', () => {
+  it('finalizes a scheduled game with an official non-tied score', async () => {
+    const { db, updateSet } = createDbMock();
+    const auditInsertValues = jest.fn().mockReturnThis();
+    const auditInsertExecute = jest.fn().mockResolvedValue([]);
+    const transactionExecute = jest.fn(async (callback) =>
+      callback({
+        insertInto: jest.fn().mockReturnValue({
+          execute: auditInsertExecute,
+          values: auditInsertValues,
+        }),
+        updateTable: db.updateTable,
+      }),
+    );
+    (db as any).transaction = jest
+      .fn()
+      .mockReturnValue({ execute: transactionExecute });
+    const service = new ScheduleService(db as never);
+    jest.spyOn(service, 'findOne').mockResolvedValue({
+      away_score: 79,
+      home_score: 82,
+      id: 'game-1',
+      status: 'final',
+    });
+    const access = createOrganizationAccessContext({
+      permissions: [ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE],
+      role: AUTH_ROLES.ADMIN,
+    });
+
+    await service.finalizeManually('org-1', 'game-1', access, {
+      awayScore: 79,
+      homeScore: 82,
+    });
+
+    expect(transactionExecute).toHaveBeenCalled();
+    expect(updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        away_score: 79,
+        finalized_at: expect.any(Date),
+        home_score: 82,
+        status: 'final',
+        updated_at: expect.any(Date),
+      }),
+    );
+    expect(auditInsertValues).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'game.manually_finalized',
+        metadata: {
+          awayScore: 79,
+          homeScore: 82,
+          previousStatus: 'scheduled',
+        },
+        target_id: 'game-1',
+        target_type: 'game',
+      }),
+    );
+  });
+
+  it('rejects tied manual final scores', async () => {
+    const { db, updateExecuteTakeFirstOrThrow } = createDbMock();
+    const service = new ScheduleService(db as never);
+
+    await expect(
+      service.finalizeManually(
+        'org-1',
+        'game-1',
+        createOrganizationAccessContext(),
+        {
+          awayScore: 80,
+          homeScore: 80,
+        },
+      ),
+    ).rejects.toThrow(
+      'Basketball games need a winning team before they can be finalized.',
+    );
+    expect(updateExecuteTakeFirstOrThrow).not.toHaveBeenCalled();
+  });
+
+  it('rejects games that are not scheduled', async () => {
+    const { db, executeTakeFirst, updateExecuteTakeFirstOrThrow } =
+      createDbMock();
+    executeTakeFirst.mockResolvedValueOnce({
+      away_score: null,
+      away_team_id: 'team-b',
+      created_at: new Date('2026-07-09T00:00:00.000Z'),
+      division_id: 'division-1',
+      finalized_at: null,
+      home_score: null,
+      home_team_id: 'team-a',
+      id: 'game-1',
+      league_season_id: 'season-1',
+      published_at: null,
+      starts_at: new Date('2026-07-09T10:00:00.000Z'),
+      status: 'live',
+      updated_at: new Date('2026-07-09T00:00:00.000Z'),
+      venue_id: 'venue-1',
+    });
+    const service = new ScheduleService(db as never);
+
+    await expect(
+      service.finalizeManually(
+        'org-1',
+        'game-1',
+        createOrganizationAccessContext(),
+        {
+          awayScore: 79,
+          homeScore: 82,
+        },
+      ),
+    ).rejects.toThrow('Only scheduled games can be finalized from Schedules.');
+    expect(updateExecuteTakeFirstOrThrow).not.toHaveBeenCalled();
+  });
+
+  it('rejects games with scorekeeper activity', async () => {
+    const { db, scoringStateExecuteTakeFirst, updateExecuteTakeFirstOrThrow } =
+      createDbMock();
+    scoringStateExecuteTakeFirst.mockResolvedValueOnce({ game_id: 'game-1' });
+    const service = new ScheduleService(db as never);
+
+    await expect(
+      service.finalizeManually(
+        'org-1',
+        'game-1',
+        createOrganizationAccessContext(),
+        {
+          awayScore: 79,
+          homeScore: 82,
+        },
+      ),
+    ).rejects.toThrow(
+      'This game already has scoring activity. Use the scorekeeper console to finish it.',
+    );
+    expect(updateExecuteTakeFirstOrThrow).not.toHaveBeenCalled();
   });
 });
 

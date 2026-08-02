@@ -11,6 +11,7 @@ import {
 } from '../../common/auth/roles';
 import { DATABASE, type Database } from '../../database/database.tokens';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
+import type { FinalizeScheduleGameDto } from './dto/finalize-schedule-game.dto';
 import type { ScheduleListQueryDto } from './dto/schedule-list-query.dto';
 import type { UpdateScorekeeperAssignmentDto } from './dto/update-scorekeeper-assignment.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
@@ -260,6 +261,49 @@ export class ScheduleService {
     return { success: true };
   }
 
+  async finalizeManually(
+    organizationId: string,
+    gameId: string,
+    access: OrganizationAccessContext,
+    finalizeScheduleGameDto: FinalizeScheduleGameDto,
+  ) {
+    const existingGame = await this.findGameRecord(organizationId, gameId);
+
+    this.assertManualFinalizationIsOpen(existingGame.status);
+    this.assertManualFinalScore(finalizeScheduleGameDto);
+    await this.assertGameHasNoScoringActivity(gameId);
+
+    const finalizedAt = new Date();
+
+    await (this.db as any).transaction().execute(async (trx) => {
+      await trx
+        .updateTable('competition.games')
+        .set({
+          away_score: finalizeScheduleGameDto.awayScore,
+          finalized_at: finalizedAt,
+          home_score: finalizeScheduleGameDto.homeScore,
+          status: 'final',
+          updated_at: finalizedAt,
+        })
+        .where('id', '=', gameId)
+        .executeTakeFirstOrThrow();
+
+      await this.writeAuditInTransaction(
+        trx,
+        access,
+        'game.manually_finalized',
+        gameId,
+        {
+          previousStatus: existingGame.status,
+          homeScore: finalizeScheduleGameDto.homeScore,
+          awayScore: finalizeScheduleGameDto.awayScore,
+        },
+      );
+    });
+
+    return this.findOne(organizationId, gameId);
+  }
+
   async updateScorekeeperAssignment(
     organizationId: string,
     gameId: string,
@@ -480,6 +524,53 @@ export class ScheduleService {
     throw new BadRequestException(
       'Finalized games cannot be deleted because they are part of the official league record.',
     );
+  }
+
+  private assertManualFinalizationIsOpen(status: string): void {
+    if (status === 'scheduled') {
+      return;
+    }
+
+    throw new BadRequestException(
+      'Only scheduled games can be finalized from Schedules.',
+    );
+  }
+
+  private assertManualFinalScore(
+    finalizeScheduleGameDto: FinalizeScheduleGameDto,
+  ): void {
+    const { awayScore, homeScore } = finalizeScheduleGameDto;
+
+    if (
+      !Number.isInteger(homeScore) ||
+      !Number.isInteger(awayScore) ||
+      homeScore < 0 ||
+      awayScore < 0
+    ) {
+      throw new BadRequestException(
+        'Enter valid whole-number scores for both teams.',
+      );
+    }
+
+    if (homeScore === awayScore) {
+      throw new BadRequestException(
+        'Basketball games need a winning team before they can be finalized.',
+      );
+    }
+  }
+
+  private async assertGameHasNoScoringActivity(gameId: string): Promise<void> {
+    const scoringState = await this.db
+      .selectFrom('scoring.game_states')
+      .select(['game_id'])
+      .where('game_id', '=', gameId)
+      .executeTakeFirst();
+
+    if (scoringState) {
+      throw new BadRequestException(
+        'This game already has scoring activity. Use the scorekeeper console to finish it.',
+      );
+    }
   }
 
   private async assertScorekeeperCanBeAssigned(
