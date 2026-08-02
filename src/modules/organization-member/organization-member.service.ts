@@ -80,14 +80,10 @@ export class OrganizationMemberService {
       .execute();
 
     const memberIds = members.map((member) => member.id);
-    const [teamAssignments, gameAssignments] = await Promise.all([
-      this.findTeamAssignments(memberIds),
-      this.findGameAssignments(memberIds),
-    ]);
+    const teamAssignments = await this.findTeamAssignments(memberIds);
 
     return members.map((member) => ({
       ...member,
-      gameAssignments: gameAssignments.get(member.id) ?? [],
       teamAssignments: teamAssignments.get(member.id) ?? [],
     }));
   }
@@ -148,6 +144,13 @@ export class OrganizationMemberService {
             memberId,
             nextRole,
           );
+        }
+
+        if (
+          updateOrganizationMemberDto.status &&
+          updateOrganizationMemberDto.status !== 'active'
+        ) {
+          await this.clearAllAssignmentsInTransaction(trx, memberId);
         }
 
         return trx
@@ -216,54 +219,6 @@ export class OrganizationMemberService {
     );
 
     return { success: true, teamIds };
-  }
-
-  async updateGameAssignments(
-    organizationId: string,
-    memberId: string,
-    access: OrganizationAccessContext,
-    gameIds: string[],
-  ) {
-    const member = await this.findOne(organizationId, memberId);
-
-    if (member.role !== AUTH_ROLES.SCOREKEEPER || member.status !== 'active') {
-      throw new BadRequestException(
-        'Game assignments require an active scorekeeper',
-      );
-    }
-
-    await this.assertGamesBelongToOrganization(organizationId, gameIds);
-
-    await (this.db as any).transaction().execute(async (trx) => {
-      await trx
-        .deleteFrom('access.game_scorekeeper_assignments')
-        .where('organization_member_id', '=', memberId)
-        .execute();
-
-      if (gameIds.length) {
-        await trx
-          .insertInto('access.game_scorekeeper_assignments')
-          .values(
-            gameIds.map((gameId) => ({
-              game_id: gameId,
-              organization_member_id: memberId,
-            })),
-          )
-          .execute();
-      }
-    });
-
-    await this.writeAudit(
-      access,
-      'member.game_assignments.updated',
-      'member',
-      memberId,
-      {
-        gameIds,
-      },
-    );
-
-    return { gameIds, success: true };
   }
 
   async transferOwnership(
@@ -351,6 +306,18 @@ export class OrganizationMemberService {
     }
   }
 
+  private async clearAllAssignmentsInTransaction(trx: any, memberId: string) {
+    await trx
+      .deleteFrom('access.team_manager_assignments')
+      .where('organization_member_id', '=', memberId)
+      .execute();
+
+    await trx
+      .deleteFrom('access.game_scorekeeper_assignments')
+      .where('organization_member_id', '=', memberId)
+      .execute();
+  }
+
   private async findTeamAssignments(memberIds: string[]) {
     const byMember = new Map<string, unknown[]>();
 
@@ -373,44 +340,6 @@ export class OrganizationMemberService {
     for (const row of rows) {
       const values = byMember.get(row.organization_member_id) ?? [];
       values.push({ id: row.id, name: row.name, slug: row.slug });
-      byMember.set(row.organization_member_id, values);
-    }
-
-    return byMember;
-  }
-
-  private async findGameAssignments(memberIds: string[]) {
-    const byMember = new Map<string, unknown[]>();
-
-    if (!memberIds.length) {
-      return byMember;
-    }
-
-    const rows = await (this.db as any)
-      .selectFrom('access.game_scorekeeper_assignments as assignments')
-      .innerJoin(
-        'admin.schedule_games as games',
-        'games.id',
-        'assignments.game_id',
-      )
-      .select([
-        'assignments.organization_member_id',
-        'games.away_team_name',
-        'games.home_team_name',
-        'games.id',
-        'games.starts_at',
-      ])
-      .where('assignments.organization_member_id', 'in', memberIds)
-      .execute();
-
-    for (const row of rows) {
-      const values = byMember.get(row.organization_member_id) ?? [];
-      values.push({
-        awayTeamName: row.away_team_name,
-        homeTeamName: row.home_team_name,
-        id: row.id,
-        startsAt: row.starts_at,
-      });
       byMember.set(row.organization_member_id, values);
     }
 
@@ -444,26 +373,6 @@ export class OrganizationMemberService {
 
     if (rows.length !== teamIds.length) {
       throw new NotFoundException('One or more teams were not found');
-    }
-  }
-
-  private async assertGamesBelongToOrganization(
-    organizationId: string,
-    gameIds: string[],
-  ) {
-    if (!gameIds.length) {
-      return;
-    }
-
-    const rows = await (this.db as any)
-      .selectFrom('admin.schedule_games')
-      .select(['id'])
-      .where('id', 'in', gameIds)
-      .where('organization_id', '=', organizationId)
-      .execute();
-
-    if (rows.length !== gameIds.length) {
-      throw new NotFoundException('One or more games were not found');
     }
   }
 

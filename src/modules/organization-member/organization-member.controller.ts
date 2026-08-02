@@ -19,10 +19,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { OrganizationMemberService } from './organization-member.service';
 import { CreateOrganizationMemberDto } from './dto/create-organization-member.dto';
 import { UpdateOrganizationMemberDto } from './dto/update-organization-member.dto';
-import {
-  UpdateGameAssignmentsDto,
-  UpdateTeamAssignmentsDto,
-} from './dto/update-assignments.dto';
+import { UpdateTeamAssignmentsDto } from './dto/update-assignments.dto';
 import { TransferOwnershipDto } from './dto/transfer-ownership.dto';
 
 @Controller('organizations/:organizationId/members')
@@ -86,21 +83,6 @@ export class OrganizationMemberController {
       memberId,
       access,
       updateTeamAssignmentsDto.teamIds,
-    );
-  }
-
-  @Put(':memberId/game-assignments')
-  updateGameAssignments(
-    @Param('organizationId') organizationId: string,
-    @Param('memberId') memberId: string,
-    @OrganizationAccess() access: OrganizationAccessContext,
-    @Body() updateGameAssignmentsDto: UpdateGameAssignmentsDto,
-  ) {
-    return this.organizationMemberService.updateGameAssignments(
-      organizationId,
-      memberId,
-      access,
-      updateGameAssignmentsDto.gameIds,
     );
   }
 }
