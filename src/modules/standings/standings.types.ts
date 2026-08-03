@@ -13,6 +13,7 @@ export type FinalizedGameResult = {
   home_score: number;
   home_team_id: string;
   id: string;
+  starts_at: Date;
 };
 
 export type StandingsRow = {
@@ -24,6 +25,7 @@ export type StandingsRow = {
   pointsAgainst: number;
   pointsFor: number;
   rank: number;
+  recentResults: Array<'W' | 'L'>;
   teamColor: string | null;
   teamId: string;
   teamName: string;

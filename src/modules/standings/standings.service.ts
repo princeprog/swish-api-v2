@@ -58,6 +58,7 @@ export class StandingsService {
         'results.home_score',
         'results.home_team_id',
         'results.id',
+        'results.starts_at',
       ])
       .where('results.organization_id', '=', organizationId)
       .where('results.league_season_id', '=', query.leagueSeasonId);

@@ -227,6 +227,7 @@ export interface CompetitionFinalizedGameResults {
   id: string | null;
   league_season_id: string | null;
   organization_id: string | null;
+  starts_at: Timestamp | null;
 }
 
 export interface CompetitionGames {

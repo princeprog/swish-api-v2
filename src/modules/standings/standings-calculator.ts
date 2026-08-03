@@ -4,6 +4,11 @@ import type {
   StandingsTeam,
 } from './standings.types';
 
+type TeamGameResult = {
+  result: 'W' | 'L';
+  startsAt: Date;
+};
+
 function buildInitialRow(team: StandingsTeam): StandingsRow {
   return {
     divisionId: team.division_id,
@@ -14,6 +19,7 @@ function buildInitialRow(team: StandingsTeam): StandingsRow {
     pointsAgainst: 0,
     pointsFor: 0,
     rank: 0,
+    recentResults: [],
     teamColor: team.color,
     teamId: team.id,
     teamName: team.name,
@@ -42,12 +48,38 @@ function applyGameResult(
     row.gamesPlayed === 0 ? 0 : Number((row.wins / row.gamesPlayed).toFixed(3));
 }
 
+function addRecentResult(
+  recentResultsByTeamId: Map<string, TeamGameResult[]>,
+  teamId: string,
+  result: 'W' | 'L',
+  startsAt: Date,
+): void {
+  const recentResults = recentResultsByTeamId.get(teamId);
+
+  if (!recentResults) {
+    return;
+  }
+
+  recentResults.push({ result, startsAt });
+}
+
+function getRecentResults(teamGameResults: TeamGameResult[]): Array<'W' | 'L'> {
+  return [...teamGameResults]
+    .sort((left, right) => right.startsAt.getTime() - left.startsAt.getTime())
+    .slice(0, 5)
+    .reverse()
+    .map((gameResult) => gameResult.result);
+}
+
 export function calculateStandings(
   teams: StandingsTeam[],
   finalizedResults: FinalizedGameResult[],
 ): StandingsRow[] {
   const rowsByTeamId = new Map(
     teams.map((team) => [team.id, buildInitialRow(team)]),
+  );
+  const recentResultsByTeamId = new Map(
+    teams.map((team) => [team.id, [] as TeamGameResult[]]),
   );
 
   for (const game of finalizedResults) {
@@ -56,11 +88,29 @@ export function calculateStandings(
 
     if (homeRow) {
       applyGameResult(homeRow, game.home_score, game.away_score);
+      addRecentResult(
+        recentResultsByTeamId,
+        game.home_team_id,
+        game.home_score > game.away_score ? 'W' : 'L',
+        game.starts_at,
+      );
     }
 
     if (awayRow) {
       applyGameResult(awayRow, game.away_score, game.home_score);
+      addRecentResult(
+        recentResultsByTeamId,
+        game.away_team_id,
+        game.away_score > game.home_score ? 'W' : 'L',
+        game.starts_at,
+      );
     }
+  }
+
+  for (const row of rowsByTeamId.values()) {
+    row.recentResults = getRecentResults(
+      recentResultsByTeamId.get(row.teamId) ?? [],
+    );
   }
 
   return [...rowsByTeamId.values()]

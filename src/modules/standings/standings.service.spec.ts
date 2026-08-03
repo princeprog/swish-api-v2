@@ -36,6 +36,7 @@ describe('StandingsService', () => {
         home_score: 82,
         home_team_id: 'team-a',
         id: 'game-1',
+        starts_at: new Date('2026-07-09T10:00:00.000Z'),
       },
     ]);
     const db = {
@@ -74,9 +75,22 @@ describe('StandingsService', () => {
       '=',
       'season-1',
     );
+    expect(resultQuery.select).toHaveBeenCalledWith(
+      expect.arrayContaining(['results.starts_at']),
+    );
     expect(standings.rows).toEqual([
-      expect.objectContaining({ losses: 0, teamId: 'team-a', wins: 1 }),
-      expect.objectContaining({ losses: 1, teamId: 'team-b', wins: 0 }),
+      expect.objectContaining({
+        losses: 0,
+        recentResults: ['W'],
+        teamId: 'team-a',
+        wins: 1,
+      }),
+      expect.objectContaining({
+        losses: 1,
+        recentResults: ['L'],
+        teamId: 'team-b',
+        wins: 0,
+      }),
     ]);
     expect(standings.finalizedGamesCount).toBe(1);
   });

@@ -9,9 +9,30 @@ export class PlayerListQueryDto extends PaginationQueryDto {
   @IsUUID()
   divisionId?: string;
 
-  @IsIn(['name', 'recent', 'team'])
+  @IsIn([
+    'division',
+    'jerseyNumber',
+    'name',
+    'position',
+    'recent',
+    'status',
+    'team',
+    'updated',
+  ])
   @IsOptional()
-  sortBy?: 'name' | 'recent' | 'team';
+  sortBy?:
+    | 'division'
+    | 'jerseyNumber'
+    | 'name'
+    | 'position'
+    | 'recent'
+    | 'status'
+    | 'team'
+    | 'updated';
+
+  @IsIn(['asc', 'desc'])
+  @IsOptional()
+  sortDirection?: 'asc' | 'desc';
 
   @IsOptional()
   @TrimmedOptionalString()

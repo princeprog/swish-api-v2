@@ -163,14 +163,43 @@ export class PlayerService {
       dataQuery = dataQuery.where('players.status', '=', query.status);
     }
 
+    const sortDirection = query.sortDirection ?? 'asc';
+
     if (query.sortBy === 'name') {
-      dataQuery = dataQuery.orderBy('players.name asc');
+      dataQuery = dataQuery
+        .orderBy('players.name', sortDirection)
+        .orderBy('players.id', 'asc');
     } else if (query.sortBy === 'team') {
       dataQuery = dataQuery
-        .orderBy('teams.name asc')
-        .orderBy('players.name asc');
+        .orderBy('teams.name', sortDirection)
+        .orderBy('players.name', 'asc');
+    } else if (query.sortBy === 'division') {
+      dataQuery = dataQuery
+        .orderBy('divisions.name', sortDirection)
+        .orderBy('players.name', 'asc');
+    } else if (query.sortBy === 'jerseyNumber') {
+      dataQuery = dataQuery
+        .orderBy('players.jersey_number', sortDirection)
+        .orderBy('players.name', 'asc');
+    } else if (query.sortBy === 'position') {
+      dataQuery = dataQuery
+        .orderBy('players.position', sortDirection)
+        .orderBy('players.name', 'asc');
+    } else if (query.sortBy === 'status') {
+      dataQuery = dataQuery
+        .orderBy('players.status', sortDirection)
+        .orderBy('players.name', 'asc');
+    } else if (query.sortBy === 'updated') {
+      dataQuery = dataQuery
+        .orderBy('players.updated_at', sortDirection)
+        .orderBy('players.name', 'asc');
     } else {
-      dataQuery = dataQuery.orderBy('players.updated_at desc');
+      dataQuery = dataQuery
+        .orderBy(
+          'players.updated_at',
+          query.sortDirection ?? 'desc',
+        )
+        .orderBy('players.name', 'asc');
     }
 
     const [total, data] = await Promise.all([
