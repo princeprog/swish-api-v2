@@ -64,6 +64,19 @@ export interface AccessTeamManagerAssignments {
   team_id: string;
 }
 
+export interface AdminDivisionRosterSettings {
+  created_at: Generated<Timestamp>;
+  division_id: string;
+  id: Generated<string>;
+  max_active_players: number | null;
+  min_active_players: number | null;
+  release_reason: string | null;
+  released_at: Timestamp | null;
+  released_by_member_id: string | null;
+  submission_deadline_at: Timestamp | null;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface AdminDivisions {
   created_at: Generated<Timestamp>;
   id: Generated<string>;
@@ -115,6 +128,27 @@ export interface AdminPlayers {
   updated_at: Generated<Timestamp>;
 }
 
+export interface AdminRosterVersionPlayers {
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  jersey_number: string;
+  name: string;
+  position: string | null;
+  roster_version_id: string;
+  sort_order: number;
+  source_player_id: string | null;
+}
+
+export interface AdminRosterVersions {
+  amendment_reason: string | null;
+  approved_at: Generated<Timestamp>;
+  approved_by_member_id: string | null;
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  team_roster_id: string;
+  version_number: number;
+}
+
 export interface AdminScheduleGames {
   away_score: number | null;
   away_team_color: string | null;
@@ -145,6 +179,23 @@ export interface AdminScheduleGames {
   venue_id: string | null;
   venue_name: string | null;
   venue_slug: string | null;
+}
+
+export interface AdminTeamRosters {
+  amendment_reason: string | null;
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  latest_approved_version_id: string | null;
+  published_at: Timestamp | null;
+  published_version_id: string | null;
+  review_note: string | null;
+  reviewed_at: Timestamp | null;
+  reviewed_by_member_id: string | null;
+  submitted_at: Timestamp | null;
+  submitted_by_member_id: string | null;
+  team_id: string;
+  updated_at: Generated<Timestamp>;
+  workflow_status: Generated<string>;
 }
 
 export interface AdminTeams {
@@ -343,12 +394,16 @@ export interface DB {
   "access.game_scorekeeper_assignments": AccessGameScorekeeperAssignments;
   "access.organization_invitations": AccessOrganizationInvitations;
   "access.team_manager_assignments": AccessTeamManagerAssignments;
+  "admin.division_roster_settings": AdminDivisionRosterSettings;
   "admin.divisions": AdminDivisions;
   "admin.league_seasons": AdminLeagueSeasons;
   "admin.organization_members": AdminOrganizationMembers;
   "admin.organizations": AdminOrganizations;
   "admin.players": AdminPlayers;
+  "admin.roster_version_players": AdminRosterVersionPlayers;
+  "admin.roster_versions": AdminRosterVersions;
   "admin.schedule_games": AdminScheduleGames;
+  "admin.team_rosters": AdminTeamRosters;
   "admin.teams": AdminTeams;
   "admin.venues": AdminVenues;
   "auth.auth_accounts": AuthAuthAccounts;
