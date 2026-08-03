@@ -7,7 +7,6 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
-import { sql } from 'kysely';
 import {
   ORGANIZATION_PERMISSIONS,
   type OrganizationAccessContext,
@@ -500,26 +499,31 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
       .returningAll()
       .executeTakeFirstOrThrow();
 
-    await sql`
-      insert into admin.roster_version_players (
-        roster_version_id,
-        source_player_id,
-        name,
-        jersey_number,
-        position,
-        sort_order
-      )
-      select
-        ${version.id},
-        p.id,
-        p.name,
-        p.jersey_number,
-        p.position,
-        row_number() over (order by p.jersey_number, p.name, p.id)
-      from admin.players p
-      where p.team_id = ${context.team_id}
-        and p.status = 'active'
-    `.execute(trx);
+    const players = await trx
+      .selectFrom('admin.players')
+      .select(['id', 'name', 'jersey_number', 'position'])
+      .where('team_id', '=', context.team_id)
+      .where('status', '=', 'active')
+      .orderBy('jersey_number asc')
+      .orderBy('name asc')
+      .orderBy('id asc')
+      .execute();
+
+    if (players.length) {
+      await trx
+        .insertInto('admin.roster_version_players')
+        .values(
+          players.map((player, index) => ({
+            roster_version_id: version.id,
+            source_player_id: player.id,
+            name: player.name,
+            jersey_number: player.jersey_number,
+            position: player.position,
+            sort_order: index + 1,
+          })),
+        )
+        .execute();
+    }
 
     return version;
   }
@@ -571,20 +575,37 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
       .where('released_at', 'is', null)
       .execute();
 
-    await sql`
-      update admin.team_rosters tr
-      set
-        published_version_id = tr.latest_approved_version_id,
-        published_at = coalesce(tr.published_at, ${releasedAt}),
-        updated_at = now()
-      from admin.teams t
-      where t.id = tr.team_id
-        and t.division_id = ${divisionId}
-        and t.status = 'active'
-        and tr.workflow_status = 'approved'
-        and tr.latest_approved_version_id is not null
-        and tr.published_version_id is distinct from tr.latest_approved_version_id
-    `.execute(trx);
+    const approvedRosters = await trx
+      .selectFrom('admin.team_rosters as rosters')
+      .innerJoin('admin.teams as teams', 'teams.id', 'rosters.team_id')
+      .select(['rosters.id', 'rosters.latest_approved_version_id'])
+      .where('teams.division_id', '=', divisionId)
+      .where('teams.status', '=', 'active')
+      .where('rosters.workflow_status', '=', 'approved')
+      .where('rosters.latest_approved_version_id', 'is not', null)
+      .execute();
+
+    for (const roster of approvedRosters) {
+      await trx
+        .updateTable('admin.team_rosters')
+        .set({
+          published_version_id: roster.latest_approved_version_id,
+          published_at: releasedAt,
+          updated_at: new Date(),
+        })
+        .where('id', '=', roster.id)
+        .where((eb) =>
+          eb.or([
+            eb('published_version_id', 'is', null),
+            eb(
+              'published_version_id',
+              '!=',
+              roster.latest_approved_version_id,
+            ),
+          ]),
+        )
+        .execute();
+    }
 
     if (access) {
       await this.writeAuditWithDb(
@@ -671,12 +692,14 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
     return this.db
       .selectFrom('admin.players')
       .select([
+        'created_at',
         'id',
         'name',
-        'jersey_number as jerseyNumber',
+        'jersey_number',
         'position',
         'status',
-        'updated_at as updatedAt',
+        'team_id',
+        'updated_at',
       ])
       .where('team_id', '=', teamId)
       .orderBy('jersey_number asc')
@@ -689,18 +712,25 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
       return [];
     }
 
-    return this.db
+    const players = await this.db
       .selectFrom('admin.roster_version_players')
       .select([
+        'created_at',
         'id',
         'name',
-        'jersey_number as jerseyNumber',
+        'jersey_number',
         'position',
-        'source_player_id as sourcePlayerId',
       ])
       .where('roster_version_id', '=', versionId)
       .orderBy('sort_order asc')
       .execute();
+
+    return players.map((player) => ({
+      ...player,
+      status: 'active',
+      team_id: null,
+      updated_at: player.created_at,
+    }));
   }
 
   private async countActivePlayers(teamId: string) {
