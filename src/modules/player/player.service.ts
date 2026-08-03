@@ -14,13 +14,17 @@ import {
   normalizePagination,
 } from '../../common/pagination/pagination.types';
 import { DATABASE, type Database } from '../../database/database.tokens';
+import { RosterService } from '../roster/roster.service';
 import { CreatePlayerDto } from './dto/create-player.dto';
 import type { PlayerListQueryDto } from './dto/player-list-query.dto';
 import { UpdatePlayerDto } from './dto/update-player.dto';
 
 @Injectable()
 export class PlayerService {
-  constructor(@Inject(DATABASE) private readonly db: Database) {}
+  constructor(
+    @Inject(DATABASE) private readonly db: Database,
+    private readonly rosterService: RosterService,
+  ) {}
 
   async create(
     organizationId: string,
@@ -32,6 +36,7 @@ export class PlayerService {
       organizationId,
       createPlayerDto.teamId,
     );
+    await this.rosterService.assertRosterEditable(createPlayerDto.teamId);
     await this.ensureJerseyAvailable(
       createPlayerDto.teamId,
       createPlayerDto.jerseyNumber,
@@ -282,6 +287,10 @@ export class PlayerService {
     const player = await this.findOne(organizationId, playerId, access);
     const targetTeamId = updatePlayerDto.teamId ?? player.team_id;
     await this.assertCanManageTeamRoster(access, targetTeamId);
+    await this.rosterService.assertRosterEditable(player.team_id);
+    if (targetTeamId !== player.team_id) {
+      await this.rosterService.assertRosterEditable(targetTeamId);
+    }
 
     if (updatePlayerDto.teamId && updatePlayerDto.teamId !== player.team_id) {
       await this.assertTeamBelongsToOrganization(
@@ -323,6 +332,7 @@ export class PlayerService {
   ) {
     const player = await this.findOne(organizationId, playerId, access);
     await this.assertCanManageTeamRoster(access, player.team_id);
+    await this.rosterService.assertRosterEditable(player.team_id);
 
     await this.db
       .deleteFrom('admin.players')

@@ -27,7 +27,7 @@ export class DivisionService {
       createDivisionDto.slug,
     );
 
-    return this.db
+    const division = await this.db
       .insertInto('admin.divisions')
       .values({
         league_season_id: createDivisionDto.leagueSeasonId,
@@ -37,6 +37,14 @@ export class DivisionService {
       })
       .returningAll()
       .executeTakeFirstOrThrow();
+
+    await this.db
+      .insertInto('admin.division_roster_settings')
+      .values({ division_id: division.id })
+      .onConflict((oc) => oc.column('division_id').doNothing())
+      .execute();
+
+    return division;
   }
 
   async findAll(organizationId: string, query: PaginationQueryDto) {

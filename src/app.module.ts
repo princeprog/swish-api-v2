@@ -12,6 +12,7 @@ import { OrganizationModule } from './modules/organization/organization.module';
 import { OrganizationMemberModule } from './modules/organization-member/organization-member.module';
 import { PlayerModule } from './modules/player/player.module';
 import { PublicModule } from './modules/public/public.module';
+import { RosterModule } from './modules/roster/roster.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
 import { ScoringModule } from './modules/scoring/scoring.module';
 import { StandingsModule } from './modules/standings/standings.module';
@@ -26,6 +27,7 @@ import { VenueModule } from './modules/venue/venue.module';
     AuthModule,
     InvitationModule,
     PublicModule,
+    RosterModule,
     ScheduleModule,
     ScoringModule,
     StandingsModule,

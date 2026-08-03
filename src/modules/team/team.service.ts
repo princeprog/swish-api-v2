@@ -32,7 +32,7 @@ export class TeamService {
       createTeamDto.slug,
     );
 
-    return this.db
+    const team = await this.db
       .insertInto('admin.teams')
       .values({
         color: createTeamDto.color ?? null,
@@ -43,6 +43,14 @@ export class TeamService {
       })
       .returningAll()
       .executeTakeFirstOrThrow();
+
+    await this.db
+      .insertInto('admin.team_rosters')
+      .values({ team_id: team.id })
+      .onConflict((oc) => oc.column('team_id').doNothing())
+      .execute();
+
+    return team;
   }
 
   async findAll(
@@ -246,6 +254,22 @@ export class TeamService {
       throw new ForbiddenException('You cannot update teams');
     }
 
+    const isAssignedTeamUpdate =
+      access.permissions.includes(
+        ORGANIZATION_PERMISSIONS.TEAMS_UPDATE_ASSIGNED,
+      ) && !access.permissions.includes(ORGANIZATION_PERMISSIONS.TEAMS_UPDATE);
+
+    if (
+      isAssignedTeamUpdate &&
+      (updateTeamDto.divisionId ||
+        updateTeamDto.slug ||
+        updateTeamDto.status !== undefined)
+    ) {
+      throw new ForbiddenException(
+        'Team managers can update only the team name and color.',
+      );
+    }
+
     const team = await this.findOne(organizationId, teamId, {
       ...access,
       permissions: access.permissions.includes(
@@ -276,7 +300,7 @@ export class TeamService {
       );
     }
 
-    return this.db
+    const updated = await this.db
       .updateTable('admin.teams')
       .set({
         color: updateTeamDto.color ?? team.color,
@@ -289,6 +313,13 @@ export class TeamService {
       .where('id', '=', teamId)
       .returningAll()
       .executeTakeFirstOrThrow();
+
+    await this.writeAudit(access, 'team.profile.updated', 'team', teamId, {
+      name: updated.name,
+      color: updated.color,
+    });
+
+    return updated;
   }
 
   async remove(organizationId: string, teamId: string) {
@@ -334,5 +365,25 @@ export class TeamService {
     if (existing) {
       throw new ConflictException('Team slug already exists in this division');
     }
+  }
+
+  private async writeAudit(
+    access: OrganizationAccessContext,
+    action: string,
+    targetType: string,
+    targetId: string,
+    metadata: Record<string, unknown>,
+  ) {
+    await (this.db as any)
+      .insertInto('access.audit_events')
+      .values({
+        action,
+        actor_member_id: access.membershipId,
+        metadata,
+        organization_id: access.organizationId,
+        target_id: targetId,
+        target_type: targetType,
+      })
+      .execute();
   }
 }
