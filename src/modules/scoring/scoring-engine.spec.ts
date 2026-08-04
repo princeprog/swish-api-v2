@@ -10,7 +10,128 @@ const game = {
   homeTeamId: 'home-team',
 };
 
+const customRules = {
+  overtimeDurationMs: 180000,
+  periodDurationMs: 480000,
+  regulationPeriods: 6,
+  shotClockEnabled: false,
+  shotClockFullMs: 30000,
+  shotClockShortMs: 20000,
+  teamFoulsBeforePenalty: 2,
+  timeoutsFirstHalf: 1,
+  timeoutsPerOvertime: 2,
+  timeoutsSecondHalf: 4,
+};
+
 describe('scoring engine', () => {
+  it('initializes a game from its season rule snapshot', () => {
+    const state = createInitialScoringState({ ...game, gameRules: customRules });
+
+    expect(state).toEqual(
+      expect.objectContaining({
+        gameClockRemainingMs: 480000,
+        overtimeDurationMs: 180000,
+        periodDurationMs: 480000,
+        regulationPeriods: 6,
+        shotClockEnabled: false,
+        shotClockFullMs: 30000,
+        shotClockRemainingMs: 30000,
+        shotClockShortMs: 20000,
+        teamFoulsBeforePenalty: 2,
+        timeoutAllowancePerTeam: 1,
+        timeoutsFirstHalf: 1,
+        timeoutsPerOvertime: 2,
+        timeoutsSecondHalf: 4,
+      }),
+    );
+  });
+
+  it('keeps the shot clock stopped and rejects its controls when disabled', () => {
+    const started = applyScoringCommand(
+      createInitialScoringState({ ...game, gameRules: customRules }),
+      { idempotencyKey: 'start-no-shot-clock', type: 'game.start' },
+      new Date('2026-07-29T10:00:00.000Z'),
+    ).state;
+    const paused = applyScoringCommand(
+      started,
+      { idempotencyKey: 'pause-no-shot-clock', type: 'clocks.pause' },
+      new Date('2026-07-29T10:00:06.000Z'),
+    ).state;
+
+    expect(paused.gameClockRemainingMs).toBe(474000);
+    expect(paused.shotClockRemainingMs).toBe(30000);
+    expect(paused.shotClockRunning).toBe(false);
+    expect(() =>
+      applyScoringCommand(
+        paused,
+        {
+          idempotencyKey: 'reset-disabled-shot-clock',
+          payload: { resetTo: 'full' },
+          type: 'shot_clock.reset',
+        },
+        new Date('2026-07-29T10:00:07.000Z'),
+      ),
+    ).toThrow('This season does not use a shot clock.');
+  });
+
+  it('uses the configured team foul penalty threshold', () => {
+    let state = createInitialScoringState({ ...game, gameRules: customRules });
+
+    for (const foulNumber of [1, 2]) {
+      state = applyScoringCommand(
+        state,
+        {
+          idempotencyKey: `custom-foul-${foulNumber}`,
+          payload: { teamId: 'home-team' },
+          type: 'team_foul.record',
+        },
+        new Date(`2026-07-29T10:00:0${foulNumber}.000Z`),
+      ).state;
+    }
+
+    expect(state.homeInPenalty).toBe(true);
+  });
+
+  it('uses configurable timeout allowances and the custom season midpoint', () => {
+    const firstHalf = createInitialScoringState({
+      ...game,
+      gameRules: customRules,
+    });
+    const secondHalf = applyScoringCommand(
+      {
+        ...firstHalf,
+        currentPeriodNumber: 4,
+        phase: 'paused',
+      },
+      {
+        idempotencyKey: 'custom-second-half-timeout',
+        payload: { teamId: 'away-team' },
+        type: 'timeout.record',
+      },
+      new Date('2026-07-29T10:00:01.000Z'),
+    ).state;
+    const overtime = applyScoringCommand(
+      {
+        ...secondHalf,
+        awayTimeoutsUsed: 0,
+        overtimeNumber: 1,
+      },
+      {
+        idempotencyKey: 'custom-overtime-timeout',
+        payload: { teamId: 'away-team' },
+        type: 'timeout.record',
+      },
+      new Date('2026-07-29T10:00:02.000Z'),
+    ).state;
+
+    expect(firstHalf.timeoutAllowancePerTeam).toBe(1);
+    expect(secondHalf.timeoutSegment).toBe('second_half');
+    expect(secondHalf.timeoutAllowancePerTeam).toBe(4);
+    expect(secondHalf.awayTimeoutsRemaining).toBe(3);
+    expect(overtime.timeoutAllowancePerTeam).toBe(2);
+    expect(overtime.awayTimeoutsRemaining).toBe(1);
+  });
+
   it('starts a game and runs both clocks from authoritative anchors', () => {
     const state = createInitialScoringState(game);
     const started = applyScoringCommand(

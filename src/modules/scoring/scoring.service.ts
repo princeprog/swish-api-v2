@@ -55,11 +55,16 @@ type ScoringStateRow = {
   period_duration_ms: number;
   phase: string;
   regulation_periods: number;
+  shot_clock_enabled: boolean;
   shot_clock_full_ms: number;
   shot_clock_remaining_ms: number;
   shot_clock_running: boolean;
   shot_clock_short_ms: number;
   shot_clock_started_at: Date | null;
+  team_fouls_before_penalty: number;
+  timeouts_first_half: number;
+  timeouts_per_overtime: number;
+  timeouts_second_half: number;
   version: number;
 };
 
@@ -542,10 +547,15 @@ export class ScoringService {
         period_duration_ms: initial.periodDurationMs,
         phase: initial.phase,
         regulation_periods: initial.regulationPeriods,
+        shot_clock_enabled: initial.shotClockEnabled,
         shot_clock_full_ms: initial.shotClockFullMs,
         shot_clock_remaining_ms: initial.shotClockRemainingMs,
         shot_clock_running: initial.shotClockRunning,
         shot_clock_short_ms: initial.shotClockShortMs,
+        team_fouls_before_penalty: initial.teamFoulsBeforePenalty,
+        timeouts_first_half: initial.timeoutsFirstHalf,
+        timeouts_per_overtime: initial.timeoutsPerOvertime,
+        timeouts_second_half: initial.timeoutsSecondHalf,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -718,15 +728,15 @@ export class ScoringService {
     const timeoutSegment =
       row.overtime_number > 0
         ? 'overtime'
-        : row.current_period_number <= 2
+        : row.current_period_number <= Math.ceil(row.regulation_periods / 2)
           ? 'first_half'
           : 'second_half';
     const timeoutAllowancePerTeam =
       timeoutSegment === 'overtime'
-        ? 1
+        ? row.timeouts_per_overtime
         : timeoutSegment === 'first_half'
-          ? 2
-          : 3;
+          ? row.timeouts_first_half
+          : row.timeouts_second_half;
 
     return {
       awayScore: row.away_score,
@@ -736,7 +746,8 @@ export class ScoringService {
         timeoutAllowancePerTeam - row.away_timeouts_used,
       ),
       awayTimeoutsUsed: row.away_timeouts_used,
-      awayInPenalty: row.away_team_fouls >= 4,
+      awayInPenalty:
+        row.away_team_fouls >= row.team_fouls_before_penalty,
       awayTeamId: game.away_team_id,
       currentPeriodNumber: row.current_period_number,
       gameClockRemainingMs: row.game_clock_remaining_ms,
@@ -750,7 +761,8 @@ export class ScoringService {
         timeoutAllowancePerTeam - row.home_timeouts_used,
       ),
       homeTimeoutsUsed: row.home_timeouts_used,
-      homeInPenalty: row.home_team_fouls >= 4,
+      homeInPenalty:
+        row.home_team_fouls >= row.team_fouls_before_penalty,
       homeTeamId: game.home_team_id,
       latestReversibleEvent,
       overtimeDurationMs: row.overtime_duration_ms,
@@ -759,13 +771,18 @@ export class ScoringService {
       phase: row.phase as ScoringState['phase'],
       regulationPeriods: row.regulation_periods,
       sequence: row.version,
+      shotClockEnabled: row.shot_clock_enabled,
       shotClockFullMs: row.shot_clock_full_ms,
       shotClockRemainingMs: row.shot_clock_remaining_ms,
       shotClockRunning: row.shot_clock_running,
       shotClockShortMs: row.shot_clock_short_ms,
       shotClockStartedAt: row.shot_clock_started_at,
+      teamFoulsBeforePenalty: row.team_fouls_before_penalty,
       timeoutAllowancePerTeam,
       timeoutSegment,
+      timeoutsFirstHalf: row.timeouts_first_half,
+      timeoutsPerOvertime: row.timeouts_per_overtime,
+      timeoutsSecondHalf: row.timeouts_second_half,
       version: row.version,
     };
   }
@@ -789,8 +806,13 @@ export class ScoringService {
         overtimeDurationMs: state.overtimeDurationMs,
         periodDurationMs: state.periodDurationMs,
         regulationPeriods: state.regulationPeriods,
+        shotClockEnabled: state.shotClockEnabled,
         shotClockFullMs: state.shotClockFullMs,
         shotClockShortMs: state.shotClockShortMs,
+        teamFoulsBeforePenalty: state.teamFoulsBeforePenalty,
+        timeoutsFirstHalf: state.timeoutsFirstHalf,
+        timeoutsPerOvertime: state.timeoutsPerOvertime,
+        timeoutsSecondHalf: state.timeoutsSecondHalf,
       },
       control,
       fouls: {
@@ -798,7 +820,7 @@ export class ScoringService {
         awayInPenalty: state.awayInPenalty,
         home: state.homeTeamFouls,
         homeInPenalty: state.homeInPenalty,
-        penaltyAt: 4,
+        penaltyAt: state.teamFoulsBeforePenalty,
       },
       game: {
         awayTeam: {
@@ -869,10 +891,20 @@ export class ScoringService {
           ? insertedEventId
           : null,
         overtime_number: state.overtimeNumber,
+        overtime_duration_ms: state.overtimeDurationMs,
+        period_duration_ms: state.periodDurationMs,
         phase: state.phase,
+        regulation_periods: state.regulationPeriods,
+        shot_clock_enabled: state.shotClockEnabled,
+        shot_clock_full_ms: state.shotClockFullMs,
         shot_clock_remaining_ms: state.shotClockRemainingMs,
         shot_clock_running: state.shotClockRunning,
+        shot_clock_short_ms: state.shotClockShortMs,
         shot_clock_started_at: state.shotClockStartedAt,
+        team_fouls_before_penalty: state.teamFoulsBeforePenalty,
+        timeouts_first_half: state.timeoutsFirstHalf,
+        timeouts_per_overtime: state.timeoutsPerOvertime,
+        timeouts_second_half: state.timeoutsSecondHalf,
         updated_at: new Date(),
         version: state.version,
       })

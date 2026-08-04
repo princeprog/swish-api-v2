@@ -4,8 +4,13 @@ export const SCORING_DEFAULTS = {
   overtimeDurationMs: 5 * 60 * 1000,
   periodDurationMs: 10 * 60 * 1000,
   regulationPeriods: 4,
+  shotClockEnabled: true,
   shotClockFullMs: 24 * 1000,
   shotClockShortMs: 14 * 1000,
+  teamFoulsBeforePenalty: 4,
+  timeoutsFirstHalf: 2,
+  timeoutsPerOvertime: 1,
+  timeoutsSecondHalf: 3,
 } as const;
 
 const PERIOD_CLOCK_DISPLAY_ZERO_THRESHOLD_MS = 1000;
@@ -19,6 +24,19 @@ export type ScoringPhase =
   | 'reopened';
 
 export type ScoringTeamSide = 'home' | 'away';
+
+export type ScoringGameRules = {
+  overtimeDurationMs: number;
+  periodDurationMs: number;
+  regulationPeriods: number;
+  shotClockEnabled: boolean;
+  shotClockFullMs: number;
+  shotClockShortMs: number;
+  teamFoulsBeforePenalty: number;
+  timeoutsFirstHalf: number;
+  timeoutsPerOvertime: number;
+  timeoutsSecondHalf: number;
+};
 
 export type LatestReversibleScoringEvent = {
   id: string;
@@ -52,6 +70,7 @@ export type ScoringState = {
   phase: ScoringPhase;
   regulationPeriods: number;
   sequence: number;
+  shotClockEnabled: boolean;
   shotClockFullMs: number;
   shotClockRemainingMs: number;
   shotClockRunning: boolean;
@@ -59,6 +78,10 @@ export type ScoringState = {
   shotClockStartedAt: Date | null;
   timeoutAllowancePerTeam: number;
   timeoutSegment: 'first_half' | 'second_half' | 'overtime';
+  teamFoulsBeforePenalty: number;
+  timeoutsFirstHalf: number;
+  timeoutsPerOvertime: number;
+  timeoutsSecondHalf: number;
   version: number;
 };
 
@@ -142,8 +165,11 @@ export function createInitialScoringState(params: {
   gameId: string;
   homeScore?: number | null;
   homeTeamId: string;
+  gameRules?: ScoringGameRules;
   phase?: ScoringPhase;
 }): ScoringState {
+  const gameRules = params.gameRules ?? SCORING_DEFAULTS;
+
   return withDerivedState({
     awayScore: params.awayScore ?? 0,
     awayTimeoutsRemaining: 2,
@@ -152,7 +178,7 @@ export function createInitialScoringState(params: {
     awayTeamFouls: 0,
     awayTeamId: params.awayTeamId,
     currentPeriodNumber: 1,
-    gameClockRemainingMs: SCORING_DEFAULTS.periodDurationMs,
+    gameClockRemainingMs: gameRules.periodDurationMs,
     gameClockRunning: false,
     gameClockStartedAt: null,
     gameId: params.gameId,
@@ -163,19 +189,24 @@ export function createInitialScoringState(params: {
     homeTeamFouls: 0,
     homeTeamId: params.homeTeamId,
     latestReversibleEvent: null,
-    overtimeDurationMs: SCORING_DEFAULTS.overtimeDurationMs,
+    overtimeDurationMs: gameRules.overtimeDurationMs,
     overtimeNumber: 0,
-    periodDurationMs: SCORING_DEFAULTS.periodDurationMs,
+    periodDurationMs: gameRules.periodDurationMs,
     phase: params.phase ?? 'pregame',
-    regulationPeriods: SCORING_DEFAULTS.regulationPeriods,
+    regulationPeriods: gameRules.regulationPeriods,
     sequence: 0,
-    shotClockFullMs: SCORING_DEFAULTS.shotClockFullMs,
-    shotClockRemainingMs: SCORING_DEFAULTS.shotClockFullMs,
+    shotClockEnabled: gameRules.shotClockEnabled,
+    shotClockFullMs: gameRules.shotClockFullMs,
+    shotClockRemainingMs: gameRules.shotClockFullMs,
     shotClockRunning: false,
-    shotClockShortMs: SCORING_DEFAULTS.shotClockShortMs,
+    shotClockShortMs: gameRules.shotClockShortMs,
     shotClockStartedAt: null,
-    timeoutAllowancePerTeam: 2,
+    teamFoulsBeforePenalty: gameRules.teamFoulsBeforePenalty,
+    timeoutAllowancePerTeam: gameRules.timeoutsFirstHalf,
     timeoutSegment: 'first_half',
+    timeoutsFirstHalf: gameRules.timeoutsFirstHalf,
+    timeoutsPerOvertime: gameRules.timeoutsPerOvertime,
+    timeoutsSecondHalf: gameRules.timeoutsSecondHalf,
     version: 0,
   });
 }
@@ -236,9 +267,9 @@ export function applyScoringCommand(
       }
       next.phase = 'live';
       next.gameClockRunning = true;
-      next.shotClockRunning = true;
+      next.shotClockRunning = next.shotClockEnabled;
       next.gameClockStartedAt = now;
-      next.shotClockStartedAt = now;
+      next.shotClockStartedAt = next.shotClockEnabled ? now : null;
       break;
     }
     case 'clocks.start': {
@@ -257,9 +288,9 @@ export function applyScoringCommand(
       }
       next.phase = 'live';
       next.gameClockRunning = true;
-      next.shotClockRunning = true;
+      next.shotClockRunning = next.shotClockEnabled;
       next.gameClockStartedAt = now;
-      next.shotClockStartedAt = now;
+      next.shotClockStartedAt = next.shotClockEnabled ? now : null;
       break;
     }
     case 'clocks.pause':
@@ -282,6 +313,7 @@ export function applyScoringCommand(
       next.gameClockStartedAt = next.gameClockRunning ? now : null;
       break;
     case 'shot_clock.start':
+      assertShotClockEnabled(next);
       assertNotFinal(next);
       if (!next.gameClockRunning) {
         throw new ScoringActionError(
@@ -293,10 +325,12 @@ export function applyScoringCommand(
       next.shotClockStartedAt = now;
       break;
     case 'shot_clock.pause':
+      assertShotClockEnabled(next);
       next.shotClockRunning = false;
       next.shotClockStartedAt = null;
       break;
     case 'shot_clock.reset':
+      assertShotClockEnabled(next);
       next.shotClockRemainingMs =
         command.payload.resetTo === 'short'
           ? next.shotClockShortMs
@@ -304,6 +338,7 @@ export function applyScoringCommand(
       next.shotClockStartedAt = next.shotClockRunning ? now : null;
       break;
     case 'shot_clock.adjust':
+      assertShotClockEnabled(next);
       assertReason(command.payload.reason);
       assertDurationRange(
         'shotClockRemainingMs',
@@ -446,7 +481,11 @@ export function applyScoringCommand(
       next.phase = 'paused';
       next.latestReversibleEvent = null;
 
-      if (next.currentPeriodNumber === 3 || next.overtimeNumber > 0) {
+      if (
+        next.currentPeriodNumber ===
+          Math.ceil(next.regulationPeriods / 2) + 1 ||
+        next.overtimeNumber > 0
+      ) {
         next.homeTimeoutsUsed = 0;
         next.awayTimeoutsUsed = 0;
       }
@@ -664,10 +703,12 @@ function assertTimeoutPhase(state: ScoringState) {
 
 function timeoutAllowancePerTeam(state: ScoringState) {
   if (state.overtimeNumber > 0) {
-    return 1;
+    return state.timeoutsPerOvertime;
   }
 
-  return state.currentPeriodNumber <= 2 ? 2 : 3;
+  return state.currentPeriodNumber <= Math.ceil(state.regulationPeriods / 2)
+    ? state.timeoutsFirstHalf
+    : state.timeoutsSecondHalf;
 }
 
 function timeoutRemaining(state: ScoringState, side: ScoringTeamSide) {
@@ -686,14 +727,25 @@ function timeoutSegment(state: ScoringState): ScoringState['timeoutSegment'] {
 }
 
 function withDerivedState<T extends ScoringState>(state: T): T {
-  state.homeInPenalty = state.homeTeamFouls >= 4;
-  state.awayInPenalty = state.awayTeamFouls >= 4;
+  state.homeInPenalty =
+    state.homeTeamFouls >= state.teamFoulsBeforePenalty;
+  state.awayInPenalty =
+    state.awayTeamFouls >= state.teamFoulsBeforePenalty;
   state.timeoutAllowancePerTeam = timeoutAllowancePerTeam(state);
   state.timeoutSegment = timeoutSegment(state);
   state.homeTimeoutsRemaining = timeoutRemaining(state, 'home');
   state.awayTimeoutsRemaining = timeoutRemaining(state, 'away');
 
   return state;
+}
+
+function assertShotClockEnabled(state: ScoringState) {
+  if (!state.shotClockEnabled) {
+    throw new ScoringActionError(
+      'SHOT_CLOCK_DISABLED',
+      'This season does not use a shot clock.',
+    );
+  }
 }
 
 function resolveTeamSide(state: ScoringState, teamId: string): ScoringTeamSide {
