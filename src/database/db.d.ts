@@ -88,6 +88,22 @@ export interface AdminDivisions {
   updated_at: Generated<Timestamp>;
 }
 
+export interface AdminLeagueSeasonGameRules {
+  created_at: Generated<Timestamp>;
+  league_season_id: string;
+  overtime_duration_ms: Generated<number>;
+  period_duration_ms: Generated<number>;
+  regulation_periods: Generated<number>;
+  shot_clock_enabled: Generated<boolean>;
+  shot_clock_full_ms: Generated<number>;
+  shot_clock_short_ms: Generated<number>;
+  team_fouls_before_penalty: Generated<number>;
+  timeouts_first_half: Generated<number>;
+  timeouts_per_overtime: Generated<number>;
+  timeouts_second_half: Generated<number>;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface AdminLeagueSeasons {
   created_at: Generated<Timestamp>;
   id: Generated<string>;
@@ -381,11 +397,16 @@ export interface ScoringGameStates {
   period_duration_ms: Generated<number>;
   phase: Generated<string>;
   regulation_periods: Generated<number>;
+  shot_clock_enabled: Generated<boolean>;
   shot_clock_full_ms: Generated<number>;
   shot_clock_remaining_ms: Generated<number>;
   shot_clock_running: Generated<boolean>;
   shot_clock_short_ms: Generated<number>;
   shot_clock_started_at: Timestamp | null;
+  team_fouls_before_penalty: Generated<number>;
+  timeouts_first_half: Generated<number>;
+  timeouts_per_overtime: Generated<number>;
+  timeouts_second_half: Generated<number>;
   updated_at: Generated<Timestamp>;
   version: Generated<number>;
 }
@@ -397,6 +418,7 @@ export interface DB {
   "access.team_manager_assignments": AccessTeamManagerAssignments;
   "admin.division_roster_settings": AdminDivisionRosterSettings;
   "admin.divisions": AdminDivisions;
+  "admin.league_season_game_rules": AdminLeagueSeasonGameRules;
   "admin.league_seasons": AdminLeagueSeasons;
   "admin.organization_members": AdminOrganizationMembers;
   "admin.organizations": AdminOrganizations;
