@@ -187,7 +187,8 @@ export class OrganizationMemberService {
       );
     }
 
-    await this.assertTeamsBelongToOrganization(organizationId, teamIds);
+    const teams = await this.findAssignableTeams(organizationId, teamIds);
+    this.assertOneTeamPerSeason(teams);
 
     await (this.db as any).transaction().execute(async (trx) => {
       await trx
@@ -199,9 +200,10 @@ export class OrganizationMemberService {
         await trx
           .insertInto('access.team_manager_assignments')
           .values(
-            teamIds.map((teamId) => ({
+            teams.map((team) => ({
+              league_season_id: team.league_season_id,
               organization_member_id: memberId,
-              team_id: teamId,
+              team_id: team.id,
             })),
           )
           .execute();
@@ -350,8 +352,12 @@ export class OrganizationMemberService {
     organizationId: string,
     teamIds: string[],
   ) {
+    await this.findAssignableTeams(organizationId, teamIds);
+  }
+
+  private async findAssignableTeams(organizationId: string, teamIds: string[]) {
     if (!teamIds.length) {
-      return;
+      return [];
     }
 
     const rows = await this.db
@@ -366,13 +372,31 @@ export class OrganizationMemberService {
         'league_seasons.id',
         'divisions.league_season_id',
       )
-      .select(['teams.id'])
+      .select(['teams.id', 'divisions.league_season_id'])
       .where('teams.id', 'in', teamIds)
       .where('league_seasons.organization_id', '=', organizationId)
       .execute();
 
     if (rows.length !== teamIds.length) {
       throw new NotFoundException('One or more teams were not found');
+    }
+
+    return rows;
+  }
+
+  private assertOneTeamPerSeason(
+    teams: Array<{ id: string; league_season_id: string }>,
+  ) {
+    const selectedSeasonIds = new Set<string>();
+
+    for (const team of teams) {
+      if (selectedSeasonIds.has(team.league_season_id)) {
+        throw new BadRequestException(
+          'A team manager can only manage one team in each season.',
+        );
+      }
+
+      selectedSeasonIds.add(team.league_season_id);
     }
   }
 

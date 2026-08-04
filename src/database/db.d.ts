@@ -60,6 +60,7 @@ export interface AccessOrganizationInvitations {
 export interface AccessTeamManagerAssignments {
   created_at: Generated<Timestamp>;
   id: Generated<string>;
+  league_season_id: string;
   organization_member_id: string;
   team_id: string;
 }
