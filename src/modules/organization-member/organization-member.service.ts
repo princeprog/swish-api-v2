@@ -330,8 +330,20 @@ export class OrganizationMemberService {
     const rows = await (this.db as any)
       .selectFrom('access.team_manager_assignments as assignments')
       .innerJoin('admin.teams as teams', 'teams.id', 'assignments.team_id')
+      .innerJoin(
+        'admin.divisions as divisions',
+        'divisions.id',
+        'teams.division_id',
+      )
+      .innerJoin(
+        'admin.league_seasons as league_seasons',
+        'league_seasons.id',
+        'divisions.league_season_id',
+      )
       .select([
         'assignments.organization_member_id',
+        'assignments.league_season_id',
+        'league_seasons.name as league_season_name',
         'teams.id',
         'teams.name',
         'teams.slug',
@@ -341,7 +353,13 @@ export class OrganizationMemberService {
 
     for (const row of rows) {
       const values = byMember.get(row.organization_member_id) ?? [];
-      values.push({ id: row.id, name: row.name, slug: row.slug });
+      values.push({
+        id: row.id,
+        leagueSeasonId: row.league_season_id,
+        leagueSeasonName: row.league_season_name,
+        name: row.name,
+        slug: row.slug,
+      });
       byMember.set(row.organization_member_id, values);
     }
 
