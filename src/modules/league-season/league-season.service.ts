@@ -12,6 +12,63 @@ import type { PaginationQueryDto } from '../../common/pagination/pagination.dto'
 import { DATABASE, type Database } from '../../database/database.tokens';
 import { CreateLeagueSeasonDto } from './dto/create-league-season.dto';
 import { UpdateLeagueSeasonDto } from './dto/update-league-season.dto';
+import type { LeagueSeasonGameRulesDto } from './dto/league-season-game-rules.dto';
+
+type LeagueSeasonRecord = {
+  created_at: Date;
+  id: string;
+  name: string;
+  organization_id: string;
+  public_enabled: boolean;
+  slug: string;
+  status: string;
+  updated_at: Date;
+};
+
+type LeagueSeasonGameRulesRecord = {
+  created_at: Date;
+  league_season_id: string;
+  overtime_duration_ms: number;
+  period_duration_ms: number;
+  regulation_periods: number;
+  shot_clock_enabled: boolean;
+  shot_clock_full_ms: number;
+  shot_clock_short_ms: number;
+  team_fouls_before_penalty: number;
+  timeouts_first_half: number;
+  timeouts_per_overtime: number;
+  timeouts_second_half: number;
+  updated_at: Date;
+};
+
+function toGameRulesValues(gameRules: LeagueSeasonGameRulesDto) {
+  return {
+    overtime_duration_ms: gameRules.overtimeDurationMs,
+    period_duration_ms: gameRules.periodDurationMs,
+    regulation_periods: gameRules.regulationPeriods,
+    shot_clock_enabled: gameRules.shotClockEnabled,
+    shot_clock_full_ms: gameRules.shotClockFullMs,
+    shot_clock_short_ms: gameRules.shotClockShortMs,
+    team_fouls_before_penalty: gameRules.teamFoulsBeforePenalty,
+    timeouts_first_half: gameRules.timeoutsFirstHalf,
+    timeouts_per_overtime: gameRules.timeoutsPerOvertime,
+    timeouts_second_half: gameRules.timeoutsSecondHalf,
+  };
+}
+
+function toLeagueSeasonResponse(
+  season: LeagueSeasonRecord,
+  gameRules: LeagueSeasonGameRulesRecord,
+) {
+  const {
+    created_at: _createdAt,
+    league_season_id: _leagueSeasonId,
+    updated_at: _updatedAt,
+    ...rules
+  } = gameRules;
+
+  return { ...season, game_rules: rules };
+}
 
 @Injectable()
 export class LeagueSeasonService {
@@ -24,17 +81,29 @@ export class LeagueSeasonService {
     await this.assertOrganizationExists(organizationId);
     await this.ensureSlugAvailable(organizationId, createLeagueSeasonDto.slug);
 
-    return this.db
-      .insertInto('admin.league_seasons')
-      .values({
-        name: createLeagueSeasonDto.name,
-        organization_id: organizationId,
-        public_enabled: createLeagueSeasonDto.publicEnabled ?? false,
-        slug: createLeagueSeasonDto.slug,
-        status: createLeagueSeasonDto.status ?? 'draft',
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
+    return this.db.transaction().execute(async (trx) => {
+      const season = await trx
+        .insertInto('admin.league_seasons')
+        .values({
+          name: createLeagueSeasonDto.name,
+          organization_id: organizationId,
+          public_enabled: createLeagueSeasonDto.publicEnabled ?? false,
+          slug: createLeagueSeasonDto.slug,
+          status: createLeagueSeasonDto.status ?? 'draft',
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      const gameRules = await trx
+        .insertInto('admin.league_season_game_rules')
+        .values({
+          league_season_id: season.id,
+          ...toGameRulesValues(createLeagueSeasonDto.gameRules),
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      return toLeagueSeasonResponse(season, gameRules);
+    });
   }
 
   async findAll(organizationId: string, query: PaginationQueryDto) {
@@ -53,7 +122,35 @@ export class LeagueSeasonService {
       .offset(pagination.offset)
       .execute();
 
-    return createPaginatedResponse(data, Number(total.count), pagination);
+    const gameRules = data.length
+      ? await this.db
+          .selectFrom('admin.league_season_game_rules')
+          .selectAll()
+          .where(
+            'league_season_id',
+            'in',
+            data.map((season) => season.id),
+          )
+          .execute()
+      : [];
+    const rulesBySeasonId = new Map(
+      gameRules.map((rules) => [rules.league_season_id, rules]),
+    );
+    const seasonsWithRules = data.map((season) => {
+      const rules = rulesBySeasonId.get(season.id);
+
+      if (!rules) {
+        throw new NotFoundException('Game rules were not found for this season');
+      }
+
+      return toLeagueSeasonResponse(season, rules);
+    });
+
+    return createPaginatedResponse(
+      seasonsWithRules,
+      Number(total.count),
+      pagination,
+    );
   }
 
   async findOne(organizationId: string, leagueSeasonId: string) {
@@ -68,7 +165,17 @@ export class LeagueSeasonService {
       throw new NotFoundException('League season not found');
     }
 
-    return leagueSeason;
+    const gameRules = await this.db
+      .selectFrom('admin.league_season_game_rules')
+      .selectAll()
+      .where('league_season_id', '=', leagueSeasonId)
+      .executeTakeFirst();
+
+    if (!gameRules) {
+      throw new NotFoundException('Game rules were not found for this season');
+    }
+
+    return toLeagueSeasonResponse(leagueSeason, gameRules);
   }
 
   async update(
@@ -88,19 +195,39 @@ export class LeagueSeasonService {
       );
     }
 
-    return this.db
-      .updateTable('admin.league_seasons')
-      .set({
-        name: updateLeagueSeasonDto.name,
-        public_enabled: updateLeagueSeasonDto.publicEnabled,
-        slug: updateLeagueSeasonDto.slug,
-        status: updateLeagueSeasonDto.status,
-        updated_at: new Date(),
-      })
-      .where('id', '=', leagueSeasonId)
-      .where('organization_id', '=', organizationId)
-      .returningAll()
-      .executeTakeFirstOrThrow();
+    return this.db.transaction().execute(async (trx) => {
+      const updatedSeason = await trx
+        .updateTable('admin.league_seasons')
+        .set({
+          name: updateLeagueSeasonDto.name,
+          public_enabled: updateLeagueSeasonDto.publicEnabled,
+          slug: updateLeagueSeasonDto.slug,
+          status: updateLeagueSeasonDto.status,
+          updated_at: new Date(),
+        })
+        .where('id', '=', leagueSeasonId)
+        .where('organization_id', '=', organizationId)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      const updatedRules = updateLeagueSeasonDto.gameRules
+        ? await trx
+            .updateTable('admin.league_season_game_rules')
+            .set({
+              ...toGameRulesValues(updateLeagueSeasonDto.gameRules),
+              updated_at: new Date(),
+            })
+            .where('league_season_id', '=', leagueSeasonId)
+            .returningAll()
+            .executeTakeFirstOrThrow()
+        : await trx
+            .selectFrom('admin.league_season_game_rules')
+            .selectAll()
+            .where('league_season_id', '=', leagueSeasonId)
+            .executeTakeFirstOrThrow();
+
+      return toLeagueSeasonResponse(updatedSeason, updatedRules);
+    });
   }
 
   async remove(organizationId: string, leagueSeasonId: string) {
