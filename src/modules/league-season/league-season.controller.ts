@@ -20,11 +20,11 @@ import { LeagueSeasonService } from './league-season.service';
 
 @Controller('organizations/:organizationId/league-seasons')
 @UseGuards(JwtAuthGuard, OrganizationPermissionsGuard)
-@RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE)
 export class LeagueSeasonController {
   constructor(private readonly leagueSeasonService: LeagueSeasonService) {}
 
   @Post()
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE)
   create(
     @Param('organizationId') organizationId: string,
     @Body() createLeagueSeasonDto: CreateLeagueSeasonDto,
@@ -36,6 +36,7 @@ export class LeagueSeasonController {
   }
 
   @Get()
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.ORGANIZATION_READ)
   findAll(
     @Param('organizationId') organizationId: string,
     @Query() query: PaginationQueryDto,
@@ -44,6 +45,7 @@ export class LeagueSeasonController {
   }
 
   @Get(':leagueSeasonId')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.ORGANIZATION_READ)
   findOne(
     @Param('organizationId') organizationId: string,
     @Param('leagueSeasonId') leagueSeasonId: string,
@@ -52,6 +54,7 @@ export class LeagueSeasonController {
   }
 
   @Patch(':leagueSeasonId')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE)
   update(
     @Param('organizationId') organizationId: string,
     @Param('leagueSeasonId') leagueSeasonId: string,
@@ -65,6 +68,7 @@ export class LeagueSeasonController {
   }
 
   @Delete(':leagueSeasonId')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE)
   remove(
     @Param('organizationId') organizationId: string,
     @Param('leagueSeasonId') leagueSeasonId: string,

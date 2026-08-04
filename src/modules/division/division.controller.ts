@@ -20,11 +20,11 @@ import { DivisionService } from './division.service';
 
 @Controller('organizations/:organizationId/divisions')
 @UseGuards(JwtAuthGuard, OrganizationPermissionsGuard)
-@RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.DIVISIONS_MANAGE)
 export class DivisionController {
   constructor(private readonly divisionService: DivisionService) {}
 
   @Post()
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.DIVISIONS_MANAGE)
   create(
     @Param('organizationId') organizationId: string,
     @Body() createDivisionDto: CreateDivisionDto,
@@ -33,6 +33,7 @@ export class DivisionController {
   }
 
   @Get()
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.ORGANIZATION_READ)
   findAll(
     @Param('organizationId') organizationId: string,
     @Query() query: PaginationQueryDto,
@@ -41,6 +42,7 @@ export class DivisionController {
   }
 
   @Get(':divisionId')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.ORGANIZATION_READ)
   findOne(
     @Param('organizationId') organizationId: string,
     @Param('divisionId') divisionId: string,
@@ -49,6 +51,7 @@ export class DivisionController {
   }
 
   @Patch(':divisionId')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.DIVISIONS_MANAGE)
   update(
     @Param('organizationId') organizationId: string,
     @Param('divisionId') divisionId: string,
@@ -62,6 +65,7 @@ export class DivisionController {
   }
 
   @Delete(':divisionId')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.DIVISIONS_MANAGE)
   remove(
     @Param('organizationId') organizationId: string,
     @Param('divisionId') divisionId: string,
