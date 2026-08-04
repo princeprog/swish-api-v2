@@ -154,6 +154,14 @@ export class ScheduleService {
       dataQuery = dataQuery.where('division_id', '=', query.divisionId);
     }
 
+    if (query.leagueSeasonId) {
+      dataQuery = dataQuery.where(
+        'league_season_id',
+        '=',
+        query.leagueSeasonId,
+      );
+    }
+
     if (query.status) {
       dataQuery = dataQuery.where('status', '=', query.status);
     }

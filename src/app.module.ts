@@ -16,6 +16,7 @@ import { RosterModule } from './modules/roster/roster.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
 import { ScoringModule } from './modules/scoring/scoring.module';
 import { StandingsModule } from './modules/standings/standings.module';
+import { TeamManagerWorkspaceModule } from './modules/team-manager-workspace/team-manager-workspace.module';
 import { TeamModule } from './modules/team/team.module';
 import { VenueModule } from './modules/venue/venue.module';
 
@@ -31,6 +32,7 @@ import { VenueModule } from './modules/venue/venue.module';
     ScheduleModule,
     ScoringModule,
     StandingsModule,
+    TeamManagerWorkspaceModule,
     OrganizationModule,
     OrganizationMemberModule,
     LeagueSeasonModule,

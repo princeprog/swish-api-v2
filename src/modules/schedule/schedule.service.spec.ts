@@ -353,6 +353,7 @@ describe('ScheduleService list filters', () => {
 
     await service.findAll('org-1', {
       divisionId: 'division-1',
+      leagueSeasonId: 'season-1',
       search: 'cebu',
       sortBy: 'division',
       status: 'scheduled',
@@ -361,6 +362,11 @@ describe('ScheduleService list filters', () => {
     const query = db.selectFrom.mock.results[0].value;
     expect(query.where).toHaveBeenCalledWith('organization_id', '=', 'org-1');
     expect(query.where).toHaveBeenCalledWith('division_id', '=', 'division-1');
+    expect(query.where).toHaveBeenCalledWith(
+      'league_season_id',
+      '=',
+      'season-1',
+    );
     expect(query.where).toHaveBeenCalledWith('status', '=', 'scheduled');
     expect(query.where).toHaveBeenCalledWith(expect.any(Function));
     expect(query.orderBy).toHaveBeenCalledWith('division_name asc');

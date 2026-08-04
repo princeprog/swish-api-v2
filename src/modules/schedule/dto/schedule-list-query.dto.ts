@@ -7,6 +7,10 @@ export class ScheduleListQueryDto {
   divisionId?: string;
 
   @IsOptional()
+  @IsUUID()
+  leagueSeasonId?: string;
+
+  @IsOptional()
   @TrimmedOptionalString()
   search?: string;
 
