@@ -1,16 +1,25 @@
 import {
   IsBoolean,
+  IsDefined,
   IsIn,
   IsOptional,
   IsString,
   IsUUID,
   Length,
   Matches,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+import { LeagueSeasonGameRulesDto } from './league-season-game-rules.dto';
 
 export class CreateLeagueSeasonDto {
   @IsUUID()
   organizationId!: string;
+
+  @IsDefined()
+  @ValidateNested()
+  @Type(() => LeagueSeasonGameRulesDto)
+  gameRules!: LeagueSeasonGameRulesDto;
 
   @IsString()
   @Length(2, 160)
