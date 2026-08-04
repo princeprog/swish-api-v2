@@ -211,6 +211,35 @@ export function createInitialScoringState(params: {
   });
 }
 
+export function applyScoringGameRules(
+  state: ScoringState,
+  gameRules: ScoringGameRules,
+): ScoringState {
+  if (state.phase !== 'pregame') {
+    return state;
+  }
+
+  return withDerivedState({
+    ...state,
+    gameClockRemainingMs: gameRules.periodDurationMs,
+    gameClockRunning: false,
+    gameClockStartedAt: null,
+    overtimeDurationMs: gameRules.overtimeDurationMs,
+    periodDurationMs: gameRules.periodDurationMs,
+    regulationPeriods: gameRules.regulationPeriods,
+    shotClockEnabled: gameRules.shotClockEnabled,
+    shotClockFullMs: gameRules.shotClockFullMs,
+    shotClockRemainingMs: gameRules.shotClockFullMs,
+    shotClockRunning: false,
+    shotClockShortMs: gameRules.shotClockShortMs,
+    shotClockStartedAt: null,
+    teamFoulsBeforePenalty: gameRules.teamFoulsBeforePenalty,
+    timeoutsFirstHalf: gameRules.timeoutsFirstHalf,
+    timeoutsPerOvertime: gameRules.timeoutsPerOvertime,
+    timeoutsSecondHalf: gameRules.timeoutsSecondHalf,
+  });
+}
+
 export function applyScoringCommand(
   state: ScoringState,
   command: ScoringCommand,
@@ -223,40 +252,10 @@ export function applyScoringCommand(
 
   switch (command.type) {
     case 'game.configure': {
-      assertPregame(next);
-      const periodDurationMs =
-        command.payload?.periodDurationMs ?? next.periodDurationMs;
-      const overtimeDurationMs =
-        command.payload?.overtimeDurationMs ?? next.overtimeDurationMs;
-      const shotClockFullMs =
-        command.payload?.shotClockFullMs ?? next.shotClockFullMs;
-      const shotClockShortMs =
-        command.payload?.shotClockShortMs ?? next.shotClockShortMs;
-
-      assertDurationRange('periodDurationMs', periodDurationMs, 60000, 1800000);
-      assertDurationRange(
-        'overtimeDurationMs',
-        overtimeDurationMs,
-        60000,
-        1800000,
+      throw new ScoringActionError(
+        'RULES_MANAGED_BY_SEASON',
+        'Game rules are managed in the season settings.',
       );
-      assertDurationRange('shotClockFullMs', shotClockFullMs, 1000, 99000);
-      assertDurationRange('shotClockShortMs', shotClockShortMs, 1000, 99000);
-
-      if (shotClockShortMs > shotClockFullMs) {
-        throw new ScoringActionError(
-          'SHOT_CLOCK_SHORT_EXCEEDS_FULL',
-          'Short reset cannot exceed the full shot clock',
-        );
-      }
-
-      next.periodDurationMs = periodDurationMs;
-      next.overtimeDurationMs = overtimeDurationMs;
-      next.shotClockFullMs = shotClockFullMs;
-      next.shotClockShortMs = shotClockShortMs;
-      next.gameClockRemainingMs = periodDurationMs;
-      next.shotClockRemainingMs = shotClockFullMs;
-      break;
     }
     case 'game.start': {
       if (next.phase !== 'pregame') {
@@ -723,7 +722,9 @@ function timeoutSegment(state: ScoringState): ScoringState['timeoutSegment'] {
     return 'overtime';
   }
 
-  return state.currentPeriodNumber <= 2 ? 'first_half' : 'second_half';
+  return state.currentPeriodNumber <= Math.ceil(state.regulationPeriods / 2)
+    ? 'first_half'
+    : 'second_half';
 }
 
 function withDerivedState<T extends ScoringState>(state: T): T {

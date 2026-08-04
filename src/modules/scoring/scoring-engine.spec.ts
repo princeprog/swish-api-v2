@@ -74,6 +74,20 @@ describe('scoring engine', () => {
     ).toThrow('This season does not use a shot clock.');
   });
 
+  it('directs legacy game configuration to season settings', () => {
+    expect(() =>
+      applyScoringCommand(
+        createInitialScoringState(game),
+        {
+          idempotencyKey: 'legacy-game-configure',
+          payload: { periodDurationMs: 480000 },
+          type: 'game.configure',
+        },
+        new Date('2026-07-29T10:00:00.000Z'),
+      ),
+    ).toThrow('Game rules are managed in the season settings.');
+  });
+
   it('uses the configured team foul penalty threshold', () => {
     let state = createInitialScoringState({ ...game, gameRules: customRules });
 
@@ -97,6 +111,19 @@ describe('scoring engine', () => {
       ...game,
       gameRules: customRules,
     });
+    const midpointFirstHalf = applyScoringCommand(
+      {
+        ...firstHalf,
+        currentPeriodNumber: 3,
+        phase: 'paused',
+      },
+      {
+        idempotencyKey: 'custom-midpoint-first-half-timeout',
+        payload: { teamId: 'home-team' },
+        type: 'timeout.record',
+      },
+      new Date('2026-07-29T10:00:00.000Z'),
+    );
     const secondHalf = applyScoringCommand(
       {
         ...firstHalf,
@@ -125,6 +152,12 @@ describe('scoring engine', () => {
     ).state;
 
     expect(firstHalf.timeoutAllowancePerTeam).toBe(1);
+    expect(midpointFirstHalf.event.payload).toEqual({
+      segment: 'first_half',
+      teamId: 'home-team',
+    });
+    expect(midpointFirstHalf.state.timeoutSegment).toBe('first_half');
+    expect(midpointFirstHalf.state.timeoutAllowancePerTeam).toBe(1);
     expect(secondHalf.timeoutSegment).toBe('second_half');
     expect(secondHalf.timeoutAllowancePerTeam).toBe(4);
     expect(secondHalf.awayTimeoutsRemaining).toBe(3);
@@ -582,43 +615,6 @@ describe('scoring engine', () => {
         new Date('2026-07-29T11:30:01.000Z'),
       ),
     ).toThrow('Tied games must continue to overtime');
-  });
-
-  it('validates pregame clock settings and blocks a short reset longer than full reset', () => {
-    const state = createInitialScoringState(game);
-
-    const configured = applyScoringCommand(
-      state,
-      {
-        idempotencyKey: 'configure',
-        payload: {
-          overtimeDurationMs: 240000,
-          periodDurationMs: 480000,
-          shotClockFullMs: 30000,
-          shotClockShortMs: 15000,
-        },
-        type: 'game.configure',
-      },
-      new Date('2026-07-29T10:00:00.000Z'),
-    ).state;
-
-    expect(configured.gameClockRemainingMs).toBe(480000);
-    expect(configured.shotClockFullMs).toBe(30000);
-
-    expect(() =>
-      applyScoringCommand(
-        state,
-        {
-          idempotencyKey: 'bad-configure',
-          payload: {
-            shotClockFullMs: 12000,
-            shotClockShortMs: 14000,
-          },
-          type: 'game.configure',
-        },
-        new Date('2026-07-29T10:00:01.000Z'),
-      ),
-    ).toThrow('Short reset cannot exceed the full shot clock');
   });
 
   it('stops only the shot clock when the shot clock expires first', () => {

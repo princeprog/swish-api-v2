@@ -14,12 +14,14 @@ import {
 import { DATABASE, type Database } from '../../database/database.tokens';
 import {
   applyScoringCommand,
+  applyScoringGameRules,
   createInitialScoringState,
   materializeClocks,
   ScoringActionError,
   type LatestReversibleScoringEvent,
   type ScoringCommand,
   type ScoringEventDraft,
+  type ScoringGameRules,
   type ScoringState,
 } from './scoring-engine';
 
@@ -32,6 +34,7 @@ type ScheduleGame = {
   home_team_id: string;
   home_team_name: string;
   id: string;
+  league_season_id: string;
   organization_id: string;
   starts_at: Date;
   status: string;
@@ -519,13 +522,33 @@ export class ScoringService {
 
     const row = await query.executeTakeFirst();
     if (row) {
-      return this.toEngineState(game, row, await this.findLatestEvent(row, db));
+      const storedState = this.toEngineState(
+        game,
+        row,
+        await this.findLatestEvent(row, db),
+      );
+
+      if (storedState.phase !== 'pregame') {
+        return storedState;
+      }
+
+      return applyScoringGameRules(
+        storedState,
+        await this.findSeasonGameRules(game.league_season_id, db, forUpdate),
+      );
     }
+
+    const gameRules = await this.findSeasonGameRules(
+      game.league_season_id,
+      db,
+      forUpdate,
+    );
 
     const initial = createInitialScoringState({
       awayScore: game.away_score,
       awayTeamId: game.away_team_id,
       gameId: game.id,
+      gameRules,
       homeScore: game.home_score,
       homeTeamId: game.home_team_id,
       phase: game.status === 'final' ? 'final' : 'pregame',
@@ -561,6 +584,39 @@ export class ScoringService {
       .executeTakeFirstOrThrow();
 
     return this.toEngineState(game, inserted, null);
+  }
+
+  private async findSeasonGameRules(
+    leagueSeasonId: string,
+    db: any,
+    forShare = false,
+  ): Promise<ScoringGameRules> {
+    let query = db
+      .selectFrom('admin.league_season_game_rules')
+      .selectAll()
+      .where('league_season_id', '=', leagueSeasonId);
+
+    if (forShare && typeof query.forShare === 'function') {
+      query = query.forShare();
+    }
+
+    const rules = await query.executeTakeFirst();
+    if (!rules) {
+      throw new NotFoundException('Game rules were not found for this season');
+    }
+
+    return {
+      overtimeDurationMs: rules.overtime_duration_ms,
+      periodDurationMs: rules.period_duration_ms,
+      regulationPeriods: rules.regulation_periods,
+      shotClockEnabled: rules.shot_clock_enabled,
+      shotClockFullMs: rules.shot_clock_full_ms,
+      shotClockShortMs: rules.shot_clock_short_ms,
+      teamFoulsBeforePenalty: rules.team_fouls_before_penalty,
+      timeoutsFirstHalf: rules.timeouts_first_half,
+      timeoutsPerOvertime: rules.timeouts_per_overtime,
+      timeoutsSecondHalf: rules.timeouts_second_half,
+    };
   }
 
   private async findActiveControl(gameId: string, db: any = this.db) {
