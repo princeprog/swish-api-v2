@@ -120,11 +120,27 @@ export class NotificationJobsService implements OnModuleInit, OnModuleDestroy {
 
   private async createGameReminders(now: Date): Promise<number> {
     const games = await (this.db as any)
-      .selectFrom('admin.schedule_games')
-      .selectAll()
-      .where('status', 'in', ['scheduled', 'postponed'])
-      .where('starts_at', '>', now)
-      .where('starts_at', '<=', new Date(now.getTime() + 24 * HOUR_MS))
+      .selectFrom('admin.schedule_games as games')
+      .innerJoin(
+        'admin.organizations as organizations',
+        'organizations.id',
+        'games.organization_id',
+      )
+      .select([
+        'games.id',
+        'games.organization_id',
+        'games.home_team_id',
+        'games.away_team_id',
+        'games.home_team_name',
+        'games.away_team_name',
+        'games.starts_at',
+        'games.status',
+        'organizations.name as organization_name',
+        'organizations.slug as organization_slug',
+      ])
+      .where('games.status', 'in', ['scheduled', 'postponed'])
+      .where('games.starts_at', '>', now)
+      .where('games.starts_at', '<=', new Date(now.getTime() + 24 * HOUR_MS))
       .execute();
     let created = 0;
 
