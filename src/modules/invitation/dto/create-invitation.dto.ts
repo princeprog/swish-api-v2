@@ -1,4 +1,12 @@
-import { IsEmail, IsIn, IsString } from 'class-validator';
+import {
+  ArrayUnique,
+  IsArray,
+  IsEmail,
+  IsIn,
+  IsOptional,
+  IsString,
+  IsUUID,
+} from 'class-validator';
 import { AUTH_ROLES } from '../../../common/auth/roles';
 
 export class CreateInvitationDto {
@@ -11,4 +19,10 @@ export class CreateInvitationDto {
     | typeof AUTH_ROLES.ADMIN
     | typeof AUTH_ROLES.TEAM_MANAGER
     | typeof AUTH_ROLES.SCOREKEEPER;
+
+  @IsArray()
+  @ArrayUnique()
+  @IsOptional()
+  @IsUUID('4', { each: true })
+  teamIds?: string[];
 }

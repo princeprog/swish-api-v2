@@ -34,7 +34,13 @@ function createService() {
     selectFrom: jest.fn(),
     transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
   };
-  const service = new OrganizationMemberService(db as never);
+  const teamAssignmentPolicy = {
+    resolve: jest.fn(),
+  };
+  const service = new OrganizationMemberService(
+    db as never,
+    teamAssignmentPolicy as never,
+  );
 
   jest.spyOn(service, 'findOne').mockResolvedValue({
     created_at: new Date('2026-07-01T00:00:00.000Z'),

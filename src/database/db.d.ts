@@ -41,6 +41,14 @@ export interface AccessGameScorekeeperAssignments {
   organization_member_id: string;
 }
 
+export interface AccessInvitationTeamAssignments {
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  invitation_id: string;
+  league_season_id: string;
+  team_id: string;
+}
+
 export interface AccessOrganizationInvitations {
   accepted_at: Timestamp | null;
   accepted_by_member_id: string | null;
@@ -414,6 +422,7 @@ export interface ScoringGameStates {
 export interface DB {
   "access.audit_events": AccessAuditEvents;
   "access.game_scorekeeper_assignments": AccessGameScorekeeperAssignments;
+  "access.invitation_team_assignments": AccessInvitationTeamAssignments;
   "access.organization_invitations": AccessOrganizationInvitations;
   "access.team_manager_assignments": AccessTeamManagerAssignments;
   "admin.division_roster_settings": AdminDivisionRosterSettings;

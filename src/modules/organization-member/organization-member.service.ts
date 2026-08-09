@@ -13,12 +13,19 @@ import {
 } from '../../common/auth/roles';
 import { DATABASE, type Database } from '../../database/database.tokens';
 import { CreateOrganizationMemberDto } from './dto/create-organization-member.dto';
+import {
+  assertOneTeamPerSeason,
+  TeamAssignmentPolicyService,
+} from './team-assignment-policy.service';
 import { TransferOwnershipDto } from './dto/transfer-ownership.dto';
 import { UpdateOrganizationMemberDto } from './dto/update-organization-member.dto';
 
 @Injectable()
 export class OrganizationMemberService {
-  constructor(@Inject(DATABASE) private readonly db: Database) {}
+  constructor(
+    @Inject(DATABASE) private readonly db: Database,
+    private readonly teamAssignmentPolicy: TeamAssignmentPolicyService,
+  ) {}
 
   async create(
     organizationId: string,
@@ -188,7 +195,7 @@ export class OrganizationMemberService {
     }
 
     const teams = await this.findAssignableTeams(organizationId, teamIds);
-    this.assertOneTeamPerSeason(teams);
+    assertOneTeamPerSeason(teams);
 
     await (this.db as any).transaction().execute(async (trx) => {
       await trx
@@ -366,56 +373,12 @@ export class OrganizationMemberService {
     return byMember;
   }
 
-  private async assertTeamsBelongToOrganization(
-    organizationId: string,
-    teamIds: string[],
-  ) {
-    await this.findAssignableTeams(organizationId, teamIds);
-  }
-
   private async findAssignableTeams(organizationId: string, teamIds: string[]) {
-    if (!teamIds.length) {
-      return [];
-    }
-
-    const rows = await this.db
-      .selectFrom('admin.teams as teams')
-      .innerJoin(
-        'admin.divisions as divisions',
-        'divisions.id',
-        'teams.division_id',
-      )
-      .innerJoin(
-        'admin.league_seasons as league_seasons',
-        'league_seasons.id',
-        'divisions.league_season_id',
-      )
-      .select(['teams.id', 'divisions.league_season_id'])
-      .where('teams.id', 'in', teamIds)
-      .where('league_seasons.organization_id', '=', organizationId)
-      .execute();
-
-    if (rows.length !== teamIds.length) {
-      throw new NotFoundException('One or more teams were not found');
-    }
-
-    return rows;
-  }
-
-  private assertOneTeamPerSeason(
-    teams: Array<{ id: string; league_season_id: string }>,
-  ) {
-    const selectedSeasonIds = new Set<string>();
-
-    for (const team of teams) {
-      if (selectedSeasonIds.has(team.league_season_id)) {
-        throw new BadRequestException(
-          'A team manager can only manage one team in each season.',
-        );
-      }
-
-      selectedSeasonIds.add(team.league_season_id);
-    }
+    return this.teamAssignmentPolicy.resolve(
+      organizationId,
+      AUTH_ROLES.TEAM_MANAGER,
+      teamIds,
+    );
   }
 
   private async assertOrganizationExists(
