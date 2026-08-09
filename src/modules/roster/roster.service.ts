@@ -6,6 +6,7 @@ import {
   NotFoundException,
   OnModuleDestroy,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import {
   ORGANIZATION_PERMISSIONS,
@@ -21,6 +22,8 @@ import {
   type RosterWorkflowStatus,
   validateRosterSubmissionCount,
 } from './roster-policy';
+import { NotificationWriter } from '../notification/notification.writer';
+import type { NotificationEventType } from '../notification/notification.events';
 
 type TeamRosterContext = {
   division_id: string;
@@ -38,7 +41,10 @@ type TeamRosterContext = {
 export class RosterService implements OnModuleInit, OnModuleDestroy {
   private deadlineTimer?: NodeJS.Timeout;
 
-  constructor(@Inject(DATABASE) private readonly db: Database) {}
+  constructor(
+    @Inject(DATABASE) private readonly db: Database,
+    @Optional() private readonly notificationWriter?: NotificationWriter,
+  ) {}
 
   onModuleInit() {
     void this.releaseDueDeadlines();
@@ -239,6 +245,15 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
       activePlayerCount,
     });
 
+    await this.notifyRosterReviewers(
+      organizationId,
+      teamId,
+      access,
+      'roster.submitted',
+      roster.id,
+      { activePlayerCount },
+    );
+
     return roster;
   }
 
@@ -279,6 +294,15 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
       'team_roster',
       roster.id,
       { teamId, reason: dto.reason },
+    );
+
+    await this.notifyRosterReviewers(
+      organizationId,
+      teamId,
+      access,
+      'roster.amendment_started',
+      roster.id,
+      { reason: dto.reason },
     );
 
     return roster;
@@ -342,6 +366,14 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
       { teamId },
     );
 
+    await this.notifyTeamManagers(
+      organizationId,
+      teamId,
+      access,
+      'roster.approved',
+      approved.id,
+    );
+
     return approved;
   }
 
@@ -376,6 +408,15 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
       reason: dto.reason,
     });
 
+    await this.notifyTeamManagers(
+      organizationId,
+      teamId,
+      access,
+      'roster.returned',
+      roster.id,
+      { reviewNote: dto.reason },
+    );
+
     return roster;
   }
 
@@ -395,6 +436,26 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
         'manual',
       );
     });
+
+    if (this.notificationWriter) {
+      const teams = await (this.db as any)
+        .selectFrom('admin.teams as teams')
+        .leftJoin('admin.team_rosters as rosters', 'rosters.team_id', 'teams.id')
+        .select(['teams.id', 'rosters.id as roster_id'])
+        .where('teams.division_id', '=', divisionId)
+        .where('teams.status', '=', 'active')
+        .execute();
+
+      for (const team of teams) {
+        await this.notifyTeamManagers(
+          organizationId,
+          team.roster_id ?? team.id,
+          access,
+          'roster.published',
+          team.id,
+        );
+      }
+    }
 
     return this.findDivisionRosters(organizationId, divisionId, access);
   }
@@ -863,6 +924,139 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
       releasedAt: settings.released_at,
       releaseReason: settings.release_reason,
     };
+  }
+
+  private async findRosterNotificationContext(
+    organizationId: string,
+    teamId: string,
+  ) {
+    const context = await (this.db as any)
+      .selectFrom('admin.teams as teams')
+      .innerJoin('admin.divisions as divisions', 'divisions.id', 'teams.division_id')
+      .innerJoin(
+        'admin.league_seasons as seasons',
+        'seasons.id',
+        'divisions.league_season_id',
+      )
+      .innerJoin(
+        'admin.organizations as organizations',
+        'organizations.id',
+        'seasons.organization_id',
+      )
+      .leftJoin('admin.team_rosters as rosters', 'rosters.team_id', 'teams.id')
+      .select([
+        'teams.name as team_name',
+        'divisions.name as division_name',
+        'organizations.name as organization_name',
+        'organizations.slug as organization_slug',
+        'rosters.id as roster_id',
+      ])
+      .where('teams.id', '=', teamId)
+      .where('organizations.id', '=', organizationId)
+      .executeTakeFirst();
+
+    if (!context) {
+      throw new NotFoundException('Team not found');
+    }
+
+    return context;
+  }
+
+  private async findTeamManagerRecipients(teamId: string) {
+    const rows = await (this.db as any)
+      .selectFrom('access.team_manager_assignments as assignments')
+      .innerJoin(
+        'admin.organization_members as members',
+        'members.id',
+        'assignments.organization_member_id',
+      )
+      .select(['members.user_id'])
+      .where('assignments.team_id', '=', teamId)
+      .where('members.status', '=', 'active')
+      .execute();
+
+    return rows.map((row: { user_id: string }) => ({ userId: row.user_id }));
+  }
+
+  private async findReviewerRecipients(organizationId: string) {
+    const rows = await (this.db as any)
+      .selectFrom('admin.organization_members')
+      .select(['user_id'])
+      .where('organization_id', '=', organizationId)
+      .where('status', '=', 'active')
+      .where('role', 'in', ['owner', 'admin'])
+      .execute();
+
+    return rows.map((row: { user_id: string }) => ({ userId: row.user_id }));
+  }
+
+  private async notifyTeamManagers(
+    organizationId: string,
+    teamId: string,
+    access: OrganizationAccessContext,
+    eventType: Extract<NotificationEventType, `roster.${string}`>,
+    resourceId: string,
+    extra: { reviewNote?: string } = {},
+  ) {
+    if (!this.notificationWriter) {
+      return;
+    }
+
+    const [context, recipients] = await Promise.all([
+      this.findRosterNotificationContext(organizationId, teamId),
+      this.findTeamManagerRecipients(teamId),
+    ]);
+
+    await this.notificationWriter.create({
+      actorUserId: access.userId,
+      context: {
+        organizationName: context.organization_name,
+        organizationSlug: context.organization_slug,
+        reviewNote: extra.reviewNote,
+        rosterLabel: `${context.team_name} roster`,
+      },
+      dedupeKey: `roster:${resourceId}:${eventType}:${new Date().toISOString()}`,
+      eventType,
+      organizationId,
+      recipients,
+      resourceId,
+      resourceType: 'team_roster',
+    });
+  }
+
+  private async notifyRosterReviewers(
+    organizationId: string,
+    teamId: string,
+    access: OrganizationAccessContext,
+    eventType: Extract<NotificationEventType, `roster.${string}`>,
+    resourceId: string,
+    metadata: { activePlayerCount?: number; reason?: string } = {},
+  ) {
+    if (!this.notificationWriter) {
+      return;
+    }
+
+    const [context, recipients] = await Promise.all([
+      this.findRosterNotificationContext(organizationId, teamId),
+      this.findReviewerRecipients(organizationId),
+    ]);
+
+    await this.notificationWriter.create({
+      actorUserId: access.userId,
+      context: {
+        organizationName: context.organization_name,
+        organizationSlug: context.organization_slug,
+        reason: metadata.reason,
+        rosterLabel: `${context.team_name} roster`,
+      },
+      dedupeKey: `roster:${resourceId}:${eventType}:${new Date().toISOString()}`,
+      eventType,
+      metadata,
+      organizationId,
+      recipients,
+      resourceId,
+      resourceType: 'team_roster',
+    });
   }
 
   private async writeAudit(
