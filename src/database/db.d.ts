@@ -73,6 +73,29 @@ export interface AccessTeamManagerAssignments {
   team_id: string;
 }
 
+export interface NotificationNotifications {
+  action_expires_at: Timestamp | null;
+  action_url: string | null;
+  actor_user_id: string | null;
+  body: string;
+  category: string;
+  created_at: Generated<Timestamp>;
+  dedupe_key: string;
+  event_type: string;
+  id: Generated<string>;
+  metadata: Generated<Json>;
+  organization_id: string | null;
+  priority: string;
+  read_at: Timestamp | null;
+  recipient_email: string | null;
+  recipient_user_id: string | null;
+  resource_id: string | null;
+  resource_type: string | null;
+  retain_until: Timestamp;
+  title: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface AdminDivisionRosterSettings {
   created_at: Generated<Timestamp>;
   division_id: string;
@@ -445,6 +468,7 @@ export interface DB {
   "auth.users": AuthUsers;
   "competition.finalized_game_results": CompetitionFinalizedGameResults;
   "competition.games": CompetitionGames;
+  "notification.notifications": NotificationNotifications;
   "public_portal.league_shells": PublicPortalLeagueShells;
   "public_portal.organizations": PublicPortalOrganizations;
   "scoring.game_control_sessions": ScoringGameControlSessions;
