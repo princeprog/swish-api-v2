@@ -87,7 +87,7 @@ export async function up(db: Kysely<any>): Promise<void> {
     .on('notification.notifications')
     .column('retain_until')
     .execute();
-});
+}
 
 export async function down(db: Kysely<any>): Promise<void> {
   await db.schema

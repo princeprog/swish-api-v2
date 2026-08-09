@@ -19,6 +19,7 @@ import { StandingsModule } from './modules/standings/standings.module';
 import { TeamManagerWorkspaceModule } from './modules/team-manager-workspace/team-manager-workspace.module';
 import { TeamModule } from './modules/team/team.module';
 import { VenueModule } from './modules/venue/venue.module';
+import { NotificationModule } from './modules/notification/notification.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { VenueModule } from './modules/venue/venue.module';
     TeamModule,
     PlayerModule,
     VenueModule,
+    NotificationModule,
   ],
   controllers: [AppController],
   providers: [AppService],
