@@ -3,6 +3,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   AUTH_ROLES,
@@ -15,6 +16,8 @@ import type { FinalizeScheduleGameDto } from './dto/finalize-schedule-game.dto';
 import type { ScheduleListQueryDto } from './dto/schedule-list-query.dto';
 import type { UpdateScorekeeperAssignmentDto } from './dto/update-scorekeeper-assignment.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
+import { NotificationWriter } from '../notification/notification.writer';
+import type { NotificationEventType } from '../notification/notification.events';
 
 type ScheduleGameRecord = {
   away_score: number | null;
@@ -35,7 +38,10 @@ type ScheduleGameRecord = {
 
 @Injectable()
 export class ScheduleService {
-  constructor(@Inject(DATABASE) private readonly db: Database) {}
+  constructor(
+    @Inject(DATABASE) private readonly db: Database,
+    @Optional() private readonly notificationWriter?: NotificationWriter,
+  ) {}
 
   async create(
     organizationId: string,
@@ -107,7 +113,25 @@ export class ScheduleService {
         return game;
       });
 
-    return this.findOne(organizationId, inserted.id);
+    const game = await this.findOne(organizationId, inserted.id);
+    if (createScheduleDto.status === 'scheduled') {
+      await this.notifyGameRecipients(
+        organizationId,
+        inserted.id,
+        access,
+        'schedule.game_published',
+      );
+    }
+    if (createScheduleDto.scorekeeperMemberId) {
+      await this.notifyScorekeeperAssignment(
+        organizationId,
+        inserted.id,
+        access,
+        createScheduleDto.scorekeeperMemberId,
+        'schedule.scorekeeper_assigned',
+      );
+    }
+    return game;
   }
 
   findEligibleScorekeepers(organizationId: string) {
@@ -254,12 +278,51 @@ export class ScheduleService {
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow();
 
-    return this.findOne(organizationId, gameId);
+    const updatedGame = await this.findOne(organizationId, gameId);
+    if (updateScheduleDto.status === 'postponed') {
+      await this.notifyGameRecipients(
+        organizationId,
+        gameId,
+        undefined,
+        'schedule.game_postponed',
+      );
+    } else if (updateScheduleDto.status === 'scheduled' && !existingGame.published_at) {
+      await this.notifyGameRecipients(
+        organizationId,
+        gameId,
+        undefined,
+        'schedule.game_published',
+      );
+    } else if (
+      updateScheduleDto.startsAt ||
+      updateScheduleDto.venueId ||
+      updateScheduleDto.homeTeamId ||
+      updateScheduleDto.awayTeamId ||
+      updateScheduleDto.divisionId
+    ) {
+      await this.notifyGameRecipients(
+        organizationId,
+        gameId,
+        undefined,
+        'schedule.game_changed',
+      );
+    }
+
+    return updatedGame;
   }
 
   async remove(organizationId: string, gameId: string) {
     const existingGame = await this.findGameRecord(organizationId, gameId);
     this.assertGameCanBeDeleted(existingGame.status);
+
+    if (existingGame.published_at) {
+      await this.notifyGameRecipients(
+        organizationId,
+        gameId,
+        undefined,
+        'schedule.game_removed',
+      );
+    }
 
     await this.db
       .deleteFrom('competition.games')
@@ -308,6 +371,16 @@ export class ScheduleService {
         },
       );
     });
+
+    await this.notifyGameRecipients(
+      organizationId,
+      gameId,
+      access,
+      'scoring.game_finalized',
+      {
+        resultLabel: `${finalizeScheduleGameDto.homeScore}–${finalizeScheduleGameDto.awayScore}`,
+      },
+    );
 
     return this.findOne(organizationId, gameId);
   }
@@ -359,6 +432,25 @@ export class ScheduleService {
       );
     });
 
+    if (previousAssignment?.organization_member_id) {
+      await this.notifyScorekeeperAssignment(
+        organizationId,
+        gameId,
+        access,
+        previousAssignment.organization_member_id,
+        'schedule.scorekeeper_unassigned',
+      );
+    }
+    if (nextScorekeeperMemberId) {
+      await this.notifyScorekeeperAssignment(
+        organizationId,
+        gameId,
+        access,
+        nextScorekeeperMemberId,
+        'schedule.scorekeeper_assigned',
+      );
+    }
+
     return this.findOne(organizationId, gameId);
   }
 
@@ -366,6 +458,168 @@ export class ScheduleService {
     if (homeTeamId === awayTeamId) {
       throw new BadRequestException('Home and away teams must be different');
     }
+  }
+
+  private async findGameNotificationContext(
+    organizationId: string,
+    gameId: string,
+  ) {
+    const row = await (this.db as any)
+      .selectFrom('admin.schedule_games')
+      .select([
+        'away_team_name',
+        'home_team_name',
+        'starts_at',
+        'status',
+        'venue_name',
+      ])
+      .where('organization_id', '=', organizationId)
+      .where('id', '=', gameId)
+      .executeTakeFirst();
+    const organization = await this.db
+      .selectFrom('admin.organizations')
+      .select(['name', 'slug'])
+      .where('id', '=', organizationId)
+      .executeTakeFirstOrThrow();
+
+    if (!row) {
+      throw new NotFoundException('Schedule game not found');
+    }
+
+    return {
+      gameLabel: `${row.home_team_name ?? 'Home'} vs ${row.away_team_name ?? 'Away'}`,
+      organizationName: organization.name,
+      organizationSlug: organization.slug,
+      reminderLabel: row.starts_at
+        ? new Date(row.starts_at).toLocaleString()
+        : undefined,
+      startsAt: row.starts_at,
+      venueName: row.venue_name,
+    };
+  }
+
+  private async findGameRecipients(gameId: string) {
+    const game = await (this.db as any)
+      .selectFrom('competition.games')
+      .select(['home_team_id', 'away_team_id'])
+      .where('id', '=', gameId)
+      .executeTakeFirst();
+
+    if (!game) {
+      return [];
+    }
+
+    const managers = await (this.db as any)
+      .selectFrom('access.team_manager_assignments as assignments')
+      .innerJoin(
+        'admin.organization_members as members',
+        'members.id',
+        'assignments.organization_member_id',
+      )
+      .select(['members.user_id'])
+      .where('assignments.team_id', 'in', [
+        game.home_team_id,
+        game.away_team_id,
+      ])
+      .where('members.status', '=', 'active')
+      .execute();
+    const scorekeepers = await (this.db as any)
+      .selectFrom('access.game_scorekeeper_assignments as assignments')
+      .innerJoin(
+        'admin.organization_members as members',
+        'members.id',
+        'assignments.organization_member_id',
+      )
+      .select(['members.user_id'])
+      .where('assignments.game_id', '=', gameId)
+      .where('members.status', '=', 'active')
+      .execute();
+
+    return [
+      ...managers.map((row: { user_id: string }) => ({ userId: row.user_id })),
+      ...scorekeepers.map((row: { user_id: string }) => ({
+        userId: row.user_id,
+      })),
+    ];
+  }
+
+  private async notifyGameRecipients(
+    organizationId: string,
+    gameId: string,
+    access: OrganizationAccessContext | undefined,
+    eventType: Extract<
+      NotificationEventType,
+      | 'schedule.game_published'
+      | 'schedule.game_changed'
+      | 'schedule.game_postponed'
+      | 'schedule.game_removed'
+      | 'scoring.game_finalized'
+    >,
+    extra: { resultLabel?: string } = {},
+  ) {
+    if (!this.notificationWriter) {
+      return;
+    }
+
+    const [context, recipients] = await Promise.all([
+      this.findGameNotificationContext(organizationId, gameId),
+      this.findGameRecipients(gameId),
+    ]);
+
+    await this.notificationWriter.create({
+      actorUserId: access?.userId,
+      context: {
+        ...context,
+        gameId,
+        resultLabel: extra.resultLabel,
+      },
+      dedupeKey: `game:${gameId}:${eventType}:${new Date().toISOString()}`,
+      eventType,
+      organizationId,
+      recipients,
+      resourceId: gameId,
+      resourceType: 'game',
+    });
+  }
+
+  private async notifyScorekeeperAssignment(
+    organizationId: string,
+    gameId: string,
+    access: OrganizationAccessContext,
+    memberId: string,
+    eventType: Extract<
+      NotificationEventType,
+      'schedule.scorekeeper_assigned' | 'schedule.scorekeeper_unassigned'
+    >,
+  ) {
+    if (!this.notificationWriter) {
+      return;
+    }
+
+    const [context, member] = await Promise.all([
+      this.findGameNotificationContext(organizationId, gameId),
+      (this.db as any)
+        .selectFrom('admin.organization_members')
+        .select(['user_id'])
+        .where('id', '=', memberId)
+        .where('status', '=', 'active')
+        .executeTakeFirst(),
+    ]);
+
+    if (!member) {
+      return;
+    }
+
+    await this.notificationWriter.create({
+      actorUserId: access.userId,
+      context: { ...context, gameId },
+      dedupeKey: `game:${gameId}:scorekeeper:${memberId}:${eventType}:${new Date().toISOString()}`,
+      eventType,
+      organizationId,
+      recipients: [{ userId: member.user_id }],
+      resourceId: gameId,
+      resourceType: 'game',
+    });
   }
 
   private async assertScheduleRelations(
