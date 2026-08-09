@@ -116,7 +116,7 @@ export class NotificationWriter {
       buildNotificationInsertValues(input, recipient, now),
     );
 
-    return db
+    const inserted = await db
       .insertInto('notification.notifications')
       .values(rows as any)
       .onConflict((conflict: any) =>
@@ -124,5 +124,19 @@ export class NotificationWriter {
       )
       .returningAll()
       .execute();
+
+    for (const row of inserted as Array<{ recipient_user_id?: string | null }>) {
+      if (row.recipient_user_id) {
+        await (db as any).executeQuery({
+          parameters: [
+            'notification_changed',
+            JSON.stringify({ userId: row.recipient_user_id }),
+          ],
+          sql: 'select pg_notify($1, $2)',
+        });
+      }
+    }
+
+    return inserted;
   }
 }

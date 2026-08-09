@@ -6,8 +6,10 @@ import {
   Patch,
   Post,
   Query,
+  Sse,
   UseGuards,
 } from '@nestjs/common';
+import { Observable } from 'rxjs';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/auth.types';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -15,11 +17,15 @@ import { NotificationListQueryDto } from './dto/notification-list-query.dto';
 import { NotificationReadAllDto } from './dto/notification-read-all.dto';
 import { NotificationReadDto } from './dto/notification-read.dto';
 import { NotificationService } from './notification.service';
+import { NotificationStreamService } from './notification.stream';
 
 @Controller('notifications')
 @UseGuards(JwtAuthGuard)
 export class NotificationController {
-  constructor(private readonly notificationService: NotificationService) {}
+  constructor(
+    private readonly notificationService: NotificationService,
+    private readonly notificationStream: NotificationStreamService,
+  ) {}
 
   @Get()
   list(
@@ -60,5 +66,30 @@ export class NotificationController {
       user.email,
       body.organizationId,
     );
+  }
+
+  @Sse('stream')
+  stream(@CurrentUser() user: AuthUser): Observable<{ data: string; type: string }> {
+    return new Observable((subscriber) => {
+      subscriber.next({
+        data: JSON.stringify({ connected: true }),
+        type: 'ready',
+      });
+      const unsubscribe = this.notificationStream.subscribe(user.id, () => {
+        subscriber.next({
+          data: JSON.stringify({ changed: true }),
+          type: 'notifications',
+        });
+      });
+      const heartbeat = setInterval(() => {
+        subscriber.next({ data: JSON.stringify({}), type: 'heartbeat' });
+      }, 25_000);
+      heartbeat.unref?.();
+
+      return () => {
+        clearInterval(heartbeat);
+        unsubscribe();
+      };
+    });
   }
 }

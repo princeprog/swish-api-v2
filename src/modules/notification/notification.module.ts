@@ -5,11 +5,17 @@ import { NotificationController } from './notification.controller';
 import { NotificationService } from './notification.service';
 import { NotificationWriter } from './notification.writer';
 import { NotificationJobsService } from './notification.jobs';
+import { NotificationStreamService } from './notification.stream';
 
 @Module({
   imports: [AuthModule, DatabaseModule],
   controllers: [NotificationController],
-  providers: [NotificationService, NotificationWriter, NotificationJobsService],
+  providers: [
+    NotificationService,
+    NotificationWriter,
+    NotificationJobsService,
+    NotificationStreamService,
+  ],
   exports: [NotificationService, NotificationWriter],
 })
 export class NotificationModule {}
