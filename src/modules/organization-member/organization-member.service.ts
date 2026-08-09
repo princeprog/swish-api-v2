@@ -5,6 +5,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   AUTH_ROLES,
@@ -19,12 +20,14 @@ import {
 } from './team-assignment-policy.service';
 import { TransferOwnershipDto } from './dto/transfer-ownership.dto';
 import { UpdateOrganizationMemberDto } from './dto/update-organization-member.dto';
+import { NotificationWriter } from '../notification/notification.writer';
 
 @Injectable()
 export class OrganizationMemberService {
   constructor(
     @Inject(DATABASE) private readonly db: Database,
     private readonly teamAssignmentPolicy: TeamAssignmentPolicyService,
+    @Optional() private readonly notificationWriter?: NotificationWriter,
   ) {}
 
   async create(
@@ -177,6 +180,45 @@ export class OrganizationMemberService {
       status: updated.status,
     });
 
+    if (this.notificationWriter) {
+      const organization = await this.findOrganizationSummary(organizationId);
+      if (updated.role !== member.role) {
+        await this.notificationWriter.create({
+          actorUserId: access.userId,
+          context: {
+            organizationName: organization.name,
+            organizationSlug: organization.slug,
+            roleLabel: updated.role.replace('_', ' '),
+          },
+          dedupeKey: `member:${memberId}:role:${updated.updated_at.toISOString()}`,
+          eventType: 'access.member_role_changed',
+          organizationId,
+          recipients: [{ userId: member.user_id }],
+          resourceId: memberId,
+          resourceType: 'member',
+        });
+      }
+
+      if (updated.status !== member.status) {
+        await this.notificationWriter.create({
+          actorUserId: access.userId,
+          context: {
+            organizationName: organization.name,
+            organizationSlug: organization.slug,
+          },
+          dedupeKey: `member:${memberId}:status:${updated.updated_at.toISOString()}`,
+          eventType:
+            updated.status === 'suspended'
+              ? 'access.member_suspended'
+              : 'access.member_reactivated',
+          organizationId,
+          recipients: [{ userId: member.user_id }],
+          resourceId: memberId,
+          resourceType: 'member',
+        });
+      }
+    }
+
     return updated;
   }
 
@@ -227,6 +269,23 @@ export class OrganizationMemberService {
       },
     );
 
+    if (this.notificationWriter) {
+      const organization = await this.findOrganizationSummary(organizationId);
+      await this.notificationWriter.create({
+        actorUserId: access.userId,
+        context: {
+          organizationName: organization.name,
+          organizationSlug: organization.slug,
+        },
+        dedupeKey: `member:${memberId}:team-scope:${new Date().toISOString()}`,
+        eventType: 'access.member_team_scope_changed',
+        organizationId,
+        recipients: [{ userId: member.user_id }],
+        resourceId: memberId,
+        resourceType: 'member',
+      });
+    }
+
     return { success: true, teamIds };
   }
 
@@ -237,7 +296,7 @@ export class OrganizationMemberService {
   ) {
     const organization = await this.db
       .selectFrom('admin.organizations')
-      .select(['slug'])
+      .select(['name', 'slug'])
       .where('id', '=', organizationId)
       .executeTakeFirst();
 
@@ -291,6 +350,36 @@ export class OrganizationMemberService {
       transferOwnershipDto.targetMemberId,
       { previousOwnerMemberId: access.membershipId },
     );
+
+    if (this.notificationWriter) {
+      await this.notificationWriter.create({
+        actorUserId: access.userId,
+        context: {
+            organizationName: organization.name,
+          organizationSlug: organization.slug,
+        },
+        dedupeKey: `ownership:${organizationId}:${target.id}:received`,
+        eventType: 'access.ownership_received',
+        organizationId,
+        recipients: [{ userId: target.user_id }],
+        resourceId: target.id,
+        resourceType: 'member',
+      });
+      await this.notificationWriter.create({
+        actorUserId: access.userId,
+        context: {
+          organizationName: organization.name,
+          organizationSlug: organization.slug,
+        },
+        dedupeKey: `ownership:${organizationId}:${target.id}:transferred`,
+        eventType: 'access.ownership_transferred',
+        includeActor: true,
+        organizationId,
+        recipients: [{ userId: access.userId }],
+        resourceId: target.id,
+        resourceType: 'member',
+      });
+    }
 
     return { success: true };
   }
@@ -393,6 +482,14 @@ export class OrganizationMemberService {
     if (!organization) {
       throw new NotFoundException('Organization not found');
     }
+  }
+
+  private async findOrganizationSummary(organizationId: string) {
+    return this.db
+      .selectFrom('admin.organizations')
+      .select(['name', 'slug'])
+      .where('id', '=', organizationId)
+      .executeTakeFirstOrThrow();
   }
 
   private async assertUserExists(userId: string): Promise<void> {

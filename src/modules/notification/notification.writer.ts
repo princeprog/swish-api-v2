@@ -21,6 +21,7 @@ export type CreateNotificationInput = {
   context?: NotificationRenderContext;
   dedupeKey: string;
   eventType: NotificationEventType;
+  includeActor?: boolean;
   metadata?: Record<string, unknown>;
   organizationId?: string;
   recipients: NotificationRecipient[];
@@ -102,10 +103,9 @@ export class NotificationWriter {
     input: CreateNotificationInput,
     db: Database | any = this.db,
   ): Promise<unknown[]> {
-    const recipients = withoutActor(
-      dedupeRecipients(input.recipients),
-      input.actorUserId,
-    );
+    const recipients = input.includeActor
+      ? dedupeRecipients(input.recipients)
+      : withoutActor(dedupeRecipients(input.recipients), input.actorUserId);
 
     if (recipients.length === 0) {
       return [];
