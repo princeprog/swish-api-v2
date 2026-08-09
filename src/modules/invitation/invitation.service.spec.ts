@@ -134,6 +134,7 @@ function createAcceptanceService(role = AUTH_ROLES.TEAM_MANAGER) {
       email: 'manager@example.com',
       expires_at: new Date('2026-08-20T00:00:00.000Z'),
       id: 'invitation-1',
+      invited_by_member_id: 'owner-member-1',
       organization_id: 'org-1',
       revoked_at: null,
       role,
@@ -144,6 +145,9 @@ function createAcceptanceService(role = AUTH_ROLES.TEAM_MANAGER) {
     },
   });
   const memberQuery = createQuery();
+  const notificationRecipientQuery = createQuery({
+    rows: [{ user_id: 'user-owner-1' }, { user_id: 'user-inviter-1' }],
+  });
   const assignmentQuery = createQuery({
     rows: [
       {
@@ -194,7 +198,11 @@ function createAcceptanceService(role = AUTH_ROLES.TEAM_MANAGER) {
         };
       }),
       selectFrom: jest.fn((table: string) =>
-        table === 'admin.organization_members' ? memberQuery : assignmentQuery,
+        table === 'admin.organization_members'
+          ? memberQuery
+          : table === 'admin.organization_members as recipients'
+            ? notificationRecipientQuery
+            : assignmentQuery,
       ),
       updateTable: jest.fn().mockReturnValue({
         execute: jest.fn().mockResolvedValue([]),
@@ -204,7 +212,21 @@ function createAcceptanceService(role = AUTH_ROLES.TEAM_MANAGER) {
     }),
   );
   const db: any = {
-    selectFrom: jest.fn().mockReturnValue(invitationByToken),
+    selectFrom: jest.fn((table: string) => {
+      if (table === 'admin.organization_members as members') {
+        return notificationRecipientQuery;
+      }
+
+      if (table === 'admin.organizations as organizations') {
+        return createQuery({ first: { name: 'League One', slug: 'league-one' } });
+      }
+
+      if (table === 'access.invitation_team_assignments as assignments') {
+        return assignmentQuery;
+      }
+
+      return invitationByToken;
+    }),
     transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
   };
   const tokenService = {
@@ -213,15 +235,18 @@ function createAcceptanceService(role = AUTH_ROLES.TEAM_MANAGER) {
   };
   const policy = { resolve: jest.fn() };
   const mailer = { sendInvitation: jest.fn() };
+  const notificationWriter = { create: jest.fn().mockResolvedValue([]) };
 
   return {
     deletedTables,
     insertedTeamAssignments,
+    notificationWriter,
     service: new InvitationService(
       db,
       mailer as never,
       tokenService as never,
       policy as never,
+      notificationWriter as never,
     ),
   };
 }
@@ -314,6 +339,30 @@ describe('InvitationService team manager scope', () => {
         name: 'Manager',
       }),
     ).resolves.toEqual({ membershipId: 'member-1', success: true });
+  });
+
+  it('notifies the inviter and current owner after an invitation is accepted', async () => {
+    const { notificationWriter, service } = createAcceptanceService();
+
+    await service.accept(
+      { token: 'plain-token' },
+      { id: 'user-manager-1', email: 'manager@example.com', name: 'Manager' },
+    );
+
+    expect(notificationWriter.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({
+          memberName: 'Manager',
+          organizationName: 'League One',
+          organizationSlug: 'league-one',
+        }),
+        dedupeKey: 'invitation:invitation-1:accepted',
+        eventType: 'access.invitation_accepted',
+        organizationId: 'org-1',
+        recipients: [{ userId: 'user-owner-1' }, { userId: 'user-inviter-1' }],
+      }),
+      expect.anything(),
+    );
   });
 
   it('clears old assignments when a non-manager invitation is accepted', async () => {

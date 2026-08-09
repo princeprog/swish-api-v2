@@ -540,6 +540,39 @@ export class InvitationService {
         })
         .execute();
 
+      const notificationRecipients = await trx
+        .selectFrom('admin.organization_members as recipients')
+        .select('recipients.user_id')
+        .where('recipients.organization_id', '=', invitation.organization_id)
+        .where('recipients.status', '=', 'active')
+        .where((eb: any) =>
+          eb.or([
+            eb('recipients.role', '=', AUTH_ROLES.OWNER),
+            eb('recipients.id', '=', invitation.invited_by_member_id),
+          ]),
+        )
+        .execute();
+
+      await this.notificationWriter?.create(
+        {
+          actorUserId: user.id,
+          context: {
+            memberName: user.name,
+            organizationName: invitation.organization_name,
+            organizationSlug: invitation.organization_slug,
+          },
+          dedupeKey: `invitation:${invitation.id}:accepted`,
+          eventType: 'access.invitation_accepted',
+          organizationId: invitation.organization_id,
+          recipients: notificationRecipients
+            .filter((recipient: any) => recipient.user_id)
+            .map((recipient: any) => ({ userId: recipient.user_id })),
+          resourceId: invitation.id,
+          resourceType: 'invitation',
+        },
+        trx,
+      );
+
       return this.acceptedResponse(member.id);
     });
   }
@@ -625,6 +658,7 @@ export class InvitationService {
         'invitations.email',
         'invitations.expires_at',
         'invitations.id',
+        'invitations.invited_by_member_id',
         'invitations.organization_id',
         'invitations.revoked_at',
         'invitations.role',
@@ -663,6 +697,7 @@ export class InvitationService {
         'invitations.email',
         'invitations.expires_at',
         'invitations.id',
+        'invitations.invited_by_member_id',
         'invitations.organization_id',
         'invitations.revoked_at',
         'invitations.role',
