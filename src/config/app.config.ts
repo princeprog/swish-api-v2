@@ -78,10 +78,15 @@ function parseJwtDuration(value: string | undefined): JwtDuration {
   return duration as JwtDuration;
 }
 
+export function getCorsOrigins(configuredOrigin: string): string[] {
+  return Array.from(new Set([configuredOrigin, 'http://localhost:3000']));
+}
+
 export function createAppConfig(env: NodeJS.ProcessEnv): AppConfig {
   const environment = parseEnvironment(env.NODE_ENV);
   const accessTokenSecret = requireAppEnv(env, 'JWT_ACCESS_SECRET');
   const refreshTokenSecret = requireAppEnv(env, 'JWT_REFRESH_SECRET');
+  const corsOrigin = env.CORS_ORIGIN ?? 'http://192.168.0.100:8081';
 
   return {
     app: {
@@ -93,7 +98,7 @@ export function createAppConfig(env: NodeJS.ProcessEnv): AppConfig {
       accessCookieName: env.AUTH_ACCESS_COOKIE_NAME ?? 'swish_access_token',
       accessTokenExpiresIn: parseJwtDuration(env.JWT_ACCESS_EXPIRES_IN),
       accessTokenSecret,
-      corsOrigin: env.CORS_ORIGIN ?? 'http://localhost:3000',
+      corsOrigin,
       refreshCookieName: env.AUTH_REFRESH_COOKIE_NAME ?? 'swish_refresh_token',
       refreshTokenExpiresIn: env.JWT_REFRESH_EXPIRES_IN ?? '30d',
       refreshTokenSecret,

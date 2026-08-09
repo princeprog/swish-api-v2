@@ -3,7 +3,11 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ApiExceptionFilter } from './common/filters/api-exception.filter';
-import { APP_CONFIG, type AppConfig } from './config/app.config';
+import {
+  APP_CONFIG,
+  getCorsOrigins,
+  type AppConfig,
+} from './config/app.config';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -11,7 +15,7 @@ async function bootstrap() {
 
   app.enableCors({
     credentials: true,
-    origin: config.auth.corsOrigin,
+    origin: getCorsOrigins(config.auth.corsOrigin),
   });
   app.use(cookieParser());
   app.useGlobalFilters(new ApiExceptionFilter());

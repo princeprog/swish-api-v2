@@ -1,4 +1,4 @@
-import { createAppConfig } from './app.config';
+import { createAppConfig, getCorsOrigins } from './app.config';
 
 const validEnv = {
   DB_HOST: 'localhost',
@@ -22,7 +22,7 @@ describe('createAppConfig', () => {
         accessCookieName: 'swish_access_token',
         accessTokenExpiresIn: '15m',
         accessTokenSecret: 'access-secret',
-        corsOrigin: 'http://localhost:3000',
+        corsOrigin: 'http://192.168.0.100:8081',
         refreshCookieName: 'swish_refresh_token',
         refreshTokenExpiresIn: '30d',
         refreshTokenSecret: 'refresh-secret',
@@ -36,6 +36,13 @@ describe('createAppConfig', () => {
         database: 'swish-db-v2',
       },
     });
+  });
+
+  it('includes the local frontend in the allowed CORS origins', () => {
+    expect(getCorsOrigins(createAppConfig(validEnv).auth.corsOrigin)).toEqual([
+      'http://192.168.0.100:8081',
+      'http://localhost:3000',
+    ]);
   });
 
   it('requires JWT_ACCESS_SECRET', () => {
