@@ -5,6 +5,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   AUTH_ROLES,
@@ -13,6 +14,7 @@ import {
 import { DATABASE, type Database } from '../../database/database.tokens';
 import type { AuthUser } from '../auth/auth.types';
 import { TeamAssignmentPolicyService } from '../organization-member/team-assignment-policy.service';
+import { NotificationWriter } from '../notification/notification.writer';
 import type { AcceptInvitationDto } from './dto/accept-invitation.dto';
 import type { CreateInvitationDto } from './dto/create-invitation.dto';
 import type { UpdateInvitationDto } from './dto/update-invitation.dto';
@@ -21,6 +23,14 @@ import { InvitationTokenService } from './invitation-token.service';
 
 const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const APP_BASE_URL = process.env.APP_BASE_URL ?? 'http://localhost:3000';
+const NOTIFICATION_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+
+function roleLabel(role: string): string {
+  return role
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
 
 type InvitationTeamAssignment = {
   id: string;
@@ -44,6 +54,7 @@ export class InvitationService {
     @Inject(INVITATION_MAILER) private readonly mailer: InvitationMailer,
     private readonly tokenService: InvitationTokenService,
     private readonly teamAssignmentPolicy: TeamAssignmentPolicyService,
+    @Optional() private readonly notificationWriter?: NotificationWriter,
   ) {}
 
   async create(
@@ -61,6 +72,7 @@ export class InvitationService {
     const { token, tokenHash } = this.tokenService.createTokenPair();
     const expiresAt = new Date(Date.now() + INVITATION_TTL_MS);
     const organization = await this.findOrganization(organizationId);
+    const invitedUser = await this.findUserByEmail(email);
 
     const existing = await (this.db as any)
       .selectFrom('access.organization_invitations')
@@ -96,6 +108,28 @@ export class InvitationService {
           trx,
           created.id,
           teams,
+        );
+
+        await this.notificationWriter?.create(
+          {
+            actionExpiresAt: expiresAt,
+            context: {
+              invitationId: created.id,
+              organizationName: organization.name,
+              organizationSlug: organization.slug,
+              roleLabel: roleLabel(input.role),
+            },
+            dedupeKey: `invitation:${created.id}:received`,
+            eventType: 'access.invitation_received',
+            organizationId,
+            recipients: invitedUser
+              ? [{ userId: invitedUser.id }]
+              : [{ email }],
+            resourceId: created.id,
+            resourceType: 'invitation',
+            retainUntil: new Date(expiresAt.getTime() + NOTIFICATION_RETENTION_MS),
+          },
+          trx,
         );
 
         return created;
@@ -169,6 +203,7 @@ export class InvitationService {
       .where('id', '=', invitationId)
       .returningAll()
       .executeTakeFirstOrThrow();
+    const invitedUser = await this.findUserByEmail(updated.email);
 
     const acceptanceUrl = this.buildAcceptanceUrl(token);
     await this.mailer.sendInvitation({
@@ -187,6 +222,23 @@ export class InvitationService {
         teamIds: await this.getInvitationTeamIds(invitationId),
       },
     );
+
+    await this.notificationWriter?.create({
+      actionExpiresAt: expiresAt,
+      context: {
+        invitationId,
+        organizationName: organization.name,
+        organizationSlug: organization.slug,
+        roleLabel: roleLabel(updated.role),
+      },
+      dedupeKey: `invitation:${invitationId}:resent:${expiresAt.toISOString()}`,
+      eventType: 'access.invitation_resent',
+      organizationId,
+      recipients: invitedUser ? [{ userId: invitedUser.id }] : [{ email: updated.email }],
+      resourceId: invitationId,
+      resourceType: 'invitation',
+      retainUntil: new Date(expiresAt.getTime() + NOTIFICATION_RETENTION_MS),
+    });
 
     const assignments = await this.findInvitationAssignments([invitationId]);
 
@@ -252,6 +304,23 @@ export class InvitationService {
       },
     );
 
+    const invitedUser = await this.findUserByEmail(invitation.email);
+    await this.notificationWriter?.create({
+      actionExpiresAt: updated.expires_at,
+      context: {
+        invitationId,
+        organizationName: (await this.findOrganization(organizationId)).name,
+        roleLabel: roleLabel(updated.role),
+      },
+      dedupeKey: `invitation:${invitationId}:scope:${updated.updated_at.toISOString()}`,
+      eventType: 'access.invitation_scope_changed',
+      organizationId,
+      recipients: invitedUser ? [{ userId: invitedUser.id }] : [{ email: invitation.email }],
+      resourceId: invitationId,
+      resourceType: 'invitation',
+      retainUntil: new Date(updated.expires_at.getTime() + NOTIFICATION_RETENTION_MS),
+    });
+
     return {
       ...this.serializeInvitation(updated, this.toTeamAssignments(teams)),
     };
@@ -294,6 +363,20 @@ export class InvitationService {
       },
     );
 
+    const invitedUser = await this.findUserByEmail(updated.email);
+    await this.notificationWriter?.create({
+      context: {
+        invitationId,
+        organizationName: (await this.findOrganization(organizationId)).name,
+      },
+      dedupeKey: `invitation:${invitationId}:revoked`,
+      eventType: 'access.invitation_revoked',
+      organizationId,
+      recipients: invitedUser ? [{ userId: invitedUser.id }] : [{ email: updated.email }],
+      resourceId: invitationId,
+      resourceType: 'invitation',
+    });
+
     const assignments = await this.findInvitationAssignments([invitationId]);
 
     return this.serializeInvitation(
@@ -319,15 +402,37 @@ export class InvitationService {
     };
   }
 
+  async previewById(invitationId: string, user: AuthUser) {
+    const invitation = await this.findInvitationById(invitationId);
+    this.assertInvitationEmailMatchesUser(invitation, user);
+    const assignments = await this.findInvitationAssignments([invitation.id]);
+
+    return {
+      email: maskEmail(invitation.email),
+      expires_at: invitation.expires_at,
+      id: invitation.id,
+      organization: {
+        name: invitation.organization_name,
+        slug: invitation.organization_slug,
+      },
+      role: invitation.role,
+      status: this.resolveInvitationStatus(invitation),
+      teamAssignments: assignments.get(invitation.id) ?? [],
+    };
+  }
+
   async accept(input: AcceptInvitationDto, user: AuthUser) {
     const invitation = await this.findInvitationByToken(input.token);
-    const normalizedUserEmail = this.tokenService.normalizeEmail(user.email);
+    return this.acceptResolvedInvitation(invitation, user);
+  }
 
-    if (normalizedUserEmail !== invitation.email) {
-      throw new ForbiddenException(
-        'Sign in with the invited email address to accept this invitation',
-      );
-    }
+  async acceptById(invitationId: string, user: AuthUser) {
+    const invitation = await this.findInvitationById(invitationId);
+    return this.acceptResolvedInvitation(invitation, user);
+  }
+
+  private async acceptResolvedInvitation(invitation: any, user: AuthUser) {
+    this.assertInvitationEmailMatchesUser(invitation, user);
 
     if (invitation.status === 'accepted') {
       if (invitation.accepted_user_id === user.id) {
@@ -439,6 +544,16 @@ export class InvitationService {
     });
   }
 
+  private assertInvitationEmailMatchesUser(invitation: any, user: AuthUser) {
+    const normalizedUserEmail = this.tokenService.normalizeEmail(user.email);
+
+    if (normalizedUserEmail !== invitation.email) {
+      throw new ForbiddenException(
+        'Sign in with the invited email address to accept this invitation',
+      );
+    }
+  }
+
   private acceptedResponse(membershipId?: string | null) {
     return {
       membershipId,
@@ -464,6 +579,14 @@ export class InvitationService {
     }
 
     return organization;
+  }
+
+  private async findUserByEmail(email: string) {
+    return (this.db as any)
+      .selectFrom('auth.users')
+      .select(['id'])
+      .where('email', '=', email)
+      .executeTakeFirst();
   }
 
   private async findInvitation(organizationId: string, invitationId: string) {
@@ -511,6 +634,44 @@ export class InvitationService {
         'organizations.slug as organization_slug',
       ])
       .where('invitations.token_hash', '=', tokenHash)
+      .executeTakeFirst();
+
+    if (!invitation) {
+      throw new NotFoundException('Invitation not found');
+    }
+
+    return invitation;
+  }
+
+  private async findInvitationById(invitationId: string) {
+    const invitation = await (this.db as any)
+      .selectFrom('access.organization_invitations as invitations')
+      .innerJoin(
+        'admin.organizations as organizations',
+        'organizations.id',
+        'invitations.organization_id',
+      )
+      .leftJoin(
+        'admin.organization_members as members',
+        'members.id',
+        'invitations.accepted_by_member_id',
+      )
+      .select([
+        'invitations.accepted_at',
+        'invitations.accepted_by_member_id',
+        'invitations.created_at',
+        'invitations.email',
+        'invitations.expires_at',
+        'invitations.id',
+        'invitations.organization_id',
+        'invitations.revoked_at',
+        'invitations.role',
+        'invitations.status',
+        'members.user_id as accepted_user_id',
+        'organizations.name as organization_name',
+        'organizations.slug as organization_slug',
+      ])
+      .where('invitations.id', '=', invitationId)
       .executeTakeFirst();
 
     if (!invitation) {

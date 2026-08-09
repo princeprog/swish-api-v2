@@ -94,6 +94,15 @@ export class InvitationController {
     return this.invitationService.preview(token);
   }
 
+  @Get('invitations/:invitationId')
+  @UseGuards(JwtAuthGuard)
+  previewById(
+    @Param('invitationId') invitationId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.invitationService.previewById(invitationId, user);
+  }
+
   @Post('invitations/accept')
   @UseGuards(JwtAuthGuard)
   accept(
@@ -101,5 +110,14 @@ export class InvitationController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.invitationService.accept(acceptInvitationDto, user);
+  }
+
+  @Post('invitations/:invitationId/accept')
+  @UseGuards(JwtAuthGuard)
+  acceptById(
+    @Param('invitationId') invitationId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.invitationService.acceptById(invitationId, user);
   }
 }

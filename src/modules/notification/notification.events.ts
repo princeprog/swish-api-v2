@@ -125,7 +125,7 @@ export const NOTIFICATION_EVENT_DEFINITIONS: Record<
   'access.invitation_resent': definition('access', 'action_required', 'Your league invitation was sent again', invitationPath),
   'access.invitation_expiring': definition('access', 'action_required', 'Your league invitation is expiring soon', invitationPath),
   'access.invitation_scope_changed': definition('access', 'important', 'Your invitation access was updated', invitationPath),
-  'access.invitation_revoked': definition('access', 'important', 'Your league invitation was revoked', invitationPath),
+  'access.invitation_revoked': definition('access', 'important', 'Your league invitation was revoked', () => null),
   'access.invitation_accepted': definition('access', 'informational', 'A league invitation was accepted'),
   'access.member_role_changed': definition('access', 'important', 'Your league role was changed'),
   'access.member_team_scope_changed': definition('access', 'important', 'Your team access was updated'),

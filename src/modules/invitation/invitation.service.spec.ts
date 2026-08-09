@@ -304,6 +304,18 @@ describe('InvitationService team manager scope', () => {
     ]);
   });
 
+  it('accepts an email-matched invitation by id for authenticated inbox actions', async () => {
+    const { service } = createAcceptanceService();
+
+    await expect(
+      service.acceptById('invitation-1', {
+        id: 'user-manager-1',
+        email: 'manager@example.com',
+        name: 'Manager',
+      }),
+    ).resolves.toEqual({ membershipId: 'member-1', success: true });
+  });
+
   it('clears old assignments when a non-manager invitation is accepted', async () => {
     const { deletedTables, insertedTeamAssignments, service } =
       createAcceptanceService(AUTH_ROLES.ADMIN);
