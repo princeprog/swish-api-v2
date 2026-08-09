@@ -26,7 +26,7 @@ function defaultAuthConfig(): AppConfig['auth'] {
     accessCookieName: 'swish_access_token',
     accessTokenExpiresIn: '15m',
     accessTokenSecret: '',
-    corsOrigin: 'http://localhost:3000',
+    corsOrigin: 'http://192.168.0.100:8081',
     refreshCookieName: 'swish_refresh_token',
     refreshTokenExpiresIn: '30d',
     refreshTokenSecret: '',
