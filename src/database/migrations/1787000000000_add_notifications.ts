@@ -88,6 +88,18 @@ export async function up(db: Kysely<any>): Promise<void> {
     where read_at is null and recipient_user_id is not null
   `.execute(db);
 
+  await sql`
+    create index notification_unread_email_index
+    on notification.notifications (recipient_email, created_at desc)
+    where read_at is null and recipient_email is not null
+  `.execute(db);
+
+  await sql`
+    create index notification_action_expiry_index
+    on notification.notifications (action_expires_at)
+    where action_url is not null and action_expires_at is not null
+  `.execute(db);
+
   await db.schema
     .createIndex('notification_organization_created_index')
     .on('notification.notifications')
@@ -112,6 +124,12 @@ export async function down(db: Kysely<any>): Promise<void> {
     .execute();
   await sql`
     drop index if exists notification.notification_unread_recipient_index
+  `.execute(db);
+  await sql`
+    drop index if exists notification.notification_action_expiry_index
+  `.execute(db);
+  await sql`
+    drop index if exists notification.notification_unread_email_index
   `.execute(db);
   await db.schema
     .dropIndex('notification_recipient_email_created_index')

@@ -22,6 +22,8 @@ describe('notifications migration', () => {
     expect(migrationSource).toContain('notifications_recipient_check');
     expect(migrationSource).toContain('notifications_recipient_identity_check');
     expect(migrationSource).toContain('notifications_dedupe_key_unique');
+    expect(migrationSource).toContain('notification_unread_email_index');
+    expect(migrationSource).toContain('notification_action_expiry_index');
   });
 
   it('keeps historical rows when organizations or actors are removed', () => {
