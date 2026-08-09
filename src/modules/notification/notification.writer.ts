@@ -99,6 +99,22 @@ export function buildNotificationInsertValues(
 export class NotificationWriter {
   constructor(@Inject(DATABASE) private readonly db: Database) {}
 
+  async clearInvitationActions(
+    invitationId: string,
+    db: Database | any = this.db,
+  ): Promise<void> {
+    await db
+      .updateTable('notification.notifications')
+      .set({
+        action_expires_at: null,
+        action_url: null,
+        updated_at: new Date(),
+      })
+      .where('resource_type', '=', 'invitation')
+      .where('resource_id', '=', invitationId)
+      .execute();
+  }
+
   async create(
     input: CreateNotificationInput,
     db: Database | any = this.db,

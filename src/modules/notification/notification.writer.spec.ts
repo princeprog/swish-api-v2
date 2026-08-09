@@ -1,4 +1,7 @@
-import { buildNotificationInsertValues } from './notification.writer';
+import {
+  buildNotificationInsertValues,
+  NotificationWriter,
+} from './notification.writer';
 
 describe('notification writer', () => {
   it('builds a user-targeted row with snapshotted copy and a recipient-safe dedupe key', () => {
@@ -68,5 +71,27 @@ describe('notification writer', () => {
       recipient_user_id: null,
       retain_until: new Date('2026-11-14T00:00:00.000Z'),
     });
+  });
+
+  it('clears stale invitation actions without deleting history', async () => {
+    const execute = jest.fn().mockResolvedValue({ numUpdatedRows: 2 });
+    const query: any = {
+      execute,
+      set: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const db: any = {
+      updateTable: jest.fn().mockReturnValue(query),
+    };
+    const writer = new NotificationWriter(db);
+
+    await writer.clearInvitationActions('inv-1', db);
+
+    expect(db.updateTable).toHaveBeenCalledWith('notification.notifications');
+    expect(query.set).toHaveBeenCalledWith(
+      expect.objectContaining({ action_expires_at: null, action_url: null }),
+    );
+    expect(query.where).toHaveBeenCalledWith('resource_id', '=', 'inv-1');
+    expect(execute).toHaveBeenCalled();
   });
 });

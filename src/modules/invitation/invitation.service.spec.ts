@@ -235,7 +235,10 @@ function createAcceptanceService(role = AUTH_ROLES.TEAM_MANAGER) {
   };
   const policy = { resolve: jest.fn() };
   const mailer = { sendInvitation: jest.fn() };
-  const notificationWriter = { create: jest.fn().mockResolvedValue([]) };
+  const notificationWriter = {
+    clearInvitationActions: jest.fn().mockResolvedValue(undefined),
+    create: jest.fn().mockResolvedValue([]),
+  };
 
   return {
     deletedTables,

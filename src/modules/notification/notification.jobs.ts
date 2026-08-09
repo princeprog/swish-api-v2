@@ -56,6 +56,7 @@ export class NotificationJobsService implements OnModuleInit, OnModuleDestroy {
 
   async runSweep(now = new Date()) {
     const counts = {
+      expiredInvitationActions: await this.clearExpiredInvitationActions(now),
       games: await this.createGameReminders(now),
       invitations: await this.createInvitationReminders(now),
       rosters: await this.createRosterReminders(now),
@@ -63,6 +64,20 @@ export class NotificationJobsService implements OnModuleInit, OnModuleDestroy {
     };
 
     return counts;
+  }
+
+  private async clearExpiredInvitationActions(now: Date): Promise<number> {
+    const invitations = await (this.db as any)
+      .selectFrom('access.organization_invitations')
+      .select(['id'])
+      .where('expires_at', '<=', now)
+      .execute();
+
+    for (const invitation of invitations) {
+      await this.writer.clearInvitationActions(invitation.id);
+    }
+
+    return invitations.length;
   }
 
   private async createInvitationReminders(now: Date): Promise<number> {

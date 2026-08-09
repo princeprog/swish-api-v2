@@ -363,6 +363,8 @@ export class InvitationService {
       },
     );
 
+    await this.notificationWriter?.clearInvitationActions(invitationId);
+
     const invitedUser = await this.findUserByEmail(updated.email);
     await this.notificationWriter?.create({
       context: {
@@ -539,6 +541,8 @@ export class InvitationService {
           target_type: 'invitation',
         })
         .execute();
+
+      await this.notificationWriter?.clearInvitationActions(invitation.id, trx);
 
       const notificationRecipients = await trx
         .selectFrom('admin.organization_members as recipients')
