@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -20,6 +21,7 @@ import type { AuthUser } from '../auth/auth.types';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AcceptInvitationDto } from './dto/accept-invitation.dto';
 import { CreateInvitationDto } from './dto/create-invitation.dto';
+import { UpdateInvitationDto } from './dto/update-invitation.dto';
 import { InvitationService } from './invitation.service';
 
 @Controller()
@@ -57,6 +59,23 @@ export class InvitationController {
     @OrganizationAccess() access: OrganizationAccessContext,
   ) {
     return this.invitationService.resend(organizationId, invitationId, access);
+  }
+
+  @Patch('organizations/:organizationId/invitations/:invitationId')
+  @UseGuards(JwtAuthGuard, OrganizationPermissionsGuard)
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.MEMBERS_MANAGE)
+  update(
+    @Param('organizationId') organizationId: string,
+    @Param('invitationId') invitationId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+    @Body() updateInvitationDto: UpdateInvitationDto,
+  ) {
+    return this.invitationService.update(
+      organizationId,
+      invitationId,
+      access,
+      updateInvitationDto,
+    );
   }
 
   @Delete('organizations/:organizationId/invitations/:invitationId')

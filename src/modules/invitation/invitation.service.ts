@@ -12,13 +12,23 @@ import {
 } from '../../common/auth/roles';
 import { DATABASE, type Database } from '../../database/database.tokens';
 import type { AuthUser } from '../auth/auth.types';
+import { TeamAssignmentPolicyService } from '../organization-member/team-assignment-policy.service';
 import type { AcceptInvitationDto } from './dto/accept-invitation.dto';
 import type { CreateInvitationDto } from './dto/create-invitation.dto';
+import type { UpdateInvitationDto } from './dto/update-invitation.dto';
 import { INVITATION_MAILER, type InvitationMailer } from './invitation-mailer';
 import { InvitationTokenService } from './invitation-token.service';
 
 const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const APP_BASE_URL = process.env.APP_BASE_URL ?? 'http://localhost:3000';
+
+type InvitationTeamAssignment = {
+  id: string;
+  leagueSeasonId: string;
+  leagueSeasonName: string;
+  name: string;
+  slug: string;
+};
 
 function maskEmail(email: string): string {
   const [localPart, domain] = email.split('@');
@@ -33,6 +43,7 @@ export class InvitationService {
     @Inject(DATABASE) private readonly db: Database,
     @Inject(INVITATION_MAILER) private readonly mailer: InvitationMailer,
     private readonly tokenService: InvitationTokenService,
+    private readonly teamAssignmentPolicy: TeamAssignmentPolicyService,
   ) {}
 
   async create(
@@ -41,6 +52,12 @@ export class InvitationService {
     input: CreateInvitationDto,
   ) {
     const email = this.tokenService.normalizeEmail(input.email);
+    const teamIds = input.teamIds ?? [];
+    const teams = await this.teamAssignmentPolicy.resolve(
+      organizationId,
+      input.role,
+      teamIds,
+    );
     const { token, tokenHash } = this.tokenService.createTokenPair();
     const expiresAt = new Date(Date.now() + INVITATION_TTL_MS);
     const organization = await this.findOrganization(organizationId);
@@ -60,17 +77,29 @@ export class InvitationService {
     }
 
     const invitation = await (this.db as any)
-      .insertInto('access.organization_invitations')
-      .values({
-        email,
-        expires_at: expiresAt,
-        invited_by_member_id: access.membershipId,
-        organization_id: organizationId,
-        role: input.role,
-        token_hash: tokenHash,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
+      .transaction()
+      .execute(async (trx: any) => {
+        const created = await trx
+          .insertInto('access.organization_invitations')
+          .values({
+            email,
+            expires_at: expiresAt,
+            invited_by_member_id: access.membershipId,
+            organization_id: organizationId,
+            role: input.role,
+            token_hash: tokenHash,
+          })
+          .returningAll()
+          .executeTakeFirstOrThrow();
+
+        await this.replaceInvitationAssignmentsInTransaction(
+          trx,
+          created.id,
+          teams,
+        );
+
+        return created;
+      });
 
     const acceptanceUrl = this.buildAcceptanceUrl(token);
     await this.mailer.sendInvitation({
@@ -87,29 +116,33 @@ export class InvitationService {
       {
         email,
         role: input.role,
+        teamIds,
       },
     );
 
-    return { ...this.serializeInvitation(invitation), acceptanceUrl };
+    return {
+      ...this.serializeInvitation(invitation, this.toTeamAssignments(teams)),
+      acceptanceUrl,
+    };
   }
 
-  findAll(organizationId: string) {
-    return (this.db as any)
+  async findAll(organizationId: string) {
+    const invitations = await (this.db as any)
       .selectFrom('access.organization_invitations')
-      .select([
-        'accepted_at',
-        'created_at',
-        'email',
-        'expires_at',
-        'id',
-        'revoked_at',
-        'role',
-        'status',
-        'updated_at',
-      ])
+      .selectAll()
       .where('organization_id', '=', organizationId)
       .orderBy('created_at desc')
       .execute();
+    const assignments = await this.findInvitationAssignments(
+      invitations.map((invitation: any) => invitation.id),
+    );
+
+    return invitations.map((invitation: any) =>
+      this.serializeInvitation(
+        invitation,
+        assignments.get(invitation.id) ?? [],
+      ),
+    );
   }
 
   async resend(
@@ -119,7 +152,7 @@ export class InvitationService {
   ) {
     const invitation = await this.findInvitation(organizationId, invitationId);
 
-    if (invitation.status !== 'pending') {
+    if (this.resolveInvitationStatus(invitation) !== 'pending') {
       throw new BadRequestException('Only pending invitations can be resent');
     }
 
@@ -151,10 +184,77 @@ export class InvitationService {
       invitationId,
       {
         email: updated.email,
+        teamIds: await this.getInvitationTeamIds(invitationId),
       },
     );
 
-    return { ...this.serializeInvitation(updated), acceptanceUrl };
+    const assignments = await this.findInvitationAssignments([invitationId]);
+
+    return {
+      ...this.serializeInvitation(
+        updated,
+        assignments.get(invitationId) ?? [],
+      ),
+      acceptanceUrl,
+    };
+  }
+
+  async update(
+    organizationId: string,
+    invitationId: string,
+    access: OrganizationAccessContext,
+    input: UpdateInvitationDto,
+  ) {
+    const invitation = await this.findInvitation(organizationId, invitationId);
+
+    if (this.resolveInvitationStatus(invitation) !== 'pending') {
+      throw new BadRequestException(
+        'Only active pending invitations can be edited',
+      );
+    }
+
+    const teams = await this.teamAssignmentPolicy.resolve(
+      organizationId,
+      input.role,
+      input.teamIds,
+    );
+    const updated = await (this.db as any)
+      .transaction()
+      .execute(async (trx: any) => {
+        const result = await trx
+          .updateTable('access.organization_invitations')
+          .set({
+            role: input.role,
+            updated_at: new Date(),
+          })
+          .where('id', '=', invitationId)
+          .where('organization_id', '=', organizationId)
+          .returningAll()
+          .executeTakeFirstOrThrow();
+
+        await this.replaceInvitationAssignmentsInTransaction(
+          trx,
+          invitationId,
+          teams,
+        );
+
+        return result;
+      });
+
+    await this.writeAudit(
+      access,
+      'invitation.updated',
+      'invitation',
+      invitationId,
+      {
+        role: input.role,
+        teamIds: input.teamIds,
+      },
+    );
+
+    return {
+      ...this.serializeInvitation(updated, this.toTeamAssignments(teams)),
+    };
   }
 
   async revoke(
@@ -165,7 +265,12 @@ export class InvitationService {
     const invitation = await this.findInvitation(organizationId, invitationId);
 
     if (invitation.status !== 'pending') {
-      return this.serializeInvitation(invitation);
+      return this.serializeInvitation(
+        invitation,
+        (await this.findInvitationAssignments([invitationId])).get(
+          invitationId,
+        ) ?? [],
+      );
     }
 
     const updated = await (this.db as any)
@@ -189,11 +294,17 @@ export class InvitationService {
       },
     );
 
-    return this.serializeInvitation(updated);
+    const assignments = await this.findInvitationAssignments([invitationId]);
+
+    return this.serializeInvitation(
+      updated,
+      assignments.get(invitationId) ?? [],
+    );
   }
 
   async preview(token: string) {
     const invitation = await this.findInvitationByToken(token);
+    const assignments = await this.findInvitationAssignments([invitation.id]);
 
     return {
       email: maskEmail(invitation.email),
@@ -204,6 +315,7 @@ export class InvitationService {
       },
       role: invitation.role,
       status: this.resolveInvitationStatus(invitation),
+      teamAssignments: assignments.get(invitation.id) ?? [],
     };
   }
 
@@ -229,7 +341,7 @@ export class InvitationService {
       throw new BadRequestException('This invitation is no longer active');
     }
 
-    return (this.db as any).transaction().execute(async (trx) => {
+    return (this.db as any).transaction().execute(async (trx: any) => {
       const existingMembership = await trx
         .selectFrom('admin.organization_members')
         .selectAll()
@@ -265,6 +377,37 @@ export class InvitationService {
             .returningAll()
             .executeTakeFirstOrThrow();
 
+      const assignments = await this.findInvitationAssignments(
+        [invitation.id],
+        trx,
+      );
+      const intendedAssignments = assignments.get(invitation.id) ?? [];
+
+      await trx
+        .deleteFrom('access.team_manager_assignments')
+        .where('organization_member_id', '=', member.id)
+        .execute();
+      await trx
+        .deleteFrom('access.game_scorekeeper_assignments')
+        .where('organization_member_id', '=', member.id)
+        .execute();
+
+      if (
+        invitation.role === AUTH_ROLES.TEAM_MANAGER &&
+        intendedAssignments.length
+      ) {
+        await trx
+          .insertInto('access.team_manager_assignments')
+          .values(
+            intendedAssignments.map((assignment) => ({
+              league_season_id: assignment.leagueSeasonId,
+              organization_member_id: member.id,
+              team_id: assignment.id,
+            })),
+          )
+          .execute();
+      }
+
       await trx
         .updateTable('access.organization_invitations')
         .set({
@@ -281,7 +424,11 @@ export class InvitationService {
         .values({
           action: 'invitation.accepted',
           actor_member_id: member.id,
-          metadata: { email: invitation.email, role: invitation.role },
+          metadata: {
+            email: invitation.email,
+            role: invitation.role,
+            teamIds: intendedAssignments.map((assignment) => assignment.id),
+          },
           organization_id: invitation.organization_id,
           target_id: invitation.id,
           target_type: 'invitation',
@@ -393,9 +540,112 @@ export class InvitationService {
     return 'pending';
   }
 
-  private serializeInvitation(invitation: any) {
+  private serializeInvitation(
+    invitation: any,
+    teamAssignments: InvitationTeamAssignment[],
+  ) {
     const { token_hash: _tokenHash, ...safeInvitation } = invitation;
-    return safeInvitation;
+    return {
+      ...safeInvitation,
+      status: this.resolveInvitationStatus(invitation),
+      teamAssignments,
+    };
+  }
+
+  private async findInvitationAssignments(
+    invitationIds: string[],
+    db: any = this.db,
+  ): Promise<Map<string, InvitationTeamAssignment[]>> {
+    const byInvitation = new Map<string, InvitationTeamAssignment[]>();
+
+    if (!invitationIds.length) {
+      return byInvitation;
+    }
+
+    const rows = await db
+      .selectFrom(
+        'access.invitation_team_assignments as assignments',
+      )
+      .innerJoin('admin.teams as teams', 'teams.id', 'assignments.team_id')
+      .innerJoin(
+        'admin.league_seasons as league_seasons',
+        'league_seasons.id',
+        'assignments.league_season_id',
+      )
+      .select([
+        'assignments.invitation_id',
+        'assignments.league_season_id',
+        'league_seasons.name as league_season_name',
+        'teams.id',
+        'teams.name',
+        'teams.slug',
+      ])
+      .where('assignments.invitation_id', 'in', invitationIds)
+      .execute();
+
+    for (const row of rows) {
+      const values = byInvitation.get(row.invitation_id) ?? [];
+      values.push({
+        id: row.id,
+        leagueSeasonId: row.league_season_id,
+        leagueSeasonName: row.league_season_name,
+        name: row.name,
+        slug: row.slug,
+      });
+      byInvitation.set(row.invitation_id, values);
+    }
+
+    return byInvitation;
+  }
+
+  private async getInvitationTeamIds(invitationId: string) {
+    const assignments = await this.findInvitationAssignments([invitationId]);
+    return (assignments.get(invitationId) ?? []).map((assignment) => assignment.id);
+  }
+
+  private toTeamAssignments(
+    teams: Array<{
+      id: string;
+      league_season_id: string;
+      league_season_name: string;
+      name: string;
+      slug: string;
+    }>,
+  ): InvitationTeamAssignment[] {
+    return teams.map((team) => ({
+      id: team.id,
+      leagueSeasonId: team.league_season_id,
+      leagueSeasonName: team.league_season_name,
+      name: team.name,
+      slug: team.slug,
+    }));
+  }
+
+  private async replaceInvitationAssignmentsInTransaction(
+    trx: any,
+    invitationId: string,
+    teams: Array<{
+      id: string;
+      league_season_id: string;
+    }>,
+  ) {
+    await trx
+      .deleteFrom('access.invitation_team_assignments')
+      .where('invitation_id', '=', invitationId)
+      .execute();
+
+    if (teams.length) {
+      await trx
+        .insertInto('access.invitation_team_assignments')
+        .values(
+          teams.map((team) => ({
+            invitation_id: invitationId,
+            league_season_id: team.league_season_id,
+            team_id: team.id,
+          })),
+        )
+        .execute();
+    }
   }
 
   private async writeAudit(
