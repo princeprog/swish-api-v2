@@ -37,6 +37,32 @@ type TeamRosterContext = {
   workflow_status: RosterWorkflowStatus;
 };
 
+export function resolveRosterDeadlineEvent(
+  previous: Date | string | null | undefined,
+  next: Date | string | null | undefined,
+): Extract<NotificationEventType, `roster.deadline_${string}`> | null {
+  const previousAt = previous ? new Date(previous).getTime() : null;
+  const nextAt = next ? new Date(next).getTime() : null;
+
+  if (nextAt === null || Number.isNaN(nextAt)) {
+    return null;
+  }
+
+  if (previousAt === null || Number.isNaN(previousAt)) {
+    return 'roster.deadline_set';
+  }
+
+  return previousAt === nextAt ? null : 'roster.deadline_changed';
+}
+
+function formatDeadlineLabel(value: Date | string): string {
+  return new Intl.DateTimeFormat('en-PH', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'Asia/Manila',
+  }).format(new Date(value));
+}
+
 @Injectable()
 export class RosterService implements OnModuleInit, OnModuleDestroy {
   private deadlineTimer?: NodeJS.Timeout;
@@ -509,6 +535,37 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
       divisionId,
       this.mapSettings(updated),
     );
+
+    const deadlineEvent = resolveRosterDeadlineEvent(
+      settings.submission_deadline_at,
+      updated.submission_deadline_at,
+    );
+
+    if (deadlineEvent && this.notificationWriter && updated.submission_deadline_at) {
+      const teams = await (this.db as any)
+        .selectFrom('admin.teams')
+        .select(['id'])
+        .where('division_id', '=', divisionId)
+        .where('status', '=', 'active')
+        .execute();
+      const deadlineLabel = formatDeadlineLabel(updated.submission_deadline_at);
+
+      for (const team of teams) {
+        await this.notifyTeamManagers(
+          organizationId,
+          team.id,
+          access,
+          deadlineEvent,
+          `division:${divisionId}`,
+          {
+            deadlineLabel,
+            dedupeKey: `roster:deadline:${divisionId}:${updated.updated_at?.toISOString?.() ?? new Date().toISOString()}:${team.id}`,
+            resourceType: 'division',
+            rosterLabel: 'Your team roster',
+          },
+        );
+      }
+    }
 
     return this.mapSettings(updated);
   }
@@ -996,7 +1053,13 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
     access: OrganizationAccessContext,
     eventType: Extract<NotificationEventType, `roster.${string}`>,
     resourceId: string,
-    extra: { reviewNote?: string } = {},
+    extra: {
+      deadlineLabel?: string;
+      dedupeKey?: string;
+      resourceType?: string;
+      reviewNote?: string;
+      rosterLabel?: string;
+    } = {},
   ) {
     if (!this.notificationWriter) {
       return;
@@ -1012,15 +1075,18 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
       context: {
         organizationName: context.organization_name,
         organizationSlug: context.organization_slug,
+        deadlineLabel: extra.deadlineLabel,
         reviewNote: extra.reviewNote,
-        rosterLabel: `${context.team_name} roster`,
+        rosterLabel: extra.rosterLabel ?? `${context.team_name} roster`,
       },
-      dedupeKey: `roster:${resourceId}:${eventType}:${new Date().toISOString()}`,
+      dedupeKey:
+        extra.dedupeKey ??
+        `roster:${resourceId}:${eventType}:${new Date().toISOString()}`,
       eventType,
       organizationId,
       recipients,
       resourceId,
-      resourceType: 'team_roster',
+      resourceType: extra.resourceType ?? 'team_roster',
     });
   }
 
