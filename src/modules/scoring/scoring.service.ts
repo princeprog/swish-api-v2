@@ -5,6 +5,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
 import {
@@ -24,6 +25,7 @@ import {
   type ScoringGameRules,
   type ScoringState,
 } from './scoring-engine';
+import { NotificationWriter } from '../notification/notification.writer';
 
 type ScheduleGame = {
   away_score: number | null;
@@ -73,7 +75,10 @@ type ScoringStateRow = {
 
 @Injectable()
 export class ScoringService {
-  constructor(@Inject(DATABASE) private readonly db: Database) {}
+  constructor(
+    @Inject(DATABASE) private readonly db: Database,
+    @Optional() private readonly notificationWriter?: NotificationWriter,
+  ) {}
 
   async getState(
     organizationId: string,
@@ -249,6 +254,41 @@ export class ScoringService {
         sessionId: session.id,
       },
     );
+
+    if (this.notificationWriter && existing) {
+      const [organization, game, member] = await Promise.all([
+        this.db
+          .selectFrom('admin.organizations')
+          .select(['name', 'slug'])
+          .where('id', '=', organizationId)
+          .executeTakeFirstOrThrow(),
+        this.findGameForScoring(organizationId, gameId, access),
+        (this.db as any)
+          .selectFrom('admin.organization_members')
+          .select(['user_id'])
+          .where('id', '=', existing.organization_member_id)
+          .where('status', '=', 'active')
+          .executeTakeFirst(),
+      ]);
+      if (member) {
+        await this.notificationWriter.create({
+          actorUserId: access.userId,
+          context: {
+            gameId,
+            gameLabel: `${game.home_team_name} vs ${game.away_team_name}`,
+            organizationName: organization.name,
+            organizationSlug: organization.slug,
+            reason: input.reason,
+          },
+          dedupeKey: `game:${gameId}:control-takeover:${session.id}`,
+          eventType: 'scoring.control_taken_over',
+          organizationId,
+          recipients: [{ userId: member.user_id }],
+          resourceId: gameId,
+          resourceType: 'game',
+        });
+      }
+    }
 
     return {
       controlToken,
@@ -426,6 +466,28 @@ export class ScoringService {
           };
         });
 
+      if (this.notificationWriter) {
+        if (input.command.type === 'game.finalize') {
+          await this.notifyOfficialResult(
+            organizationId,
+            game,
+            access,
+            game.status === 'reopened'
+              ? 'scoring.result_corrected'
+              : 'scoring.game_finalized',
+            `${result.state.scores.home}–${result.state.scores.away}`,
+          );
+        }
+        if (input.command.type === 'game.reopen') {
+          await this.notifyOfficialResult(
+            organizationId,
+            game,
+            access,
+            'scoring.game_reopened',
+          );
+        }
+      }
+
       return result;
     } catch (error) {
       if (error instanceof ScoringActionError) {
@@ -437,6 +499,92 @@ export class ScoringService {
 
       throw error;
     }
+  }
+
+  private async notifyOfficialResult(
+    organizationId: string,
+    game: ScheduleGame,
+    access: OrganizationAccessContext,
+    eventType:
+      | 'scoring.game_finalized'
+      | 'scoring.result_corrected'
+      | 'scoring.game_reopened',
+    resultLabel?: string,
+  ) {
+    if (!this.notificationWriter) {
+      return;
+    }
+
+    const organization = await this.db
+      .selectFrom('admin.organizations')
+      .select(['name', 'slug'])
+      .where('id', '=', organizationId)
+      .executeTakeFirstOrThrow();
+    const managers = await (this.db as any)
+      .selectFrom('access.team_manager_assignments as assignments')
+      .innerJoin(
+        'admin.organization_members as members',
+        'members.id',
+        'assignments.organization_member_id',
+      )
+      .select(['members.user_id'])
+      .where('assignments.team_id', 'in', [game.home_team_id, game.away_team_id])
+      .where('members.status', '=', 'active')
+      .execute();
+    const recipients = managers.map((row: { user_id: string }) => ({
+      userId: row.user_id,
+    }));
+
+    if (eventType !== 'scoring.game_finalized') {
+      const administrators = await (this.db as any)
+        .selectFrom('admin.organization_members')
+        .select(['user_id'])
+        .where('organization_id', '=', organizationId)
+        .where('status', '=', 'active')
+        .where('role', 'in', ['owner', 'admin'])
+        .execute();
+      recipients.push(
+        ...administrators.map((row: { user_id: string }) => ({
+          userId: row.user_id,
+        })),
+      );
+    }
+
+    const scorekeepers = await (this.db as any)
+      .selectFrom('access.game_scorekeeper_assignments as assignments')
+      .innerJoin(
+        'admin.organization_members as members',
+        'members.id',
+        'assignments.organization_member_id',
+      )
+      .select(['members.user_id'])
+      .where('assignments.game_id', '=', game.id)
+      .where('members.status', '=', 'active')
+      .execute();
+    if (eventType !== 'scoring.game_finalized') {
+      recipients.push(
+        ...scorekeepers.map((row: { user_id: string }) => ({
+          userId: row.user_id,
+        })),
+      );
+    }
+
+    await this.notificationWriter.create({
+      actorUserId: access.userId,
+      context: {
+        gameId: game.id,
+        gameLabel: `${game.home_team_name} vs ${game.away_team_name}`,
+        organizationName: organization.name,
+        organizationSlug: organization.slug,
+        resultLabel,
+      },
+      dedupeKey: `game:${game.id}:${eventType}:${new Date().toISOString()}`,
+      eventType,
+      organizationId,
+      recipients,
+      resourceId: game.id,
+      resourceType: 'game',
+    });
   }
 
   private async audit(
