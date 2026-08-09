@@ -20,6 +20,7 @@ describe('notifications migration', () => {
     expect(migrationSource).toContain('notifications_category_check');
     expect(migrationSource).toContain('notifications_priority_check');
     expect(migrationSource).toContain('notifications_recipient_check');
+    expect(migrationSource).toContain('notifications_recipient_identity_check');
     expect(migrationSource).toContain('notifications_dedupe_key_unique');
   });
 

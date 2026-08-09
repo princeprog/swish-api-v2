@@ -49,6 +49,18 @@ export async function up(db: Kysely<any>): Promise<void> {
       sql`recipient_user_id is not null or recipient_email is not null`,
     )
     .addCheckConstraint(
+      'notifications_recipient_identity_check',
+      sql`recipient_email is null or lower(recipient_email) = recipient_email
+        and (recipient_user_id is not null
+          or event_type in (
+            'access.invitation_received',
+            'access.invitation_resent',
+            'access.invitation_expiring',
+            'access.invitation_scope_changed',
+            'access.invitation_revoked'
+          ))`,
+    )
+    .addCheckConstraint(
       'notifications_category_check',
       sql`category in ('access', 'roster', 'schedule', 'scoring', 'competition')`,
     )
