@@ -307,6 +307,11 @@ describe('ComplianceService', () => {
 
   it('returns the latest saved response so managers can resume a draft', async () => {
     const repository = createRepository({
+      findSettingsByDivision: jest.fn().mockResolvedValue({
+        ...settings,
+        published_at: new Date('2026-08-11T00:00:00.000Z'),
+        status: 'published',
+      }),
       findProjection: jest.fn().mockResolvedValue({ status: 'pending' }),
       listFilesForSubmission: jest.fn().mockResolvedValue([]),
       listTeamSubmissions: jest.fn().mockResolvedValue([
@@ -332,6 +337,23 @@ describe('ComplianceService', () => {
     expect(result.requirements[0]).toEqual(
       expect.objectContaining({ response: 'Coach Maria Santos' }),
     );
+  });
+
+  it('does not expose unpublished requirements to team managers', async () => {
+    const repository = createRepository({
+      findProjection: jest.fn().mockResolvedValue(null),
+      listFilesForSubmission: jest.fn().mockResolvedValue([]),
+    });
+    const service = new ComplianceService(repository as never);
+
+    await expect(
+      service.findTeamCompliance('org-1', 'team-1', managerAccess),
+    ).resolves.toEqual({
+      clearance: { status: 'not_required' },
+      requirements: [],
+      settings: null,
+      team: expect.objectContaining({ team_id: 'team-1' }),
+    });
   });
 
   it('blocks game start until both teams are cleared after publication', async () => {

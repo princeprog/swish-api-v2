@@ -401,7 +401,7 @@ export class ComplianceService {
     const settings = await this.repository.findSettingsByDivision(
       team.division_id,
     );
-    if (!settings) {
+    if (!settings || settings.status !== 'published') {
       return {
         clearance: { status: 'not_required' },
         requirements: [],
