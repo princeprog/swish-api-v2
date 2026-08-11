@@ -73,29 +73,6 @@ export interface AccessTeamManagerAssignments {
   team_id: string;
 }
 
-export interface NotificationNotifications {
-  action_expires_at: Timestamp | null;
-  action_url: string | null;
-  actor_user_id: string | null;
-  body: string;
-  category: string;
-  created_at: Generated<Timestamp>;
-  dedupe_key: string;
-  event_type: string;
-  id: Generated<string>;
-  metadata: Generated<Json>;
-  organization_id: string | null;
-  priority: string;
-  read_at: Timestamp | null;
-  recipient_email: string | null;
-  recipient_user_id: string | null;
-  resource_id: string | null;
-  resource_type: string | null;
-  retain_until: Timestamp;
-  title: string;
-  updated_at: Generated<Timestamp>;
-}
-
 export interface AdminDivisionRosterSettings {
   created_at: Generated<Timestamp>;
   division_id: string;
@@ -346,6 +323,138 @@ export interface CompetitionGames {
   venue_id: string;
 }
 
+export interface ComplianceDivisionSettings {
+  archived_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  created_by_member_id: string;
+  division_id: string;
+  id: Generated<string>;
+  published_at: Timestamp | null;
+  status: Generated<string>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface ComplianceFileScanJobs {
+  attempt_count: Generated<number>;
+  completed_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  next_attempt_at: Timestamp | null;
+  provider: string;
+  result: Generated<Json>;
+  started_at: Timestamp | null;
+  status: Generated<string>;
+  submission_file_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface ComplianceRequirements {
+  archived_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  division_settings_id: string;
+  id: Generated<string>;
+  instructions: string | null;
+  is_required: Generated<boolean>;
+  max_file_count: Generated<number>;
+  response_type: string;
+  sort_order: number;
+  title: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface ComplianceSubmissionAttempts {
+  attempt_number: number;
+  id: Generated<string>;
+  response_type: string;
+  response_value: Json;
+  submission_id: string;
+  submitted_at: Generated<Timestamp>;
+  submitted_by_member_id: string;
+}
+
+export interface ComplianceSubmissionEvents {
+  actor_member_id: string | null;
+  created_at: Generated<Timestamp>;
+  event_type: string;
+  id: Generated<string>;
+  metadata: Generated<Json>;
+  submission_attempt_id: string | null;
+  submission_id: string;
+}
+
+export interface ComplianceSubmissionFiles {
+  byte_size: number;
+  created_at: Generated<Timestamp>;
+  file_order: number;
+  id: Generated<string>;
+  mime_type: string;
+  original_filename: string;
+  rejection_reason: string | null;
+  sha256: string;
+  storage_key: string;
+  storage_provider: string;
+  submission_attempt_id: string;
+  updated_at: Generated<Timestamp>;
+  uploaded_at: Timestamp | null;
+  verification_status: Generated<string>;
+  verified_at: Timestamp | null;
+}
+
+export interface ComplianceTeamClearanceProjections {
+  blocking_requirement_count: Generated<number>;
+  created_at: Generated<Timestamp>;
+  division_settings_id: string;
+  id: Generated<string>;
+  last_evaluated_at: Generated<Timestamp>;
+  pending_requirement_count: Generated<number>;
+  status: Generated<string>;
+  team_id: string;
+  updated_at: Generated<Timestamp>;
+  version: Generated<number>;
+}
+
+export interface ComplianceTeamSubmissions {
+  created_at: Generated<Timestamp>;
+  current_attempt_id: string | null;
+  id: Generated<string>;
+  requirement_id: string;
+  review_note: string | null;
+  reviewed_at: Timestamp | null;
+  reviewed_by_member_id: string | null;
+  submitted_at: Timestamp | null;
+  submitted_by_member_id: string | null;
+  team_id: string;
+  updated_at: Generated<Timestamp>;
+  waived_at: Timestamp | null;
+  waived_by_member_id: string | null;
+  waiver_expires_at: Timestamp | null;
+  waiver_reason: string | null;
+  workflow_status: Generated<string>;
+}
+
+export interface NotificationNotifications {
+  action_expires_at: Timestamp | null;
+  action_url: string | null;
+  actor_user_id: string | null;
+  body: string;
+  category: string;
+  created_at: Generated<Timestamp>;
+  dedupe_key: string;
+  event_type: string;
+  id: Generated<string>;
+  metadata: Generated<Json>;
+  organization_id: string | null;
+  priority: string;
+  read_at: Timestamp | null;
+  recipient_email: string | null;
+  recipient_user_id: string | null;
+  resource_id: string | null;
+  resource_type: string | null;
+  retain_until: Generated<Timestamp>;
+  title: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface PublicPortalLeagueShells {
   division_id: string | null;
   division_name: string | null;
@@ -468,6 +577,14 @@ export interface DB {
   "auth.users": AuthUsers;
   "competition.finalized_game_results": CompetitionFinalizedGameResults;
   "competition.games": CompetitionGames;
+  "compliance.division_settings": ComplianceDivisionSettings;
+  "compliance.file_scan_jobs": ComplianceFileScanJobs;
+  "compliance.requirements": ComplianceRequirements;
+  "compliance.submission_attempts": ComplianceSubmissionAttempts;
+  "compliance.submission_events": ComplianceSubmissionEvents;
+  "compliance.submission_files": ComplianceSubmissionFiles;
+  "compliance.team_clearance_projections": ComplianceTeamClearanceProjections;
+  "compliance.team_submissions": ComplianceTeamSubmissions;
   "notification.notifications": NotificationNotifications;
   "public_portal.league_shells": PublicPortalLeagueShells;
   "public_portal.organizations": PublicPortalOrganizations;
