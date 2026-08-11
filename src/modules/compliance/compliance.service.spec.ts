@@ -252,6 +252,27 @@ describe('ComplianceService', () => {
     ).resolves.toEqual({ attempts, events });
   });
 
+  it('forwards review inbox scope, search, and pagination to the repository', async () => {
+    const repository = createRepository({
+      listReviewQueue: jest.fn().mockResolvedValue({ data: [], total: 0 }),
+    });
+    const service = new ComplianceService(repository as never);
+
+    await service.findReviewQueue('org-1', 'division-1', reviewerAccess, {
+      page: 3,
+      pageSize: 20,
+      scope: 'needs_review',
+      search: '  Eagles  ',
+    });
+
+    expect(repository.listReviewQueue).toHaveBeenCalledWith(
+      'division-1',
+      ['submitted', 'under_review'],
+      'Eagles',
+      { limit: 20, offset: 40, page: 3, pageSize: 20 },
+    );
+  });
+
   it('allows a reviewer to request changes and records the reason', async () => {
     const repository = createRepository({
       ensureSubmission: jest.fn().mockResolvedValue({

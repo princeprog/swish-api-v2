@@ -3,6 +3,7 @@ import type { OrganizationAccessContext } from '../../common/auth/roles';
 import type { NormalizedPagination } from '../../common/pagination/pagination.types';
 import { DATABASE, type Database } from '../../database/database.tokens';
 import type { CreateRequirementDto } from './dto/create-requirement.dto';
+import type { ComplianceWorkflowStatus } from './compliance-policy';
 
 @Injectable()
 export class ComplianceRepository {
@@ -547,7 +548,8 @@ export class ComplianceRepository {
 
   async listReviewQueue(
     divisionId: string,
-    status: string | undefined,
+    statuses: readonly ComplianceWorkflowStatus[] | undefined,
+    search: string | undefined,
     pagination: NormalizedPagination,
   ) {
     let base = this.db
@@ -561,7 +563,17 @@ export class ComplianceRepository {
       .where('teams.division_id', '=', divisionId)
       .where('teams.status', '=', 'active')
       .where('requirements.archived_at', 'is', null);
-    if (status) base = base.where('submissions.workflow_status', '=', status);
+    if (statuses?.length) {
+      base = base.where('submissions.workflow_status', 'in', statuses);
+    }
+    if (search) {
+      base = base.where((eb) =>
+        eb.or([
+          eb('teams.name', 'ilike', `%${search}%`),
+          eb('requirements.title', 'ilike', `%${search}%`),
+        ]),
+      );
+    }
     const count = await base
       .select((eb) => eb.fn.countAll().as('count'))
       .executeTakeFirstOrThrow();

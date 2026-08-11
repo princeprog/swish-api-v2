@@ -10,7 +10,6 @@ import {
   ORGANIZATION_PERMISSIONS,
   type OrganizationAccessContext,
 } from '../../common/auth/roles';
-import type { PaginationQueryDto } from '../../common/pagination/pagination.dto';
 import {
   createPaginatedResponse,
   normalizePagination,
@@ -28,12 +27,15 @@ import {
   calculateTeamClearance,
   ensureReviewerActionAllowed,
   ensureSubmissionCanBeChanged,
+  reviewQueueStatuses,
   validateComplianceResponse,
+  type ComplianceReviewQueueScope,
   type ComplianceResponseType,
   type ComplianceSettingsStatus,
   type ComplianceWorkflowStatus,
 } from './compliance-policy';
 import { ComplianceRepository } from './compliance.repository';
+import type { ComplianceReviewQueryDto } from './dto/compliance-review-query.dto';
 import {
   COMPLIANCE_STORAGE,
   PlaceholderComplianceStorage,
@@ -378,14 +380,22 @@ export class ComplianceService {
     organizationId: string,
     divisionId: string,
     access: OrganizationAccessContext,
-    query: PaginationQueryDto & { status?: string },
+    query: ComplianceReviewQueryDto,
   ) {
     this.assertCanReview(access);
     await this.assertDivision(organizationId, divisionId);
     const pagination = normalizePagination(query);
+    const scope = query.scope as ComplianceReviewQueueScope | undefined;
+    const statuses = scope
+      ? reviewQueueStatuses(scope)
+      : query.status
+        ? [query.status as ComplianceWorkflowStatus]
+        : undefined;
+    const search = query.search?.trim() || undefined;
     const result = await this.repository.listReviewQueue(
       divisionId,
-      query.status,
+      statuses,
+      search,
       pagination,
     );
     return createPaginatedResponse(result.data, result.total, pagination);

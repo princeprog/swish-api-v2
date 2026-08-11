@@ -18,6 +18,10 @@ export type ComplianceWorkflowStatus =
   | 'rejected'
   | 'waived'
   | 'reopened';
+export type ComplianceReviewQueueScope =
+  | 'needs_review'
+  | 'all'
+  | 'completed';
 export type ComplianceReviewerAction =
   | 'approve'
   | 'request_changes'
@@ -40,6 +44,18 @@ export type TeamClearance = {
   pendingRequirementCount: number;
   status: 'not_required' | 'pending' | 'blocked' | 'cleared';
 };
+
+export function reviewQueueStatuses(
+  scope: ComplianceReviewQueueScope,
+): ComplianceWorkflowStatus[] | undefined {
+  if (scope === 'needs_review') {
+    return ['submitted', 'under_review'];
+  }
+  if (scope === 'completed') {
+    return ['approved', 'waived'];
+  }
+  return undefined;
+}
 
 export function calculateTeamClearance(input: ClearanceInput): TeamClearance {
   if (input.settingsStatus !== 'published') {
