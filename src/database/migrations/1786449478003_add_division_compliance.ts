@@ -13,6 +13,8 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn('division_id', 'uuid', (column) =>
       column.notNull().references('admin.divisions.id').onDelete('cascade'),
     )
+    // Draft settings do not activate compliance. Runtime enforcement must only
+    // consider settings after their explicit transition to published.
     .addColumn('status', 'varchar(24)', (column) =>
       column.notNull().defaultTo('draft'),
     )
@@ -402,9 +404,10 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn('updated_at', 'timestamptz', (column) =>
       column.notNull().defaultTo(db.fn('now')),
     )
-    .addUniqueConstraint('compliance_team_clearance_projections_team_unique', [
-      'team_id',
-    ])
+    .addUniqueConstraint(
+      'compliance_team_clearance_projections_team_settings_unique',
+      ['team_id', 'division_settings_id'],
+    )
     .addCheckConstraint(
       'compliance_team_clearance_projections_status_check',
       sql`status in ('not_required', 'pending', 'blocked', 'cleared')`,
@@ -416,9 +419,11 @@ export async function up(db: Kysely<any>): Promise<void> {
     .execute();
 
   await db.schema
-    .createIndex('compliance_team_clearance_projections_settings_status_index')
+    .createIndex(
+      'compliance_team_clearance_projections_team_settings_status_index',
+    )
     .on('compliance.team_clearance_projections')
-    .columns(['division_settings_id', 'status'])
+    .columns(['team_id', 'division_settings_id', 'status'])
     .execute();
 
   await sql`
@@ -452,6 +457,10 @@ export async function down(db: Kysely<any>): Promise<void> {
     .ifExists()
     .execute();
   await db.schema.dropTable('compliance.submission_files').ifExists().execute();
+  await db.schema
+    .alterTable('compliance.team_submissions')
+    .dropConstraint('compliance_team_submissions_current_attempt_fk')
+    .execute();
   await db.schema
     .dropTable('compliance.submission_attempts')
     .ifExists()

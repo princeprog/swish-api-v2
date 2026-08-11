@@ -23,7 +23,17 @@ describe('division compliance migration', () => {
       'compliance_team_submissions_team_requirement_unique',
     );
     expect(migrationSource).toContain(
-      'compliance_team_clearance_projections_team_unique',
+      'compliance_team_clearance_projections_team_settings_unique',
+    );
+    expect(migrationSource).toContain(
+      'compliance_team_clearance_projections_team_settings_status_index',
+    );
+    expect(migrationSource).toContain(
+      "columns(['team_id', 'division_settings_id', 'status'])",
+    );
+    expect(migrationSource).toContain("defaultTo('draft')");
+    expect(migrationSource).toContain(
+      "status = 'draft' and published_at is null and archived_at is null",
     );
   });
 
@@ -64,6 +74,13 @@ describe('division compliance migration', () => {
       downSource.indexOf("dropTable('compliance.file_scan_jobs')"),
     ).toBeLessThan(
       downSource.indexOf("dropTable('compliance.submission_files')"),
+    );
+    expect(
+      downSource.indexOf(
+        "dropConstraint('compliance_team_submissions_current_attempt_fk')",
+      ),
+    ).toBeLessThan(
+      downSource.indexOf("dropTable('compliance.submission_attempts')"),
     );
     expect(
       downSource.indexOf("dropTable('compliance.submission_attempts')"),
