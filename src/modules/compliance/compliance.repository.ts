@@ -390,6 +390,22 @@ export class ComplianceRepository {
       .execute();
   }
 
+  listFilesForSubmission(submissionId: string, attemptId: string | null) {
+    let query = this.db
+      .selectFrom('compliance.submission_files')
+      .select(['id', 'original_filename', 'verification_status'])
+      .where('submission_id', '=', submissionId);
+    if (attemptId) {
+      query = query.where((eb) =>
+        eb.or([
+          eb('submission_attempt_id', '=', attemptId),
+          eb('submission_attempt_id', 'is', null),
+        ]),
+      );
+    }
+    return query.orderBy('file_order asc').execute();
+  }
+
   upsertProjection(
     teamId: string,
     settingsId: string,

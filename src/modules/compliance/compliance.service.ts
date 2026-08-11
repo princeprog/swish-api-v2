@@ -415,12 +415,24 @@ export class ComplianceService {
         await this.recalculateSettings(trx, settings);
       });
     }
+    const requirements = await this.repository.listTeamSubmissions(
+      teamId,
+      settings.id,
+    );
+    const requirementsWithFiles = await Promise.all(
+      requirements.map(async (requirement) => ({
+        ...requirement,
+        files: requirement.submission_id
+          ? await this.repository.listFilesForSubmission(
+              requirement.submission_id,
+              requirement.current_attempt_id,
+            )
+          : [],
+      })),
+    );
     return {
       clearance: await this.repository.findProjection(teamId, settings.id),
-      requirements: await this.repository.listTeamSubmissions(
-        teamId,
-        settings.id,
-      ),
+      requirements: requirementsWithFiles,
       settings,
       team,
     };
