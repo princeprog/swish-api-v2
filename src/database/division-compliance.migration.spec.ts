@@ -1,11 +1,5 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import 'dotenv/config';
-import { Pool } from 'pg';
-
-const hasDatabaseConfig = Boolean(
-  process.env.DB_HOST && process.env.DB_USER && process.env.DB_NAME,
-);
 
 describe('division compliance migration', () => {
   const migrationSource = readFileSync(
@@ -71,6 +65,27 @@ describe('division compliance migration', () => {
     expect(migrationSource).toContain('image/png');
   });
 
+  it('keeps compliance opt-in without seeding submissions or clearance projections', () => {
+    const upStart = migrationSource.indexOf('export async function up');
+    const downStart = migrationSource.indexOf('export async function down');
+
+    expect(upStart).toBeGreaterThanOrEqual(0);
+    expect(downStart).toBeGreaterThan(upStart);
+
+    const upSource = migrationSource.slice(upStart, downStart);
+
+    expect(upSource).toContain("defaultTo('draft')");
+    expect(upSource).toContain(
+      "status = 'draft' and published_at is null and archived_at is null",
+    );
+    expect(upSource).not.toMatch(
+      /\.insertInto\(\s*['"]compliance\.(team_submissions|team_clearance_projections)['"]\s*\)/,
+    );
+    expect(upSource).not.toMatch(
+      /\binsert\s+into\s+compliance\.(team_submissions|team_clearance_projections)\b/i,
+    );
+  });
+
   it('creates event and scan-job history, then drops dependencies in reverse order', () => {
     expect(migrationSource).toContain(
       "createTable('compliance.submission_events')",
@@ -106,50 +121,5 @@ describe('division compliance migration', () => {
     );
     expect(submissionAttemptsDropIndex).toBeLessThan(teamSubmissionsDropIndex);
     expect(downSource).toContain("dropSchema('compliance')");
-  });
-});
-
-const describeWithDatabase = hasDatabaseConfig ? describe : describe.skip;
-
-describeWithDatabase('division compliance migration database checks', () => {
-  let pool: Pool;
-
-  beforeAll(() => {
-    pool = new Pool({
-      host: process.env.DB_HOST,
-      port: Number(process.env.DB_PORT),
-      user: process.env.DB_USER,
-      password: process.env.DB_PASSWORD,
-      database: process.env.DB_NAME,
-    });
-  });
-
-  afterAll(async () => {
-    await pool?.end();
-  });
-
-  it('keeps compliance opt-in until Task 2 applies published-settings enforcement', async () => {
-    const [defaultResult, submissionsResult, projectionsResult] =
-      await Promise.all([
-        pool.query<{ column_default: string | null }>(`
-          select column_default
-          from information_schema.columns
-          where table_schema = 'compliance'
-            and table_name = 'division_settings'
-            and column_name = 'status'
-        `),
-        pool.query<{ count: string }>(
-          'select count(*)::text as count from compliance.team_submissions',
-        ),
-        pool.query<{ count: string }>(
-          'select count(*)::text as count from compliance.team_clearance_projections',
-        ),
-      ]);
-
-    expect(defaultResult.rows).toEqual([
-      expect.objectContaining({ column_default: "'draft'::character varying" }),
-    ]);
-    expect(submissionsResult.rows[0]?.count).toBe('0');
-    expect(projectionsResult.rows[0]?.count).toBe('0');
   });
 });
