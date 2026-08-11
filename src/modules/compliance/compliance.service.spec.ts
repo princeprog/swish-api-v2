@@ -305,6 +305,35 @@ describe('ComplianceService', () => {
     ).rejects.toThrow(NotFoundException);
   });
 
+  it('returns the latest saved response so managers can resume a draft', async () => {
+    const repository = createRepository({
+      findProjection: jest.fn().mockResolvedValue({ status: 'pending' }),
+      listFilesForSubmission: jest.fn().mockResolvedValue([]),
+      listTeamSubmissions: jest.fn().mockResolvedValue([
+        {
+          ...required,
+          current_attempt_id: null,
+          requirement_id: required.id,
+          submission_id: 'submission-1',
+          review_note: null,
+          waiver_expires_at: null,
+          workflow_status: 'draft',
+        },
+      ]),
+    });
+    const service = new ComplianceService(repository as never);
+
+    const result = await service.findTeamCompliance(
+      'org-1',
+      'team-1',
+      managerAccess,
+    );
+
+    expect(result.requirements[0]).toEqual(
+      expect.objectContaining({ response: 'Coach Maria Santos' }),
+    );
+  });
+
   it('blocks game start until both teams are cleared after publication', async () => {
     const repository = createRepository({
       findSettingsByDivision: jest.fn().mockResolvedValue({

@@ -420,15 +420,33 @@ export class ComplianceService {
       settings.id,
     );
     const requirementsWithFiles = await Promise.all(
-      requirements.map(async (requirement) => ({
-        ...requirement,
-        files: requirement.submission_id
-          ? await this.repository.listFilesForSubmission(
-              requirement.submission_id,
-              requirement.current_attempt_id,
-            )
-          : [],
-      })),
+      requirements.map(async (requirement) => {
+        const response = requirement.submission_id
+          ? requirement.current_attempt_id
+            ? (
+                await this.repository.listAttempts(requirement.submission_id)
+              ).find(
+                (attempt) => attempt.id === requirement.current_attempt_id,
+              )?.response_value ?? null
+            : readDraftResponse(
+                (
+                  await this.repository.findLatestDraftEvent(
+                    requirement.submission_id,
+                  )
+                )?.metadata,
+              )
+          : null;
+        return {
+          ...requirement,
+          files: requirement.submission_id
+            ? await this.repository.listFilesForSubmission(
+                requirement.submission_id,
+                requirement.current_attempt_id,
+              )
+            : [],
+          response,
+        };
+      }),
     );
     return {
       clearance: await this.repository.findProjection(teamId, settings.id),
