@@ -1,4 +1,10 @@
-import { IsISO8601, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsISO8601,
+  IsIn,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 export class UpdateComplianceSettingsDto {
   @IsOptional()

@@ -16,6 +16,7 @@ import {
   normalizePagination,
 } from '../../common/pagination/pagination.types';
 import type { CreateRequirementDto } from './dto/create-requirement.dto';
+import type { PrepareComplianceUploadDto } from './dto/prepare-compliance-upload.dto';
 import type { ReviewReasonDto } from './dto/review-reason.dto';
 import type { SaveComplianceDraftDto } from './dto/save-compliance-draft.dto';
 import type { UpdateComplianceSettingsDto } from './dto/update-compliance-settings.dto';
@@ -403,7 +404,12 @@ export class ComplianceService {
       responseType: context.requirement.response_type as ComplianceResponseType,
     });
     if (context.requirement.response_type === 'file') {
-      await this.storage.assertFileReferences(dto.response);
+      await this.storage.assertFileReferences(dto.response, {
+        organizationId,
+        requirementId,
+        submissionId: submission.id,
+        teamId,
+      });
     }
     await this.repository.addEvent({
       actor_member_id: access.membershipId,
@@ -446,10 +452,15 @@ export class ComplianceService {
       responseType: context.requirement.response_type as ComplianceResponseType,
     });
     if (context.requirement.response_type === 'file') {
-      await this.storage.assertFileReferences(response);
+      await this.storage.assertFileReferences(response, {
+        organizationId,
+        requirementId,
+        submissionId: submission.id,
+        teamId,
+      });
     }
 
-    return this.repository.withTransaction(async (trx) => {
+    const submitted = await this.repository.withTransaction(async (trx) => {
       const attemptNumber = (await trx.countAttempts(submission.id)) + 1;
       const attempt = await trx.createAttempt({
         attempt_number: attemptNumber,
@@ -489,6 +500,111 @@ export class ComplianceService {
       );
       return submitted;
     });
+
+    if (submitted.current_attempt_id) {
+      await this.storage.attachFilesToAttempt(
+        response,
+        submission.id,
+        submitted.current_attempt_id,
+      );
+    }
+    return submitted;
+  }
+
+  async prepareUpload(
+    organizationId: string,
+    teamId: string,
+    requirementId: string,
+    access: OrganizationAccessContext,
+    dto: PrepareComplianceUploadDto,
+  ) {
+    await this.assertCanSubmitTeam(access, teamId);
+    const context = await this.teamRequirementContext(
+      organizationId,
+      teamId,
+      requirementId,
+    );
+    if (context.settings.status !== 'published') {
+      throw new BadRequestException(
+        'Evidence uploads open after the league organizer publishes the requirements.',
+      );
+    }
+    const submission = await this.repository.ensureSubmission(
+      teamId,
+      requirementId,
+    );
+    ensureSubmissionCanBeChanged(
+      submission.workflow_status as ComplianceWorkflowStatus,
+    );
+    return this.storage.prepareUpload({
+      ...dto,
+      organizationId,
+      requirementId,
+      submissionId: submission.id,
+      teamId,
+    });
+  }
+
+  async completeUpload(
+    organizationId: string,
+    teamId: string,
+    requirementId: string,
+    access: OrganizationAccessContext,
+    fileId: string,
+  ) {
+    await this.assertCanSubmitTeam(access, teamId);
+    await this.teamRequirementContext(organizationId, teamId, requirementId);
+    const submission = await this.repository.ensureSubmission(
+      teamId,
+      requirementId,
+    );
+    ensureSubmissionCanBeChanged(
+      submission.workflow_status as ComplianceWorkflowStatus,
+    );
+    return this.storage.completeUpload({
+      fileId,
+      organizationId,
+      requirementId,
+      submissionId: submission.id,
+      teamId,
+    });
+  }
+
+  async deleteUpload(
+    organizationId: string,
+    teamId: string,
+    requirementId: string,
+    access: OrganizationAccessContext,
+    fileId: string,
+  ) {
+    await this.assertCanSubmitTeam(access, teamId);
+    await this.teamRequirementContext(organizationId, teamId, requirementId);
+    const submission = await this.repository.ensureSubmission(
+      teamId,
+      requirementId,
+    );
+    ensureSubmissionCanBeChanged(
+      submission.workflow_status as ComplianceWorkflowStatus,
+    );
+    await this.storage.deleteUpload({
+      fileId,
+      organizationId,
+      requirementId,
+      submissionId: submission.id,
+      teamId,
+    });
+    return { deleted: true };
+  }
+
+  async createDownloadUrl(
+    organizationId: string,
+    teamId: string,
+    fileId: string,
+    access: OrganizationAccessContext,
+  ) {
+    await this.assertCanReadTeam(access, teamId);
+    await this.teamContext(organizationId, teamId);
+    return this.storage.createDownloadUrl(fileId, { organizationId, teamId });
   }
 
   approve(

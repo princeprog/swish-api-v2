@@ -171,6 +171,124 @@ export class ComplianceRepository {
       .executeTakeFirstOrThrow();
   }
 
+  createPendingFile(values: Record<string, unknown>) {
+    return this.db
+      .insertInto('compliance.submission_files')
+      .values(values as never)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+  }
+
+  findFile(fileId: string) {
+    return this.db
+      .selectFrom('compliance.submission_files as files')
+      .innerJoin(
+        'compliance.team_submissions as submissions',
+        'submissions.id',
+        'files.submission_id',
+      )
+      .innerJoin(
+        'compliance.requirements as requirements',
+        'requirements.id',
+        'submissions.requirement_id',
+      )
+      .innerJoin('admin.teams as teams', 'teams.id', 'submissions.team_id')
+      .innerJoin(
+        'admin.divisions as divisions',
+        'divisions.id',
+        'teams.division_id',
+      )
+      .innerJoin(
+        'admin.league_seasons as seasons',
+        'seasons.id',
+        'divisions.league_season_id',
+      )
+      .select([
+        'files.id',
+        'files.file_order',
+        'files.storage_provider',
+        'files.storage_key',
+        'files.original_filename',
+        'files.mime_type',
+        'files.byte_size',
+        'files.sha256',
+        'files.verification_status',
+        'files.uploaded_at',
+        'files.verified_at',
+        'files.rejection_reason',
+        'files.submission_id',
+        'files.submission_attempt_id',
+        'submissions.team_id',
+        'submissions.requirement_id',
+        'requirements.division_settings_id',
+        'teams.division_id',
+        'seasons.organization_id',
+      ])
+      .where('files.id', '=', fileId)
+      .executeTakeFirst();
+  }
+
+  listFiles(fileIds: string[], submissionId: string) {
+    if (fileIds.length === 0) return Promise.resolve([]);
+    return this.db
+      .selectFrom('compliance.submission_files')
+      .selectAll()
+      .where('id', 'in', fileIds)
+      .where('submission_id', '=', submissionId)
+      .execute();
+  }
+
+  updateFile(id: string, values: Record<string, unknown>) {
+    return this.db
+      .updateTable('compliance.submission_files')
+      .set(values as never)
+      .where('id', '=', id)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+  }
+
+  attachFilesToAttempt(
+    fileIds: string[],
+    submissionId: string,
+    attemptId: string,
+  ) {
+    if (fileIds.length === 0) return Promise.resolve();
+    return this.db
+      .updateTable('compliance.submission_files')
+      .set({ submission_attempt_id: attemptId, updated_at: new Date() })
+      .where('id', 'in', fileIds)
+      .where('submission_id', '=', submissionId)
+      .where('verification_status', '=', 'verified')
+      .execute()
+      .then(() => undefined);
+  }
+
+  createFileScanJob(
+    fileId: string,
+    provider: string,
+    result: Record<string, unknown>,
+  ) {
+    return this.db
+      .insertInto('compliance.file_scan_jobs')
+      .values({
+        completed_at: new Date(),
+        provider,
+        result: result as never,
+        status: 'passed',
+        submission_file_id: fileId,
+      })
+      .onConflict((oc) => oc.doNothing())
+      .execute();
+  }
+
+  deleteFile(id: string, submissionId: string) {
+    return this.db
+      .deleteFrom('compliance.submission_files')
+      .where('id', '=', id)
+      .where('submission_id', '=', submissionId)
+      .execute();
+  }
+
   countAttempts(submissionId: string) {
     return this.db
       .selectFrom('compliance.submission_attempts')

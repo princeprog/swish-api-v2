@@ -141,10 +141,15 @@ describe('ComplianceService', () => {
     const repository = createRepository();
     const service = new ComplianceService(repository as never);
 
-    await service.updateDivisionSettings('org-1', 'division-1', reviewerAccess, {
-      instructions: 'Submit clear copies of each required document.',
-      submissionDeadlineAt: '2026-09-01T08:00:00.000Z',
-    });
+    await service.updateDivisionSettings(
+      'org-1',
+      'division-1',
+      reviewerAccess,
+      {
+        instructions: 'Submit clear copies of each required document.',
+        submissionDeadlineAt: '2026-09-01T08:00:00.000Z',
+      },
+    );
 
     expect(repository.updateSettings).toHaveBeenCalledWith(
       'settings-1',

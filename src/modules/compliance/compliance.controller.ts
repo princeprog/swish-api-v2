@@ -23,6 +23,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ComplianceService } from './compliance.service';
 import { ComplianceReviewQueryDto } from './dto/compliance-review-query.dto';
 import { CreateRequirementDto } from './dto/create-requirement.dto';
+import { PrepareComplianceUploadDto } from './dto/prepare-compliance-upload.dto';
 import { ReviewReasonDto } from './dto/review-reason.dto';
 import { SaveComplianceDraftDto } from './dto/save-compliance-draft.dto';
 import { UpdateComplianceSettingsDto } from './dto/update-compliance-settings.dto';
@@ -225,6 +226,89 @@ export class ComplianceController {
       organizationId,
       teamId,
       requirementId,
+      access,
+    );
+  }
+
+  @Post('teams/:teamId/compliance/requirements/:requirementId/uploads/prepare')
+  @RequireOrganizationPermissions(
+    ORGANIZATION_PERMISSIONS.COMPLIANCE_SUBMISSIONS_SUBMIT_ASSIGNED,
+  )
+  prepareUpload(
+    @Param('organizationId') organizationId: string,
+    @Param('teamId') teamId: string,
+    @Param('requirementId') requirementId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+    @Body() dto: PrepareComplianceUploadDto,
+  ) {
+    return this.complianceService.prepareUpload(
+      organizationId,
+      teamId,
+      requirementId,
+      access,
+      dto,
+    );
+  }
+
+  @Post(
+    'teams/:teamId/compliance/requirements/:requirementId/uploads/:fileId/complete',
+  )
+  @RequireOrganizationPermissions(
+    ORGANIZATION_PERMISSIONS.COMPLIANCE_SUBMISSIONS_SUBMIT_ASSIGNED,
+  )
+  completeUpload(
+    @Param('organizationId') organizationId: string,
+    @Param('teamId') teamId: string,
+    @Param('requirementId') requirementId: string,
+    @Param('fileId') fileId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+  ) {
+    return this.complianceService.completeUpload(
+      organizationId,
+      teamId,
+      requirementId,
+      access,
+      fileId,
+    );
+  }
+
+  @Delete(
+    'teams/:teamId/compliance/requirements/:requirementId/uploads/:fileId',
+  )
+  @RequireOrganizationPermissions(
+    ORGANIZATION_PERMISSIONS.COMPLIANCE_SUBMISSIONS_SUBMIT_ASSIGNED,
+  )
+  deleteUpload(
+    @Param('organizationId') organizationId: string,
+    @Param('teamId') teamId: string,
+    @Param('requirementId') requirementId: string,
+    @Param('fileId') fileId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+  ) {
+    return this.complianceService.deleteUpload(
+      organizationId,
+      teamId,
+      requirementId,
+      access,
+      fileId,
+    );
+  }
+
+  @Post('teams/:teamId/compliance/files/:fileId/download-url')
+  @RequireAnyOrganizationPermissions(
+    ORGANIZATION_PERMISSIONS.COMPLIANCE_SUBMISSIONS_REVIEW,
+    ORGANIZATION_PERMISSIONS.COMPLIANCE_SUBMISSIONS_READ_ASSIGNED,
+  )
+  createDownloadUrl(
+    @Param('organizationId') organizationId: string,
+    @Param('teamId') teamId: string,
+    @Param('fileId') fileId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+  ) {
+    return this.complianceService.createDownloadUrl(
+      organizationId,
+      teamId,
+      fileId,
       access,
     );
   }
