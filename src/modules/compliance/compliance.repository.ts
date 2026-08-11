@@ -441,6 +441,94 @@ export class ComplianceRepository {
       .execute();
   }
 
+  findComplianceNotificationContext(submissionId: string) {
+    return this.db
+      .selectFrom('compliance.team_submissions as submissions')
+      .innerJoin(
+        'compliance.requirements as requirements',
+        'requirements.id',
+        'submissions.requirement_id',
+      )
+      .innerJoin('admin.teams as teams', 'teams.id', 'submissions.team_id')
+      .innerJoin(
+        'admin.divisions as divisions',
+        'divisions.id',
+        'teams.division_id',
+      )
+      .innerJoin(
+        'admin.league_seasons as seasons',
+        'seasons.id',
+        'divisions.league_season_id',
+      )
+      .innerJoin(
+        'admin.organizations as organizations',
+        'organizations.id',
+        'seasons.organization_id',
+      )
+      .select([
+        'submissions.id as submission_id',
+        'submissions.team_id',
+        'submissions.requirement_id',
+        'requirements.title as requirement_title',
+        'divisions.id as division_id',
+        'divisions.name as division_name',
+        'teams.name as team_name',
+        'seasons.organization_id',
+        'organizations.name as organization_name',
+        'organizations.slug as organization_slug',
+      ])
+      .where('submissions.id', '=', submissionId)
+      .executeTakeFirst();
+  }
+
+  findDivisionNotificationContext(divisionId: string) {
+    return this.db
+      .selectFrom('admin.divisions as divisions')
+      .innerJoin(
+        'admin.league_seasons as seasons',
+        'seasons.id',
+        'divisions.league_season_id',
+      )
+      .innerJoin(
+        'admin.organizations as organizations',
+        'organizations.id',
+        'seasons.organization_id',
+      )
+      .select([
+        'divisions.id as division_id',
+        'divisions.name as division_name',
+        'seasons.organization_id',
+        'organizations.name as organization_name',
+        'organizations.slug as organization_slug',
+      ])
+      .where('divisions.id', '=', divisionId)
+      .executeTakeFirst();
+  }
+
+  findTeamManagerRecipients(teamId: string) {
+    return this.db
+      .selectFrom('access.team_manager_assignments as assignments')
+      .innerJoin(
+        'admin.organization_members as members',
+        'members.id',
+        'assignments.organization_member_id',
+      )
+      .select('members.user_id')
+      .where('assignments.team_id', '=', teamId)
+      .where('members.status', '=', 'active')
+      .execute();
+  }
+
+  findComplianceReviewers(organizationId: string) {
+    return this.db
+      .selectFrom('admin.organization_members')
+      .select('user_id')
+      .where('organization_id', '=', organizationId)
+      .where('status', '=', 'active')
+      .where('role', 'in', ['owner', 'admin'])
+      .execute();
+  }
+
   async listReviewQueue(
     divisionId: string,
     status: string | undefined,

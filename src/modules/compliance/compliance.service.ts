@@ -22,6 +22,8 @@ import type { SaveComplianceDraftDto } from './dto/save-compliance-draft.dto';
 import type { UpdateComplianceSettingsDto } from './dto/update-compliance-settings.dto';
 import type { UpdateRequirementDto } from './dto/update-requirement.dto';
 import type { WaiveRequirementDto } from './dto/waive-requirement.dto';
+import { NotificationWriter } from '../notification/notification.writer';
+import type { NotificationEventType } from '../notification/notification.events';
 import {
   calculateTeamClearance,
   ensureReviewerActionAllowed,
@@ -49,6 +51,7 @@ export class ComplianceService {
     @Optional()
     @Inject(COMPLIANCE_STORAGE)
     private readonly storage: ComplianceStorageBoundary = new PlaceholderComplianceStorage(),
+    @Optional() private readonly notificationWriter?: NotificationWriter,
   ) {}
 
   async findDivisionSettings(
@@ -137,6 +140,18 @@ export class ComplianceService {
       );
       return changed;
     });
+    if (
+      settings.status === 'published' &&
+      updated.status === 'published' &&
+      (dto.instructions !== undefined || dto.submissionDeadlineAt !== undefined)
+    ) {
+      await this.notifyDivisionManagers(
+        divisionId,
+        access,
+        'compliance.requirements_changed',
+        `compliance:settings:${settings.id}:changed:${updated.updated_at.toISOString()}`,
+      );
+    }
     return updated;
   }
 
@@ -161,7 +176,7 @@ export class ComplianceService {
       );
     }
 
-    return this.repository.withTransaction(async (trx) => {
+    const created = await this.repository.withTransaction(async (trx) => {
       const requirement = await trx.createRequirement(settings.id, dto);
       if (settings.status === 'published') {
         await this.ensureObligations(trx, settings);
@@ -176,6 +191,15 @@ export class ComplianceService {
       );
       return requirement;
     });
+    if (settings.status === 'published') {
+      await this.notifyDivisionManagers(
+        divisionId,
+        access,
+        'compliance.requirements_changed',
+        `compliance:requirements:${settings.id}:changed`,
+      );
+    }
+    return created;
   }
 
   async updateRequirement(
@@ -197,7 +221,7 @@ export class ComplianceService {
       );
     }
 
-    return this.repository.withTransaction(async (trx) => {
+    const updated = await this.repository.withTransaction(async (trx) => {
       const requirement = await trx.updateRequirement(requirementId, {
         instructions: dto.instructions,
         is_required: dto.isRequired,
@@ -220,6 +244,15 @@ export class ComplianceService {
       );
       return requirement;
     });
+    if (context.settings.status === 'published') {
+      await this.notifyDivisionManagers(
+        divisionId,
+        access,
+        'compliance.requirements_changed',
+        `compliance:requirement:${requirementId}:changed:${updated.updated_at.toISOString()}`,
+      );
+    }
+    return updated;
   }
 
   async archiveRequirement(
@@ -237,7 +270,7 @@ export class ComplianceService {
     if (context.requirement.archived_at) {
       return context.requirement;
     }
-    return this.repository.withTransaction(async (trx) => {
+    const archived = await this.repository.withTransaction(async (trx) => {
       const requirement = await trx.updateRequirement(requirementId, {
         archived_at: new Date(),
         updated_at: new Date(),
@@ -252,6 +285,15 @@ export class ComplianceService {
       );
       return requirement;
     });
+    if (context.settings.status === 'published') {
+      await this.notifyDivisionManagers(
+        divisionId,
+        access,
+        'compliance.requirements_changed',
+        `compliance:requirement:${requirementId}:archived`,
+      );
+    }
+    return archived;
   }
 
   async publishDivision(
@@ -281,7 +323,7 @@ export class ComplianceService {
       );
     }
 
-    return this.repository.withTransaction(async (trx) => {
+    const published = await this.repository.withTransaction(async (trx) => {
       const published = await trx.updateSettings(settings.id, {
         published_at: new Date(),
         status: 'published',
@@ -298,6 +340,13 @@ export class ComplianceService {
       );
       return published;
     });
+    await this.notifyDivisionManagers(
+      divisionId,
+      access,
+      'compliance.requirements_published',
+      `compliance:settings:${settings.id}:published`,
+    );
+    return published;
   }
 
   async findDivisionOverview(
@@ -508,6 +557,12 @@ export class ComplianceService {
         submitted.current_attempt_id,
       );
     }
+    await this.notifySubmissionReviewers(
+      submission.id,
+      access,
+      'compliance.item_submitted',
+      `compliance:submission:${submission.id}:attempt:${submitted.current_attempt_id ?? 'none'}`,
+    );
     return submitted;
   }
 
@@ -666,7 +721,7 @@ export class ComplianceService {
         'Choose a waiver expiry time in the future.',
       );
     }
-    return this.repository.withTransaction(async (trx) => {
+    const updated = await this.repository.withTransaction(async (trx) => {
       const now = new Date();
       const updated = await trx.updateSubmission(submission.id, {
         review_note: null,
@@ -696,6 +751,18 @@ export class ComplianceService {
       );
       return updated;
     });
+    await this.notifySubmissionTeam(
+      submission.id,
+      access,
+      'compliance.item_waived',
+      `compliance:submission:${submission.id}:waived:${updated.updated_at.toISOString()}`,
+      {
+        deadlineLabel: expiresAt
+          ? formatComplianceDeadline(expiresAt)
+          : undefined,
+      },
+    );
+    return updated;
   }
 
   async reopen(
@@ -719,7 +786,7 @@ export class ComplianceService {
       submission.workflow_status as ComplianceWorkflowStatus,
       'reopen',
     );
-    return this.repository.withTransaction(async (trx) => {
+    const updated = await this.repository.withTransaction(async (trx) => {
       const updated = await trx.updateSubmission(submission.id, {
         review_note: dto.reason,
         reviewed_at: new Date(),
@@ -748,6 +815,14 @@ export class ComplianceService {
       );
       return updated;
     });
+    await this.notifySubmissionTeam(
+      submission.id,
+      access,
+      'compliance.item_reopened',
+      `compliance:submission:${submission.id}:reopened:${updated.updated_at.toISOString()}`,
+      { reviewNote: dto.reason },
+    );
+    return updated;
   }
 
   async findHistory(
@@ -791,7 +866,7 @@ export class ComplianceService {
       submission.workflow_status as ComplianceWorkflowStatus,
       action,
     );
-    return this.repository.withTransaction(async (trx) => {
+    const updated = await this.repository.withTransaction(async (trx) => {
       const now = new Date();
       const workflowStatus = action === 'approve' ? 'approved' : 'rejected';
       const updated = await trx.updateSubmission(submission.id, {
@@ -817,6 +892,123 @@ export class ComplianceService {
         reason ? { reason } : {},
       );
       return updated;
+    });
+    await this.notifySubmissionTeam(
+      submission.id,
+      access,
+      action === 'approve'
+        ? 'compliance.item_approved'
+        : 'compliance.changes_requested',
+      `compliance:submission:${submission.id}:${action}:${updated.updated_at.toISOString()}`,
+      reason ? { reviewNote: reason } : undefined,
+    );
+    return updated;
+  }
+
+  private async notifyDivisionManagers(
+    divisionId: string,
+    access: OrganizationAccessContext,
+    eventType: Extract<NotificationEventType, `compliance.${string}`>,
+    dedupeKey: string,
+  ) {
+    if (!this.notificationWriter) return;
+    const division =
+      await this.repository.findDivisionNotificationContext(divisionId);
+    if (!division) return;
+    const teams = await this.repository.listActiveTeams(divisionId);
+    const managerRows = await Promise.all(
+      teams.map((team) => this.repository.findTeamManagerRecipients(team.id)),
+    );
+    const recipients = Array.from(
+      new Set(managerRows.flat().map((row) => row.user_id)),
+    ).map((userId) => ({ userId }));
+    if (recipients.length === 0) return;
+    await this.notificationWriter.create({
+      actorUserId: access.userId,
+      context: {
+        divisionId,
+        divisionName: division.division_name,
+        organizationName: division.organization_name,
+        organizationSlug: division.organization_slug,
+      },
+      dedupeKey,
+      eventType,
+      organizationId: division.organization_id,
+      recipients,
+      resourceId: divisionId,
+      resourceType: 'division_compliance',
+    });
+  }
+
+  private async notifySubmissionReviewers(
+    submissionId: string,
+    access: OrganizationAccessContext,
+    eventType: Extract<NotificationEventType, `compliance.${string}`>,
+    dedupeKey: string,
+  ) {
+    if (!this.notificationWriter) return;
+    const context =
+      await this.repository.findComplianceNotificationContext(submissionId);
+    if (!context) return;
+    const reviewerRows = await this.repository.findComplianceReviewers(
+      context.organization_id,
+    );
+    const recipients = reviewerRows.map((row) => ({ userId: row.user_id }));
+    if (recipients.length === 0) return;
+    await this.notificationWriter.create({
+      actorUserId: access.userId,
+      context: {
+        divisionId: context.division_id,
+        divisionName: context.division_name,
+        organizationName: context.organization_name,
+        organizationSlug: context.organization_slug,
+        requirementTitle: context.requirement_title,
+        teamName: context.team_name,
+      },
+      dedupeKey,
+      eventType,
+      organizationId: context.organization_id,
+      recipients,
+      resourceId: submissionId,
+      resourceType: 'compliance_submission',
+    });
+  }
+
+  private async notifySubmissionTeam(
+    submissionId: string,
+    access: OrganizationAccessContext,
+    eventType: Extract<NotificationEventType, `compliance.${string}`>,
+    dedupeKey: string,
+    extra: { deadlineLabel?: string; reviewNote?: string } = {},
+  ) {
+    if (!this.notificationWriter) return;
+    const context =
+      await this.repository.findComplianceNotificationContext(submissionId);
+    if (!context) return;
+    const managerRows = await this.repository.findTeamManagerRecipients(
+      context.team_id,
+    );
+    const recipients = managerRows.map((row) => ({ userId: row.user_id }));
+    if (recipients.length === 0) return;
+    await this.notificationWriter.create({
+      actorUserId: access.userId,
+      context: {
+        divisionId: context.division_id,
+        divisionName: context.division_name,
+        organizationName: context.organization_name,
+        organizationSlug: context.organization_slug,
+        requirementTitle: context.requirement_title,
+        reviewNote: extra.reviewNote,
+        teamId: context.team_id,
+        teamName: context.team_name,
+        deadlineLabel: extra.deadlineLabel,
+      },
+      dedupeKey,
+      eventType,
+      organizationId: context.organization_id,
+      recipients,
+      resourceId: submissionId,
+      resourceType: 'compliance_submission',
     });
   }
 
@@ -995,4 +1187,12 @@ function readDraftResponse(metadata: unknown): unknown {
     return metadata.response;
   }
   return null;
+}
+
+function formatComplianceDeadline(value: Date): string {
+  return new Intl.DateTimeFormat('en-PH', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'Asia/Manila',
+  }).format(value);
 }

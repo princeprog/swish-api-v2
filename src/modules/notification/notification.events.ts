@@ -20,6 +20,16 @@ export const NOTIFICATION_EVENT_TYPES = [
   'roster.approved',
   'roster.published',
   'roster.amendment_started',
+  'compliance.requirements_published',
+  'compliance.requirements_changed',
+  'compliance.deadline_reminder',
+  'compliance.item_submitted',
+  'compliance.changes_requested',
+  'compliance.item_approved',
+  'compliance.item_waived',
+  'compliance.item_reopened',
+  'compliance.clearance_granted',
+  'compliance.clearance_revoked',
   'schedule.scorekeeper_assigned',
   'schedule.scorekeeper_unassigned',
   'schedule.game_published',
@@ -47,6 +57,7 @@ export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 export type NotificationCategory =
   | 'access'
   | 'roster'
+  | 'compliance'
   | 'schedule'
   | 'scoring'
   | 'competition';
@@ -67,6 +78,11 @@ export type NotificationRenderContext = {
   gameLabel?: string;
   resultLabel?: string;
   rosterLabel?: string;
+  divisionId?: string;
+  divisionName?: string;
+  requirementTitle?: string;
+  teamId?: string;
+  clearanceLabel?: string;
   deadlineLabel?: string;
   reviewNote?: string;
   reminderLabel?: string;
@@ -97,13 +113,27 @@ const schedulePath = (context: NotificationRenderContext) => {
   }
 
   const base = `/organizations/${encodeURIComponent(context.organizationSlug)}/schedules`;
-  return context.gameId ? `${base}?gameId=${encodeURIComponent(context.gameId)}` : base;
+  return context.gameId
+    ? `${base}?gameId=${encodeURIComponent(context.gameId)}`
+    : base;
 };
 
 const invitationPath = (context: NotificationRenderContext) =>
   context.invitationId
     ? `/invitations/${encodeURIComponent(context.invitationId)}`
     : '/invitations/accept';
+
+const compliancePath = (context: NotificationRenderContext) => {
+  if (!context.organizationSlug) return null;
+  const organization = `/organizations/${encodeURIComponent(context.organizationSlug)}`;
+  if (context.teamId) {
+    return `${organization}/requirements?teamId=${encodeURIComponent(context.teamId)}`;
+  }
+  if (context.divisionId) {
+    return `${organization}/divisions/${encodeURIComponent(context.divisionId)}/requirements`;
+  }
+  return organization;
+};
 
 const definition = (
   category: NotificationCategory,
@@ -121,47 +151,288 @@ export const NOTIFICATION_EVENT_DEFINITIONS: Record<
   NotificationEventType,
   NotificationEventDefinition
 > = {
-  'access.invitation_received': definition('access', 'action_required', 'You have a new league invitation', invitationPath),
-  'access.invitation_resent': definition('access', 'action_required', 'Your league invitation was sent again', invitationPath),
-  'access.invitation_expiring': definition('access', 'action_required', 'Your league invitation is expiring soon', invitationPath),
-  'access.invitation_scope_changed': definition('access', 'important', 'Your invitation access was updated', invitationPath),
-  'access.invitation_revoked': definition('access', 'important', 'Your league invitation was revoked', () => null),
-  'access.invitation_accepted': definition('access', 'informational', 'A league invitation was accepted'),
-  'access.member_role_changed': definition('access', 'important', 'Your league role was changed'),
-  'access.member_team_scope_changed': definition('access', 'important', 'Your team access was updated'),
-  'access.member_suspended': definition('access', 'action_required', 'Your league access was suspended'),
-  'access.member_reactivated': definition('access', 'informational', 'Your league access was restored'),
-  'access.ownership_received': definition('access', 'action_required', 'You are now the league owner'),
-  'access.ownership_transferred': definition('access', 'important', 'League ownership was transferred'),
-  'roster.deadline_set': definition('roster', 'important', 'A roster deadline was set'),
-  'roster.deadline_changed': definition('roster', 'important', 'A roster deadline changed'),
-  'roster.deadline_reminder': definition('roster', 'action_required', 'A roster deadline is approaching'),
-  'roster.overdue': definition('roster', 'action_required', 'A roster is past its deadline'),
-  'roster.submitted': definition('roster', 'action_required', 'A team roster is ready for review'),
-  'roster.returned': definition('roster', 'action_required', 'A team roster needs changes'),
-  'roster.approved': definition('roster', 'informational', 'A team roster was approved'),
-  'roster.published': definition('roster', 'informational', 'A team roster is now official'),
-  'roster.amendment_started': definition('roster', 'action_required', 'A published roster needs an amendment'),
-  'schedule.scorekeeper_assigned': definition('schedule', 'action_required', 'You were assigned to score a game', schedulePath),
-  'schedule.scorekeeper_unassigned': definition('schedule', 'important', 'You are no longer assigned to a game', schedulePath),
-  'schedule.game_published': definition('schedule', 'informational', 'A game was added to the official schedule', schedulePath),
-  'schedule.game_changed': definition('schedule', 'important', 'A scheduled game was changed', schedulePath),
-  'schedule.game_postponed': definition('schedule', 'action_required', 'A scheduled game was postponed', schedulePath),
-  'schedule.game_removed': definition('schedule', 'action_required', 'A scheduled game was removed', schedulePath),
-  'schedule.game_reminder': definition('schedule', 'action_required', 'An assigned game is coming up', schedulePath),
-  'schedule.unassigned_game_reminder': definition('schedule', 'action_required', 'A game still needs a scorekeeper', schedulePath),
-  'scoring.control_taken_over': definition('scoring', 'action_required', 'Scoring control was taken over', schedulePath),
-  'scoring.game_finalized': definition('scoring', 'informational', 'Official game result is ready', schedulePath),
-  'scoring.game_reopened': definition('scoring', 'action_required', 'An official game was reopened', schedulePath),
-  'scoring.result_corrected': definition('scoring', 'important', 'An official game result was corrected', schedulePath),
-  'standings.tie_requires_decision': definition('competition', 'action_required', 'A standings tie needs a decision'),
-  'standings.tie_decision_published': definition('competition', 'informational', 'A standings tie decision was published'),
-  'playoffs.qualification_confirmed': definition('competition', 'informational', 'Your team qualified for the playoffs'),
-  'playoffs.matchup_set': definition('competition', 'action_required', 'A playoff matchup was set'),
-  'playoffs.matchup_changed': definition('competition', 'important', 'A playoff matchup changed'),
-  'playoffs.team_advanced': definition('competition', 'informational', 'Your team advanced'),
-  'playoffs.team_eliminated': definition('competition', 'informational', 'Your team was eliminated'),
-  'playoffs.champion_confirmed': definition('competition', 'informational', 'League champion confirmed'),
+  'access.invitation_received': definition(
+    'access',
+    'action_required',
+    'You have a new league invitation',
+    invitationPath,
+  ),
+  'access.invitation_resent': definition(
+    'access',
+    'action_required',
+    'Your league invitation was sent again',
+    invitationPath,
+  ),
+  'access.invitation_expiring': definition(
+    'access',
+    'action_required',
+    'Your league invitation is expiring soon',
+    invitationPath,
+  ),
+  'access.invitation_scope_changed': definition(
+    'access',
+    'important',
+    'Your invitation access was updated',
+    invitationPath,
+  ),
+  'access.invitation_revoked': definition(
+    'access',
+    'important',
+    'Your league invitation was revoked',
+    () => null,
+  ),
+  'access.invitation_accepted': definition(
+    'access',
+    'informational',
+    'A league invitation was accepted',
+  ),
+  'access.member_role_changed': definition(
+    'access',
+    'important',
+    'Your league role was changed',
+  ),
+  'access.member_team_scope_changed': definition(
+    'access',
+    'important',
+    'Your team access was updated',
+  ),
+  'access.member_suspended': definition(
+    'access',
+    'action_required',
+    'Your league access was suspended',
+  ),
+  'access.member_reactivated': definition(
+    'access',
+    'informational',
+    'Your league access was restored',
+  ),
+  'access.ownership_received': definition(
+    'access',
+    'action_required',
+    'You are now the league owner',
+  ),
+  'access.ownership_transferred': definition(
+    'access',
+    'important',
+    'League ownership was transferred',
+  ),
+  'roster.deadline_set': definition(
+    'roster',
+    'important',
+    'A roster deadline was set',
+  ),
+  'roster.deadline_changed': definition(
+    'roster',
+    'important',
+    'A roster deadline changed',
+  ),
+  'roster.deadline_reminder': definition(
+    'roster',
+    'action_required',
+    'A roster deadline is approaching',
+  ),
+  'roster.overdue': definition(
+    'roster',
+    'action_required',
+    'A roster is past its deadline',
+  ),
+  'roster.submitted': definition(
+    'roster',
+    'action_required',
+    'A team roster is ready for review',
+  ),
+  'roster.returned': definition(
+    'roster',
+    'action_required',
+    'A team roster needs changes',
+  ),
+  'roster.approved': definition(
+    'roster',
+    'informational',
+    'A team roster was approved',
+  ),
+  'roster.published': definition(
+    'roster',
+    'informational',
+    'A team roster is now official',
+  ),
+  'roster.amendment_started': definition(
+    'roster',
+    'action_required',
+    'A published roster needs an amendment',
+  ),
+  'compliance.requirements_published': definition(
+    'compliance',
+    'action_required',
+    'Division requirements are ready',
+    compliancePath,
+  ),
+  'compliance.requirements_changed': definition(
+    'compliance',
+    'action_required',
+    'A division requirement changed',
+    compliancePath,
+  ),
+  'compliance.deadline_reminder': definition(
+    'compliance',
+    'action_required',
+    'A compliance deadline is approaching',
+    compliancePath,
+  ),
+  'compliance.item_submitted': definition(
+    'compliance',
+    'action_required',
+    'A team requirement is ready for review',
+    compliancePath,
+  ),
+  'compliance.changes_requested': definition(
+    'compliance',
+    'action_required',
+    'A compliance item needs changes',
+    compliancePath,
+  ),
+  'compliance.item_approved': definition(
+    'compliance',
+    'informational',
+    'A compliance item was approved',
+    compliancePath,
+  ),
+  'compliance.item_waived': definition(
+    'compliance',
+    'informational',
+    'A compliance item was waived',
+    compliancePath,
+  ),
+  'compliance.item_reopened': definition(
+    'compliance',
+    'action_required',
+    'A compliance item was reopened',
+    compliancePath,
+  ),
+  'compliance.clearance_granted': definition(
+    'compliance',
+    'informational',
+    'A team is cleared to compete',
+    compliancePath,
+  ),
+  'compliance.clearance_revoked': definition(
+    'compliance',
+    'action_required',
+    'A team needs compliance updates',
+    compliancePath,
+  ),
+  'schedule.scorekeeper_assigned': definition(
+    'schedule',
+    'action_required',
+    'You were assigned to score a game',
+    schedulePath,
+  ),
+  'schedule.scorekeeper_unassigned': definition(
+    'schedule',
+    'important',
+    'You are no longer assigned to a game',
+    schedulePath,
+  ),
+  'schedule.game_published': definition(
+    'schedule',
+    'informational',
+    'A game was added to the official schedule',
+    schedulePath,
+  ),
+  'schedule.game_changed': definition(
+    'schedule',
+    'important',
+    'A scheduled game was changed',
+    schedulePath,
+  ),
+  'schedule.game_postponed': definition(
+    'schedule',
+    'action_required',
+    'A scheduled game was postponed',
+    schedulePath,
+  ),
+  'schedule.game_removed': definition(
+    'schedule',
+    'action_required',
+    'A scheduled game was removed',
+    schedulePath,
+  ),
+  'schedule.game_reminder': definition(
+    'schedule',
+    'action_required',
+    'An assigned game is coming up',
+    schedulePath,
+  ),
+  'schedule.unassigned_game_reminder': definition(
+    'schedule',
+    'action_required',
+    'A game still needs a scorekeeper',
+    schedulePath,
+  ),
+  'scoring.control_taken_over': definition(
+    'scoring',
+    'action_required',
+    'Scoring control was taken over',
+    schedulePath,
+  ),
+  'scoring.game_finalized': definition(
+    'scoring',
+    'informational',
+    'Official game result is ready',
+    schedulePath,
+  ),
+  'scoring.game_reopened': definition(
+    'scoring',
+    'action_required',
+    'An official game was reopened',
+    schedulePath,
+  ),
+  'scoring.result_corrected': definition(
+    'scoring',
+    'important',
+    'An official game result was corrected',
+    schedulePath,
+  ),
+  'standings.tie_requires_decision': definition(
+    'competition',
+    'action_required',
+    'A standings tie needs a decision',
+  ),
+  'standings.tie_decision_published': definition(
+    'competition',
+    'informational',
+    'A standings tie decision was published',
+  ),
+  'playoffs.qualification_confirmed': definition(
+    'competition',
+    'informational',
+    'Your team qualified for the playoffs',
+  ),
+  'playoffs.matchup_set': definition(
+    'competition',
+    'action_required',
+    'A playoff matchup was set',
+  ),
+  'playoffs.matchup_changed': definition(
+    'competition',
+    'important',
+    'A playoff matchup changed',
+  ),
+  'playoffs.team_advanced': definition(
+    'competition',
+    'informational',
+    'Your team advanced',
+  ),
+  'playoffs.team_eliminated': definition(
+    'competition',
+    'informational',
+    'Your team was eliminated',
+  ),
+  'playoffs.champion_confirmed': definition(
+    'competition',
+    'informational',
+    'League champion confirmed',
+  ),
 };
 
 function organizationLabel(context: NotificationRenderContext): string {
@@ -241,6 +512,36 @@ export function renderNotification(
       break;
     case 'roster.amendment_started':
       body = `${context.rosterLabel ?? 'A published roster'} needs an amendment in ${organization}.`;
+      break;
+    case 'compliance.requirements_published':
+      body = `The ${context.divisionName ?? 'division'} requirements are ready. Complete each required item before the deadline.`;
+      break;
+    case 'compliance.requirements_changed':
+      body = `A requirement for ${context.divisionName ?? 'your division'} changed. Review the latest instructions before submitting.`;
+      break;
+    case 'compliance.deadline_reminder':
+      body = `${context.teamName ?? 'Your team'} must finish its required items by ${context.deadlineLabel ?? 'the published deadline'}.`;
+      break;
+    case 'compliance.item_submitted':
+      body = `${context.teamName ?? 'A team'} submitted ${context.requirementTitle ?? 'a requirement'} for review in ${organization}.`;
+      break;
+    case 'compliance.changes_requested':
+      body = `${context.requirementTitle ?? 'A requirement'} needs changes${context.reviewNote ? `: ${context.reviewNote}` : '.'}`;
+      break;
+    case 'compliance.item_approved':
+      body = `${context.requirementTitle ?? 'A requirement'} for ${context.teamName ?? 'your team'} was approved.`;
+      break;
+    case 'compliance.item_waived':
+      body = `${context.requirementTitle ?? 'A requirement'} for ${context.teamName ?? 'your team'} was waived${context.deadlineLabel ? ` until ${context.deadlineLabel}` : '.'}`;
+      break;
+    case 'compliance.item_reopened':
+      body = `${context.requirementTitle ?? 'A requirement'} was reopened${context.reviewNote ? `: ${context.reviewNote}` : '.'}`;
+      break;
+    case 'compliance.clearance_granted':
+      body = `${context.teamName ?? 'Your team'} is cleared to compete in ${context.divisionName ?? 'the division'}.`;
+      break;
+    case 'compliance.clearance_revoked':
+      body = `${context.teamName ?? 'Your team'} is no longer cleared to start games${context.clearanceLabel ? `: ${context.clearanceLabel}` : '.'}`;
       break;
     case 'schedule.scorekeeper_assigned':
       body = `You are assigned to score ${gameLabel(context)} in ${organization}.`;
