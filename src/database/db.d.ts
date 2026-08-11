@@ -395,7 +395,8 @@ export interface ComplianceSubmissionFiles {
   sha256: string;
   storage_key: string;
   storage_provider: string;
-  submission_attempt_id: string;
+  submission_attempt_id: string | null;
+  submission_id: string | null;
   updated_at: Generated<Timestamp>;
   uploaded_at: Timestamp | null;
   verification_status: Generated<string>;
