@@ -137,6 +137,34 @@ function createRepository(overrides: Record<string, unknown> = {}) {
 }
 
 describe('ComplianceService', () => {
+  it('updates organizer instructions and the submission deadline', async () => {
+    const repository = createRepository();
+    const service = new ComplianceService(repository as never);
+
+    await service.updateDivisionSettings('org-1', 'division-1', reviewerAccess, {
+      instructions: 'Submit clear copies of each required document.',
+      submissionDeadlineAt: '2026-09-01T08:00:00.000Z',
+    });
+
+    expect(repository.updateSettings).toHaveBeenCalledWith(
+      'settings-1',
+      expect.objectContaining({
+        instructions: 'Submit clear copies of each required document.',
+        submission_deadline_at: new Date('2026-09-01T08:00:00.000Z'),
+      }),
+    );
+    expect(repository.writeAudit).toHaveBeenCalledWith(
+      reviewerAccess,
+      'compliance.settings.updated',
+      'division',
+      'division-1',
+      expect.objectContaining({
+        deadlineChanged: true,
+        instructionsChanged: true,
+      }),
+    );
+  });
+
   it('publishes a draft and creates obligations for every active team', async () => {
     const repository = createRepository();
     const service = new ComplianceService(repository as never);

@@ -83,35 +83,56 @@ export class ComplianceService {
       );
     }
 
-    if (!dto.status || dto.status === settings.status) {
-      return settings;
-    }
-    if (dto.status === 'draft') {
-      throw new BadRequestException(
-        'Published or archived compliance settings cannot return to draft.',
-      );
-    }
     if (settings.status === 'archived') {
       throw new BadRequestException(
         'Archived compliance settings cannot be changed.',
       );
     }
+    if (dto.status === 'draft' && settings.status !== 'draft') {
+      throw new BadRequestException(
+        'Published or archived compliance settings cannot return to draft.',
+      );
+    }
+
+    const values: Record<string, unknown> = {
+      updated_at: new Date(),
+    };
+    if (dto.instructions !== undefined) {
+      values.instructions = dto.instructions?.trim() || null;
+    }
+    if (dto.submissionDeadlineAt !== undefined) {
+      values.submission_deadline_at = dto.submissionDeadlineAt
+        ? new Date(dto.submissionDeadlineAt)
+        : null;
+    }
+
+    if (dto.status === 'archived') {
+      const now = new Date();
+      values.archived_at = now;
+      values.published_at = settings.published_at ?? now;
+      values.status = 'archived';
+    }
+
+    if (Object.keys(values).length === 1) {
+      return settings;
+    }
 
     const updated = await this.repository.withTransaction(async (trx) => {
-      const now = new Date();
-      const changed = await trx.updateSettings(settings.id, {
-        archived_at: now,
-        published_at: settings.published_at ?? now,
-        status: 'archived',
-        updated_at: now,
-      });
-      await this.recalculateSettings(trx, changed);
+      const changed = await trx.updateSettings(settings.id, values);
+      if (changed.status === 'archived') {
+        await this.recalculateSettings(trx, changed);
+      }
       await trx.writeAudit(
         access,
-        'compliance.settings.archived',
+        changed.status === 'archived'
+          ? 'compliance.settings.archived'
+          : 'compliance.settings.updated',
         'division',
         divisionId,
-        {},
+        {
+          instructionsChanged: dto.instructions !== undefined,
+          deadlineChanged: dto.submissionDeadlineAt !== undefined,
+        },
       );
       return changed;
     });
