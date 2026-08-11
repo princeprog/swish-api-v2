@@ -60,6 +60,7 @@ export class NotificationJobsService implements OnModuleInit, OnModuleDestroy {
       games: await this.createGameReminders(now),
       invitations: await this.createInvitationReminders(now),
       rosters: await this.createRosterReminders(now),
+      compliance: await this.createComplianceReminders(now),
       removed: await this.removeExpiredNotifications(now),
     };
 
@@ -123,7 +124,9 @@ export class NotificationJobsService implements OnModuleInit, OnModuleDestroy {
         dedupeKey: `invitation:${invitation.id}:expiring`,
         eventType: 'access.invitation_expiring',
         organizationId: invitation.organization_id,
-        recipients: user ? [{ userId: user.id }] : [{ email: invitation.email }],
+        recipients: user
+          ? [{ userId: user.id }]
+          : [{ email: invitation.email }],
         resourceId: invitation.id,
         resourceType: 'invitation',
         retainUntil: notificationRetentionDate(invitation.expires_at),
@@ -160,12 +163,7 @@ export class NotificationJobsService implements OnModuleInit, OnModuleDestroy {
     let created = 0;
 
     for (const game of games) {
-      const is24Hour = isNotificationReminderWindow(
-        game.starts_at,
-        now,
-        24,
-        1,
-      );
+      const is24Hour = isNotificationReminderWindow(game.starts_at, now, 24, 1);
       const isOneHour = isNotificationReminderWindow(game.starts_at, now, 1, 0);
       if (!is24Hour && !isOneHour) {
         continue;
@@ -197,7 +195,9 @@ export class NotificationJobsService implements OnModuleInit, OnModuleDestroy {
         .where('game_id', '=', game.id)
         .executeTakeFirst();
       if (is24Hour && !scorekeeperAssignment) {
-        const administrators = await this.findAdministrators(game.organization_id);
+        const administrators = await this.findAdministrators(
+          game.organization_id,
+        );
         await this.writer.create({
           context: {
             gameId: game.id,
@@ -222,7 +222,11 @@ export class NotificationJobsService implements OnModuleInit, OnModuleDestroy {
   private async createRosterReminders(now: Date): Promise<number> {
     const settings = await (this.db as any)
       .selectFrom('admin.division_roster_settings as settings')
-      .innerJoin('admin.divisions as divisions', 'divisions.id', 'settings.division_id')
+      .innerJoin(
+        'admin.divisions as divisions',
+        'divisions.id',
+        'settings.division_id',
+      )
       .innerJoin(
         'admin.league_seasons as seasons',
         'seasons.id',
@@ -322,6 +326,109 @@ export class NotificationJobsService implements OnModuleInit, OnModuleDestroy {
     return created;
   }
 
+  private async createComplianceReminders(now: Date): Promise<number> {
+    const settings = await (this.db as any)
+      .selectFrom('compliance.division_settings as settings')
+      .innerJoin(
+        'admin.divisions as divisions',
+        'divisions.id',
+        'settings.division_id',
+      )
+      .innerJoin(
+        'admin.league_seasons as seasons',
+        'seasons.id',
+        'divisions.league_season_id',
+      )
+      .innerJoin(
+        'admin.organizations as organizations',
+        'organizations.id',
+        'seasons.organization_id',
+      )
+      .select([
+        'settings.id',
+        'settings.division_id',
+        'settings.submission_deadline_at',
+        'seasons.organization_id',
+        'organizations.name as organization_name',
+        'organizations.slug as organization_slug',
+        'divisions.name as division_name',
+      ])
+      .where('settings.status', '=', 'published')
+      .where('settings.submission_deadline_at', 'is not', null)
+      .where(
+        'settings.submission_deadline_at',
+        '<=',
+        new Date(now.getTime() + 72 * HOUR_MS),
+      )
+      .execute();
+    let created = 0;
+
+    for (const setting of settings) {
+      const deadline = new Date(setting.submission_deadline_at);
+      const is72 = isNotificationReminderWindow(deadline, now, 72, 24);
+      const is24 = isNotificationReminderWindow(deadline, now, 24, 0);
+      const overdue = deadline <= now;
+      if (!is72 && !is24 && !overdue) continue;
+
+      const teams = await (this.db as any)
+        .selectFrom('admin.teams as teams')
+        .leftJoin(
+          'compliance.team_clearance_projections as projections',
+          (join: any) =>
+            join
+              .onRef('projections.team_id', '=', 'teams.id')
+              .on('projections.division_settings_id', '=', setting.id),
+        )
+        .select([
+          'teams.id',
+          'teams.name',
+          'projections.status as clearance_status',
+        ])
+        .where('teams.division_id', '=', setting.division_id)
+        .where('teams.status', '=', 'active')
+        .execute();
+      for (const team of teams) {
+        if (team.clearance_status === 'cleared') continue;
+        const managers = await (this.db as any)
+          .selectFrom('access.team_manager_assignments as assignments')
+          .innerJoin(
+            'admin.organization_members as members',
+            'members.id',
+            'assignments.organization_member_id',
+          )
+          .select(['members.user_id'])
+          .where('assignments.team_id', '=', team.id)
+          .where('members.status', '=', 'active')
+          .execute();
+        if (managers.length === 0) continue;
+        await this.writer.create({
+          context: {
+            deadlineLabel: deadline.toLocaleString('en-PH', {
+              timeZone: 'Asia/Manila',
+            }),
+            divisionId: setting.division_id,
+            divisionName: setting.division_name,
+            organizationName: setting.organization_name,
+            organizationSlug: setting.organization_slug,
+            teamId: team.id,
+            teamName: team.name,
+          },
+          dedupeKey: `compliance:${setting.id}:${team.id}:deadline:${overdue ? 'overdue' : is24 ? '24h' : '72h'}`,
+          eventType: 'compliance.deadline_reminder',
+          organizationId: setting.organization_id,
+          recipients: managers.map((row: { user_id: string }) => ({
+            userId: row.user_id,
+          })),
+          resourceId: team.id,
+          resourceType: 'compliance_team',
+        });
+        created += 1;
+      }
+    }
+
+    return created;
+  }
+
   private async findGameRecipients(gameId: string) {
     const game = await (this.db as any)
       .selectFrom('competition.games')
@@ -340,7 +447,10 @@ export class NotificationJobsService implements OnModuleInit, OnModuleDestroy {
         'assignments.organization_member_id',
       )
       .select(['members.user_id'])
-      .where('assignments.team_id', 'in', [game.home_team_id, game.away_team_id])
+      .where('assignments.team_id', 'in', [
+        game.home_team_id,
+        game.away_team_id,
+      ])
       .where('members.status', '=', 'active')
       .execute();
     const scorekeepers = await (this.db as any)

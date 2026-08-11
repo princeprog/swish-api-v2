@@ -26,12 +26,14 @@ import {
   type ScoringState,
 } from './scoring-engine';
 import { NotificationWriter } from '../notification/notification.writer';
+import { ComplianceService } from '../compliance/compliance.service';
 
 type ScheduleGame = {
   away_score: number | null;
   away_team_id: string;
   away_team_name: string;
   division_name: string;
+  division_id: string | null;
   home_score: number | null;
   home_team_id: string;
   home_team_name: string;
@@ -78,6 +80,7 @@ export class ScoringService {
   constructor(
     @Inject(DATABASE) private readonly db: Database,
     @Optional() private readonly notificationWriter?: NotificationWriter,
+    @Optional() private readonly complianceService?: ComplianceService,
   ) {}
 
   async getState(
@@ -350,6 +353,25 @@ export class ScoringService {
     await this.assertControlSession(gameId, access, input.controlToken, false);
 
     try {
+      if (input.command.type === 'game.start' && this.complianceService) {
+        const clearance = await this.complianceService.checkGameStartClearance({
+          organizationId,
+          divisionId: game.division_id,
+          homeTeamId: game.home_team_id,
+          homeTeamName: game.home_team_name,
+          awayTeamId: game.away_team_id,
+          awayTeamName: game.away_team_name,
+        });
+        if (!clearance.allowed) {
+          const teams = clearance.blockedTeams
+            .map((team) => team.name)
+            .join(' and ');
+          throw new ScoringActionError(
+            'TEAM_COMPLIANCE_REQUIRED',
+            `${teams} must complete the division requirements before this game can start.`,
+          );
+        }
+      }
       const result = await (this.db as any)
         .transaction()
         .execute(async (trx) => {
@@ -381,7 +403,10 @@ export class ScoringService {
             });
           }
 
-          if (input.command.type === 'game.start' && game.status !== 'scheduled') {
+          if (
+            input.command.type === 'game.start' &&
+            game.status !== 'scheduled'
+          ) {
             throw new ScoringActionError(
               'GAME_START_STATUS_INVALID',
               'Only scheduled games can be started',
@@ -528,7 +553,10 @@ export class ScoringService {
         'assignments.organization_member_id',
       )
       .select(['members.user_id'])
-      .where('assignments.team_id', 'in', [game.home_team_id, game.away_team_id])
+      .where('assignments.team_id', 'in', [
+        game.home_team_id,
+        game.away_team_id,
+      ])
       .where('members.status', '=', 'active')
       .execute();
     const recipients = managers.map((row: { user_id: string }) => ({
@@ -950,8 +978,7 @@ export class ScoringService {
         timeoutAllowancePerTeam - row.away_timeouts_used,
       ),
       awayTimeoutsUsed: row.away_timeouts_used,
-      awayInPenalty:
-        row.away_team_fouls >= row.team_fouls_before_penalty,
+      awayInPenalty: row.away_team_fouls >= row.team_fouls_before_penalty,
       awayTeamId: game.away_team_id,
       currentPeriodNumber: row.current_period_number,
       gameClockRemainingMs: row.game_clock_remaining_ms,
@@ -965,8 +992,7 @@ export class ScoringService {
         timeoutAllowancePerTeam - row.home_timeouts_used,
       ),
       homeTimeoutsUsed: row.home_timeouts_used,
-      homeInPenalty:
-        row.home_team_fouls >= row.team_fouls_before_penalty,
+      homeInPenalty: row.home_team_fouls >= row.team_fouls_before_penalty,
       homeTeamId: game.home_team_id,
       latestReversibleEvent,
       overtimeDurationMs: row.overtime_duration_ms,

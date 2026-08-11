@@ -45,7 +45,26 @@ describe('notification event registry', () => {
     expect(notification.title).toBe('Official game result is ready');
     expect(notification.body).toContain('Northside vs Riverside');
     expect(notification.body).toContain('Northside 82–77 Riverside');
-    expect(notification.actionUrl).toBe('/organizations/barangay-hoops/schedules?gameId=game-123');
+    expect(notification.actionUrl).toBe(
+      '/organizations/barangay-hoops/schedules?gameId=game-123',
+    );
+  });
+
+  it('renders team compliance reminders with a manager action path', () => {
+    const notification = renderNotification('compliance.deadline_reminder', {
+      organizationName: 'Barangay Hoops',
+      organizationSlug: 'barangay-hoops',
+      teamId: 'team-123',
+      teamName: 'Northside',
+      divisionName: 'Open Division',
+      deadlineLabel: 'Aug 20, 2026, 6:00 PM',
+    });
+
+    expect(notification.title).toBe('A compliance deadline is approaching');
+    expect(notification.body).toContain('Northside');
+    expect(notification.actionUrl).toBe(
+      '/organizations/barangay-hoops/requirements?teamId=team-123',
+    );
   });
 
   it('keeps reserved events renderable before their workflows are wired', () => {

@@ -21,6 +21,8 @@ describe('organization role permissions', () => {
 
     expect(permissions).toEqual(
       expect.arrayContaining([
+        ORGANIZATION_PERMISSIONS.COMPLIANCE_REQUIREMENTS_MANAGE,
+        ORGANIZATION_PERMISSIONS.COMPLIANCE_SUBMISSIONS_REVIEW,
         ORGANIZATION_PERMISSIONS.TEAMS_CREATE,
         ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE,
       ]),
@@ -38,12 +40,17 @@ describe('organization role permissions', () => {
 
     expect(permissions).toEqual(
       expect.arrayContaining([
+        ORGANIZATION_PERMISSIONS.COMPLIANCE_SUBMISSIONS_READ_ASSIGNED,
+        ORGANIZATION_PERMISSIONS.COMPLIANCE_SUBMISSIONS_SUBMIT_ASSIGNED,
         ORGANIZATION_PERMISSIONS.TEAMS_READ_ASSIGNED,
         ORGANIZATION_PERMISSIONS.TEAMS_UPDATE_ASSIGNED,
         ORGANIZATION_PERMISSIONS.PLAYERS_MANAGE_ASSIGNED_TEAM,
       ]),
     );
     expect(permissions).not.toContain(ORGANIZATION_PERMISSIONS.TEAMS_CREATE);
+    expect(permissions).not.toContain(
+      ORGANIZATION_PERMISSIONS.COMPLIANCE_SUBMISSIONS_REVIEW,
+    );
   });
 
   it('maps scorekeeper to assigned game scoring contract only', () => {
