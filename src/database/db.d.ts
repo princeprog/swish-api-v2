@@ -329,8 +329,10 @@ export interface ComplianceDivisionSettings {
   created_by_member_id: string;
   division_id: string;
   id: Generated<string>;
+  instructions: string | null;
   published_at: Timestamp | null;
   status: Generated<string>;
+  submission_deadline_at: Timestamp | null;
   updated_at: Generated<Timestamp>;
 }
 
