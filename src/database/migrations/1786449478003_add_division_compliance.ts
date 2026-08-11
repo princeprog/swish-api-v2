@@ -196,6 +196,10 @@ export async function up(db: Kysely<any>): Promise<void> {
       'compliance_submission_attempts_submission_number_unique',
       ['submission_id', 'attempt_number'],
     )
+    .addUniqueConstraint(
+      'compliance_submission_attempts_id_submission_unique',
+      ['id', 'submission_id'],
+    )
     .addCheckConstraint(
       'compliance_submission_attempts_number_check',
       sql`attempt_number > 0`,
@@ -210,10 +214,9 @@ export async function up(db: Kysely<any>): Promise<void> {
     .alterTable('compliance.team_submissions')
     .addForeignKeyConstraint(
       'compliance_team_submissions_current_attempt_fk',
-      ['current_attempt_id'],
+      ['current_attempt_id', 'id'],
       'compliance.submission_attempts',
-      ['id'],
-      (constraint) => constraint.onDelete('set null'),
+      ['id', 'submission_id'],
     )
     .execute();
 
@@ -424,6 +427,12 @@ export async function up(db: Kysely<any>): Promise<void> {
     )
     .on('compliance.team_clearance_projections')
     .columns(['team_id', 'division_settings_id', 'status'])
+    .execute();
+
+  await db.schema
+    .createIndex('compliance_team_clearance_projections_settings_status_index')
+    .on('compliance.team_clearance_projections')
+    .columns(['division_settings_id', 'status'])
     .execute();
 
   await sql`

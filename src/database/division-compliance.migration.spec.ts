@@ -1,5 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import 'dotenv/config';
+import { Pool } from 'pg';
+
+const hasDatabaseConfig = Boolean(
+  process.env.DB_HOST && process.env.DB_USER && process.env.DB_NAME,
+);
 
 describe('division compliance migration', () => {
   const migrationSource = readFileSync(
@@ -29,12 +35,20 @@ describe('division compliance migration', () => {
       'compliance_team_clearance_projections_team_settings_status_index',
     );
     expect(migrationSource).toContain(
+      'compliance_team_clearance_projections_settings_status_index',
+    );
+    expect(migrationSource).toContain(
       "columns(['team_id', 'division_settings_id', 'status'])",
     );
     expect(migrationSource).toContain("defaultTo('draft')");
     expect(migrationSource).toContain(
       "status = 'draft' and published_at is null and archived_at is null",
     );
+    expect(migrationSource).toContain(
+      'compliance_submission_attempts_id_submission_unique',
+    );
+    expect(migrationSource).toContain("['current_attempt_id', 'id']");
+    expect(migrationSource).toContain("['id', 'submission_id']");
   });
 
   it('preserves immutable attempts and private, bounded evidence files', () => {
@@ -75,18 +89,67 @@ describe('division compliance migration', () => {
     ).toBeLessThan(
       downSource.indexOf("dropTable('compliance.submission_files')"),
     );
-    expect(
-      downSource.indexOf(
-        "dropConstraint('compliance_team_submissions_current_attempt_fk')",
-      ),
-    ).toBeLessThan(
-      downSource.indexOf("dropTable('compliance.submission_attempts')"),
+    const currentAttemptForeignKeyDropIndex = downSource.indexOf(
+      "dropConstraint('compliance_team_submissions_current_attempt_fk')",
     );
-    expect(
-      downSource.indexOf("dropTable('compliance.submission_attempts')"),
-    ).toBeLessThan(
-      downSource.indexOf("dropTable('compliance.team_submissions')"),
+    const submissionAttemptsDropIndex = downSource.indexOf(
+      "dropTable('compliance.submission_attempts')",
     );
+    const teamSubmissionsDropIndex = downSource.indexOf(
+      "dropTable('compliance.team_submissions')",
+    );
+
+    expect(currentAttemptForeignKeyDropIndex).toBeGreaterThanOrEqual(0);
+    expect(submissionAttemptsDropIndex).toBeGreaterThanOrEqual(0);
+    expect(currentAttemptForeignKeyDropIndex).toBeLessThan(
+      submissionAttemptsDropIndex,
+    );
+    expect(submissionAttemptsDropIndex).toBeLessThan(teamSubmissionsDropIndex);
     expect(downSource).toContain("dropSchema('compliance')");
+  });
+});
+
+const describeWithDatabase = hasDatabaseConfig ? describe : describe.skip;
+
+describeWithDatabase('division compliance migration database checks', () => {
+  let pool: Pool;
+
+  beforeAll(() => {
+    pool = new Pool({
+      host: process.env.DB_HOST,
+      port: Number(process.env.DB_PORT),
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD,
+      database: process.env.DB_NAME,
+    });
+  });
+
+  afterAll(async () => {
+    await pool?.end();
+  });
+
+  it('keeps compliance opt-in until Task 2 applies published-settings enforcement', async () => {
+    const [defaultResult, submissionsResult, projectionsResult] =
+      await Promise.all([
+        pool.query<{ column_default: string | null }>(`
+          select column_default
+          from information_schema.columns
+          where table_schema = 'compliance'
+            and table_name = 'division_settings'
+            and column_name = 'status'
+        `),
+        pool.query<{ count: string }>(
+          'select count(*)::text as count from compliance.team_submissions',
+        ),
+        pool.query<{ count: string }>(
+          'select count(*)::text as count from compliance.team_clearance_projections',
+        ),
+      ]);
+
+    expect(defaultResult.rows).toEqual([
+      expect.objectContaining({ column_default: "'draft'::character varying" }),
+    ]);
+    expect(submissionsResult.rows[0]?.count).toBe('0');
+    expect(projectionsResult.rows[0]?.count).toBe('0');
   });
 });
