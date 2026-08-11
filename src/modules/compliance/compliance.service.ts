@@ -426,6 +426,51 @@ export class ComplianceService {
     };
   }
 
+  async checkGameStartClearance(input: {
+    organizationId: string;
+    divisionId: string | null;
+    homeTeamId: string | null;
+    homeTeamName: string | null;
+    awayTeamId: string | null;
+    awayTeamName: string | null;
+  }) {
+    if (!input.divisionId || !input.homeTeamId || !input.awayTeamId) {
+      return { allowed: true, blockedTeams: [] };
+    }
+    await this.assertDivision(input.organizationId, input.divisionId);
+    const settings = await this.repository.findSettingsByDivision(
+      input.divisionId,
+    );
+    if (!settings || settings.status !== 'published') {
+      return { allowed: true, blockedTeams: [] };
+    }
+
+    await this.repository.withTransaction((trx) =>
+      this.recalculateSettings(trx, settings),
+    );
+    const projections = await Promise.all([
+      this.repository.findProjection(input.homeTeamId, settings.id),
+      this.repository.findProjection(input.awayTeamId, settings.id),
+    ]);
+    const names = [
+      input.homeTeamName ?? 'Home team',
+      input.awayTeamName ?? 'Away team',
+    ];
+    const blockedTeams = projections
+      .map((projection, index) =>
+        projection?.status === 'cleared'
+          ? null
+          : {
+              name: names[index],
+              status: projection?.status ?? 'pending',
+            },
+      )
+      .filter(
+        (team): team is { name: string; status: string } => team !== null,
+      );
+    return { allowed: blockedTeams.length === 0, blockedTeams };
+  }
+
   async saveDraft(
     organizationId: string,
     teamId: string,

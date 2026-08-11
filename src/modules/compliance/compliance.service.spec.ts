@@ -304,4 +304,33 @@ describe('ComplianceService', () => {
       service.findTeamCompliance('org-2', 'team-1', reviewerAccess),
     ).rejects.toThrow(NotFoundException);
   });
+
+  it('blocks game start until both teams are cleared after publication', async () => {
+    const repository = createRepository({
+      findSettingsByDivision: jest.fn().mockResolvedValue({
+        ...settings,
+        published_at: new Date('2026-08-11T00:00:00.000Z'),
+        status: 'published',
+      }),
+      findProjection: jest
+        .fn()
+        .mockResolvedValueOnce({ status: 'cleared' })
+        .mockResolvedValueOnce({ status: 'pending' }),
+    });
+    const service = new ComplianceService(repository as never);
+
+    await expect(
+      service.checkGameStartClearance({
+        organizationId: 'org-1',
+        divisionId: 'division-1',
+        homeTeamId: 'team-1',
+        homeTeamName: 'Blue Eagles',
+        awayTeamId: 'team-2',
+        awayTeamName: 'Red Lions',
+      }),
+    ).resolves.toEqual({
+      allowed: false,
+      blockedTeams: [{ name: 'Red Lions', status: 'pending' }],
+    });
+  });
 });

@@ -5,6 +5,7 @@ const game = {
   away_team_id: 'away-team',
   away_team_name: 'Away',
   division_name: 'Open',
+  division_id: 'division-1',
   home_score: null,
   home_team_id: 'home-team',
   home_team_name: 'Home',
@@ -117,5 +118,39 @@ describe('ScoringService season rule snapshots', () => {
     expect(state.periodDurationMs).toBe(600000);
     expect(state.shotClockEnabled).toBe(true);
     expect(rulesQuery.executeTakeFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe('ScoringService compliance gate', () => {
+  it('returns a clear action message when a scheduled game has uncleared teams', async () => {
+    const complianceService = {
+      checkGameStartClearance: jest.fn().mockResolvedValue({
+        allowed: false,
+        blockedTeams: [{ name: 'Away', status: 'pending' }],
+      }),
+    };
+    const service = new ScoringService(
+      {} as never,
+      undefined,
+      complianceService as never,
+    );
+    jest
+      .spyOn(service as never, 'findGameForScoring' as never)
+      .mockResolvedValue(game as never);
+    jest
+      .spyOn(service as never, 'assertControlSession' as never)
+      .mockResolvedValue({} as never);
+
+    await expect(
+      service.executeCommand('org-1', 'game-1', {} as never, {
+        command: { idempotencyKey: 'start-1', type: 'game.start' },
+        expectedVersion: 0,
+        occurredAt: new Date(),
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        code: 'TEAM_COMPLIANCE_REQUIRED',
+      },
+    });
   });
 });
