@@ -193,6 +193,22 @@ export class ComplianceController {
     );
   }
 
+  @Get('compliance/submissions/:submissionId/review-detail')
+  @RequireOrganizationPermissions(
+    ORGANIZATION_PERMISSIONS.COMPLIANCE_SUBMISSIONS_REVIEW,
+  )
+  findReviewDetail(
+    @Param('organizationId') organizationId: string,
+    @Param('submissionId') submissionId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+  ) {
+    return this.complianceService.findReviewDetail(
+      organizationId,
+      submissionId,
+      access,
+    );
+  }
+
   @Patch('teams/:teamId/compliance/requirements/:requirementId/draft')
   @RequireOrganizationPermissions(
     ORGANIZATION_PERMISSIONS.COMPLIANCE_SUBMISSIONS_SUBMIT_ASSIGNED,

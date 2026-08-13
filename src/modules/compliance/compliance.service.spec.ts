@@ -114,11 +114,13 @@ function createRepository(overrides: Record<string, unknown> = {}) {
       .mockResolvedValue([{ id: 'team-1' }, { id: 'team-2' }]),
     listAttempts: jest.fn().mockResolvedValue([]),
     listAttemptFiles: jest.fn().mockResolvedValue([]),
+    countReviewSubmissions: jest.fn().mockResolvedValue(0),
     listDraftFiles: jest.fn().mockResolvedValue([]),
     listEvents: jest.fn().mockResolvedValue([]),
     listRequirements: jest.fn().mockResolvedValue([required]),
     listSubmissionsForSettings: jest.fn().mockResolvedValue([]),
     listTeamSubmissions: jest.fn().mockResolvedValue([]),
+    listProjections: jest.fn().mockResolvedValue([]),
     updateRequirement: jest.fn(),
     updateSettings: jest.fn().mockImplementation(async (_id, value) => ({
       ...settings,
@@ -301,6 +303,87 @@ describe('ComplianceService', () => {
       'Eagles',
       { limit: 20, offset: 40, page: 3, pageSize: 20 },
     );
+  });
+
+  it('returns a reviewer count separate from team-clearance counts', async () => {
+    const repository = createRepository({
+      countReviewSubmissions: jest.fn().mockResolvedValue(3),
+      listProjections: jest
+        .fn()
+        .mockResolvedValue([{ status: 'pending' }, { status: 'cleared' }]),
+    });
+    const service = new ComplianceService(repository as never);
+
+    await expect(
+      service.findDivisionOverview('org-1', 'division-1', reviewerAccess),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        counts: expect.objectContaining({
+          needs_review: 3,
+          pending: 1,
+          cleared: 1,
+        }),
+      }),
+    );
+  });
+
+  it('returns one focused review record with current attempt evidence and history', async () => {
+    const currentAttempt = {
+      attempt_number: 1,
+      id: 'attempt-1',
+      response_type: 'file',
+      response_value: { files: [{ id: 'file-1' }] },
+      submission_id: 'submission-1',
+      submitted_at: new Date('2026-08-11T00:00:00.000Z'),
+      submitted_by_member_id: 'manager-member',
+    };
+    const submission = {
+      current_attempt_id: 'attempt-1',
+      id: 'submission-1',
+      is_required: true,
+      requirement_id: 'requirement-1',
+      requirement_title: 'Proof of registration',
+      response_type: 'file',
+      review_note: null,
+      reviewed_at: null,
+      team_id: 'team-1',
+      team_name: 'Blue Eagles',
+      submitted_at: currentAttempt.submitted_at,
+      waiver_expires_at: null,
+      waiver_reason: null,
+      workflow_status: 'submitted',
+    };
+    const repository = createRepository({
+      findReviewSubmission: jest.fn().mockResolvedValue(submission),
+      listAttempts: jest.fn().mockResolvedValue([currentAttempt]),
+      listAttemptFiles: jest.fn().mockResolvedValue([
+        {
+          id: 'file-1',
+          original_filename: 'registration.pdf',
+          verification_status: 'verified',
+        },
+      ]),
+      listEvents: jest
+        .fn()
+        .mockResolvedValue([{ event_type: 'submitted', id: 'event-1' }]),
+    });
+    const service = new ComplianceService(repository as never);
+
+    await expect(
+      service.findReviewDetail('org-1', 'submission-1', reviewerAccess),
+    ).resolves.toEqual({
+      submission,
+      current_attempt: currentAttempt,
+      files: [
+        {
+          id: 'file-1',
+          original_filename: 'registration.pdf',
+          verification_status: 'verified',
+        },
+      ],
+      attempts: [currentAttempt],
+      events: [{ event_type: 'submitted', id: 'event-1' }],
+    });
   });
 
   it('allows a reviewer to request changes and records the reason', async () => {

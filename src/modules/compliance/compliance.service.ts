@@ -30,7 +30,6 @@ import {
   ensureSubmissionCanBeChanged,
   reviewQueueStatuses,
   validateComplianceResponse,
-  type ComplianceReviewQueueScope,
   type ComplianceResponseType,
   type ComplianceSettingsStatus,
   type ComplianceWorkflowStatus,
@@ -362,7 +361,13 @@ export class ComplianceService {
     const settings = await this.repository.findSettingsByDivision(divisionId);
     if (!settings) {
       return {
-        counts: { not_required: 0, pending: 0, blocked: 0, cleared: 0 },
+        counts: {
+          not_required: 0,
+          pending: 0,
+          blocked: 0,
+          cleared: 0,
+          needs_review: 0,
+        },
         settings: null,
       };
     }
@@ -374,7 +379,9 @@ export class ComplianceService {
     for (const projection of projections) {
       counts[projection.status as keyof typeof counts] += 1;
     }
-    return { counts, settings };
+    const needsReview =
+      await this.repository.countReviewSubmissions(divisionId);
+    return { counts: { ...counts, needs_review: needsReview }, settings };
   }
 
   async findReviewQueue(
@@ -386,7 +393,7 @@ export class ComplianceService {
     this.assertCanReview(access);
     await this.assertDivision(organizationId, divisionId);
     const pagination = normalizePagination(query);
-    const scope = query.scope as ComplianceReviewQueueScope | undefined;
+    const scope = query.scope;
     const statuses = scope
       ? reviewQueueStatuses(scope)
       : query.status
@@ -400,6 +407,39 @@ export class ComplianceService {
       pagination,
     );
     return createPaginatedResponse(result.data, result.total, pagination);
+  }
+
+  async findReviewDetail(
+    organizationId: string,
+    submissionId: string,
+    access: OrganizationAccessContext,
+  ) {
+    this.assertCanReview(access);
+    const submission = await this.repository.findReviewSubmission(
+      organizationId,
+      submissionId,
+    );
+    if (!submission) {
+      throw new NotFoundException('Compliance submission not found.');
+    }
+    const [attempts, events] = await Promise.all([
+      this.repository.listAttempts(submission.id),
+      this.repository.listEvents(submission.id),
+    ]);
+    const currentAttempt =
+      attempts.find(
+        (attempt) => attempt.id === submission.current_attempt_id,
+      ) ?? null;
+    const files = currentAttempt
+      ? await this.repository.listAttemptFiles(submission.id, currentAttempt.id)
+      : [];
+    return {
+      submission,
+      current_attempt: currentAttempt,
+      files,
+      attempts,
+      events,
+    };
   }
 
   async findTeamCompliance(
@@ -434,11 +474,10 @@ export class ComplianceService {
       requirements.map(async (requirement) => {
         const response = requirement.submission_id
           ? requirement.current_attempt_id
-            ? (
+            ? ((
                 await this.repository.listAttempts(requirement.submission_id)
-              ).find(
-                (attempt) => attempt.id === requirement.current_attempt_id,
-              )?.response_value ?? null
+              ).find((attempt) => attempt.id === requirement.current_attempt_id)
+                ?.response_value ?? null)
             : readDraftResponse(
                 (
                   await this.repository.findLatestDraftEvent(

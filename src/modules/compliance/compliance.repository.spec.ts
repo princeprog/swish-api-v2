@@ -27,11 +27,12 @@ describe('ComplianceRepository', () => {
       'is',
       null,
     );
-    expect(query.where).toHaveBeenCalledWith(
-      'verification_status',
-      'in',
-      ['uploaded', 'scanning', 'verified', 'rejected'],
-    );
+    expect(query.where).toHaveBeenCalledWith('verification_status', 'in', [
+      'uploaded',
+      'scanning',
+      'verified',
+      'rejected',
+    ]);
   });
 
   it('lists only visible files attached to the requested attempt', async () => {
@@ -47,10 +48,49 @@ describe('ComplianceRepository', () => {
       '=',
       'attempt-2',
     );
+    expect(query.where).toHaveBeenCalledWith('verification_status', 'in', [
+      'uploaded',
+      'scanning',
+      'verified',
+      'rejected',
+    ]);
+  });
+
+  it('counts submissions awaiting reviewer action within a division', async () => {
+    const query = createQuery();
+    query.executeTakeFirstOrThrow.mockResolvedValue({ count: '4' });
+    const repository = new ComplianceRepository({
+      selectFrom: jest.fn().mockReturnValue(query),
+    } as never);
+
+    await expect(repository.countReviewSubmissions('division-1')).resolves.toBe(
+      4,
+    );
+
     expect(query.where).toHaveBeenCalledWith(
-      'verification_status',
+      'submissions.workflow_status',
       'in',
-      ['uploaded', 'scanning', 'verified', 'rejected'],
+      ['submitted', 'under_review'],
+    );
+  });
+
+  it('scopes a review submission lookup to the organization', async () => {
+    const query = createQuery();
+    const repository = new ComplianceRepository({
+      selectFrom: jest.fn().mockReturnValue(query),
+    } as never);
+
+    await repository.findReviewSubmission('org-1', 'submission-1');
+
+    expect(query.where).toHaveBeenCalledWith(
+      'submissions.id',
+      '=',
+      'submission-1',
+    );
+    expect(query.where).toHaveBeenCalledWith(
+      'seasons.organization_id',
+      '=',
+      'org-1',
     );
   });
 });
@@ -58,17 +98,16 @@ describe('ComplianceRepository', () => {
 function createQuery() {
   const query = {
     execute: jest.fn().mockResolvedValue([]),
+    executeTakeFirst: jest.fn().mockResolvedValue(undefined),
+    executeTakeFirstOrThrow: jest.fn().mockResolvedValue({ count: '0' }),
+    innerJoin: jest.fn(),
     orderBy: jest.fn(),
     select: jest.fn(),
     where: jest.fn(),
-  } as {
-    execute: jest.Mock;
-    orderBy: jest.Mock;
-    select: jest.Mock;
-    where: jest.Mock;
   };
   query.select.mockReturnValue(query);
   query.where.mockReturnValue(query);
+  query.innerJoin.mockReturnValue(query);
   query.orderBy.mockReturnValue(query);
   return query;
 }

@@ -475,6 +475,64 @@ export class ComplianceRepository {
       .execute();
   }
 
+  countReviewSubmissions(divisionId: string) {
+    return this.db
+      .selectFrom('compliance.team_submissions as submissions')
+      .innerJoin(
+        'compliance.requirements as requirements',
+        'requirements.id',
+        'submissions.requirement_id',
+      )
+      .innerJoin('admin.teams as teams', 'teams.id', 'submissions.team_id')
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('teams.division_id', '=', divisionId)
+      .where('teams.status', '=', 'active')
+      .where('requirements.archived_at', 'is', null)
+      .where('submissions.workflow_status', 'in', ['submitted', 'under_review'])
+      .executeTakeFirstOrThrow()
+      .then((row) => Number(row.count));
+  }
+
+  findReviewSubmission(organizationId: string, submissionId: string) {
+    return this.db
+      .selectFrom('compliance.team_submissions as submissions')
+      .innerJoin(
+        'compliance.requirements as requirements',
+        'requirements.id',
+        'submissions.requirement_id',
+      )
+      .innerJoin('admin.teams as teams', 'teams.id', 'submissions.team_id')
+      .innerJoin(
+        'admin.divisions as divisions',
+        'divisions.id',
+        'teams.division_id',
+      )
+      .innerJoin(
+        'admin.league_seasons as seasons',
+        'seasons.id',
+        'divisions.league_season_id',
+      )
+      .select([
+        'submissions.current_attempt_id',
+        'submissions.id',
+        'submissions.review_note',
+        'submissions.reviewed_at',
+        'submissions.submitted_at',
+        'submissions.waiver_expires_at',
+        'submissions.waiver_reason',
+        'submissions.workflow_status',
+        'requirements.id as requirement_id',
+        'requirements.is_required',
+        'requirements.response_type',
+        'requirements.title as requirement_title',
+        'teams.id as team_id',
+        'teams.name as team_name',
+      ])
+      .where('submissions.id', '=', submissionId)
+      .where('seasons.organization_id', '=', organizationId)
+      .executeTakeFirst();
+  }
+
   findComplianceNotificationContext(submissionId: string) {
     return this.db
       .selectFrom('compliance.team_submissions as submissions')
