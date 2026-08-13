@@ -5,6 +5,13 @@ import { DATABASE, type Database } from '../../database/database.tokens';
 import type { CreateRequirementDto } from './dto/create-requirement.dto';
 import type { ComplianceWorkflowStatus } from './compliance-policy';
 
+const DISPLAYABLE_FILE_STATUSES = [
+  'uploaded',
+  'scanning',
+  'verified',
+  'rejected',
+] as const;
+
 @Injectable()
 export class ComplianceRepository {
   constructor(@Inject(DATABASE) private readonly db: Database) {}
@@ -391,20 +398,26 @@ export class ComplianceRepository {
       .execute();
   }
 
-  listFilesForSubmission(submissionId: string, attemptId: string | null) {
-    let query = this.db
+  listDraftFiles(submissionId: string) {
+    return this.db
       .selectFrom('compliance.submission_files')
       .select(['id', 'original_filename', 'verification_status'])
-      .where('submission_id', '=', submissionId);
-    if (attemptId) {
-      query = query.where((eb) =>
-        eb.or([
-          eb('submission_attempt_id', '=', attemptId),
-          eb('submission_attempt_id', 'is', null),
-        ]),
-      );
-    }
-    return query.orderBy('file_order asc').execute();
+      .where('submission_id', '=', submissionId)
+      .where('submission_attempt_id', 'is', null)
+      .where('verification_status', 'in', DISPLAYABLE_FILE_STATUSES)
+      .orderBy('file_order asc')
+      .execute();
+  }
+
+  listAttemptFiles(submissionId: string, attemptId: string) {
+    return this.db
+      .selectFrom('compliance.submission_files')
+      .select(['id', 'original_filename', 'verification_status'])
+      .where('submission_id', '=', submissionId)
+      .where('submission_attempt_id', '=', attemptId)
+      .where('verification_status', 'in', DISPLAYABLE_FILE_STATUSES)
+      .orderBy('file_order asc')
+      .execute();
   }
 
   upsertProjection(

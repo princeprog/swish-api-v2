@@ -449,10 +449,12 @@ export class ComplianceService {
         return {
           ...requirement,
           files: requirement.submission_id
-            ? await this.repository.listFilesForSubmission(
-                requirement.submission_id,
-                requirement.current_attempt_id,
-              )
+            ? requirement.current_attempt_id
+              ? await this.repository.listAttemptFiles(
+                  requirement.submission_id,
+                  requirement.current_attempt_id,
+                )
+              : await this.repository.listDraftFiles(requirement.submission_id)
             : [],
           response,
         };

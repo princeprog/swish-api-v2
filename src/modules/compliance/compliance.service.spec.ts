@@ -113,6 +113,8 @@ function createRepository(overrides: Record<string, unknown> = {}) {
       .fn()
       .mockResolvedValue([{ id: 'team-1' }, { id: 'team-2' }]),
     listAttempts: jest.fn().mockResolvedValue([]),
+    listAttemptFiles: jest.fn().mockResolvedValue([]),
+    listDraftFiles: jest.fn().mockResolvedValue([]),
     listEvents: jest.fn().mockResolvedValue([]),
     listRequirements: jest.fn().mockResolvedValue([required]),
     listSubmissionsForSettings: jest.fn().mockResolvedValue([]),
@@ -358,6 +360,54 @@ describe('ComplianceService', () => {
     expect(result.requirements[0]).toEqual(
       expect.objectContaining({ response: 'Coach Maria Santos' }),
     );
+  });
+
+  it('uses draft files for drafts and exact attempt files for submitted items', async () => {
+    const listDraftFiles = jest.fn().mockResolvedValue([{ id: 'draft-file' }]);
+    const listAttemptFiles = jest
+      .fn()
+      .mockResolvedValue([{ id: 'attempt-file' }]);
+    const repository = createRepository({
+      findSettingsByDivision: jest.fn().mockResolvedValue({
+        ...settings,
+        published_at: new Date('2026-08-11T00:00:00.000Z'),
+        status: 'published',
+      }),
+      findProjection: jest.fn().mockResolvedValue({ status: 'pending' }),
+      listDraftFiles,
+      listAttemptFiles,
+      listTeamSubmissions: jest.fn().mockResolvedValue([
+        {
+          ...required,
+          current_attempt_id: null,
+          requirement_id: 'requirement-draft',
+          submission_id: 'submission-draft',
+          workflow_status: 'draft',
+        },
+        {
+          ...required,
+          current_attempt_id: 'attempt-1',
+          requirement_id: 'requirement-submitted',
+          submission_id: 'submission-submitted',
+          workflow_status: 'submitted',
+        },
+      ]),
+    });
+    const service = new ComplianceService(repository as never);
+
+    const result = await service.findTeamCompliance(
+      'org-1',
+      'team-1',
+      managerAccess,
+    );
+
+    expect(listDraftFiles).toHaveBeenCalledWith('submission-draft');
+    expect(listAttemptFiles).toHaveBeenCalledWith(
+      'submission-submitted',
+      'attempt-1',
+    );
+    expect(result.requirements[0].files).toEqual([{ id: 'draft-file' }]);
+    expect(result.requirements[1].files).toEqual([{ id: 'attempt-file' }]);
   });
 
   it('does not expose unpublished requirements to team managers', async () => {
