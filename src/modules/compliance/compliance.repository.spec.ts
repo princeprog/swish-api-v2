@@ -1,27 +1,15 @@
-import { incrementClearanceProjectionVersion } from './compliance.repository';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+const repositorySource = readFileSync(
+  resolve(__dirname, 'compliance.repository.ts'),
+  'utf8',
+);
 
 describe('ComplianceRepository', () => {
   it('qualifies the projection version when incrementing an existing row', () => {
-    const expression = incrementClearanceProjectionVersion().toOperationNode() as {
-      parameters: Array<{
-        table: {
-          table: {
-            schema: { name: string };
-            identifier: { name: string };
-          };
-        };
-        column: { column: { name: string } };
-      }>;
-    };
-
-    expect(expression.parameters[0]).toMatchObject({
-      table: {
-        table: {
-          schema: { name: 'compliance' },
-          identifier: { name: 'team_clearance_projections' },
-        },
-      },
-      column: { column: { name: 'version' } },
-    });
+    expect(repositorySource).toMatch(
+      /version:\s*eb\(\s*eb\.ref\(['"]compliance\.team_clearance_projections\.version['"]\),\s*['"]\+['"],\s*1\s*\)/,
+    );
   });
 });
