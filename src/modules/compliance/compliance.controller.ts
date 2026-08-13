@@ -26,6 +26,7 @@ import { CreateRequirementDto } from './dto/create-requirement.dto';
 import { PrepareComplianceUploadDto } from './dto/prepare-compliance-upload.dto';
 import { ReviewReasonDto } from './dto/review-reason.dto';
 import { SaveComplianceDraftDto } from './dto/save-compliance-draft.dto';
+import { SubmitComplianceRequirementDto } from './dto/submit-compliance-requirement.dto';
 import { UpdateComplianceSettingsDto } from './dto/update-compliance-settings.dto';
 import { UpdateRequirementDto } from './dto/update-requirement.dto';
 import { WaiveRequirementDto } from './dto/waive-requirement.dto';
@@ -221,12 +222,14 @@ export class ComplianceController {
     @Param('teamId') teamId: string,
     @Param('requirementId') requirementId: string,
     @OrganizationAccess() access: OrganizationAccessContext,
+    @Body() dto: SubmitComplianceRequirementDto,
   ) {
     return this.complianceService.submitRequirement(
       organizationId,
       teamId,
       requirementId,
       access,
+      dto,
     );
   }
 

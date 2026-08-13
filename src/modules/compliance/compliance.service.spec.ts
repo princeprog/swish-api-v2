@@ -237,6 +237,34 @@ describe('ComplianceService', () => {
     );
   });
 
+  it('submits the supplied response without writing a duplicate draft event', async () => {
+    const repository = createRepository({
+      findLatestDraftEvent: jest.fn().mockResolvedValue({
+        metadata: { response: 'Older draft', responseType: 'short_text' },
+      }),
+    });
+    const service = new ComplianceService(repository as never);
+
+    await service.submitRequirement(
+      'org-1',
+      'team-1',
+      'requirement-1',
+      managerAccess,
+      { response: 'Current response' },
+    );
+
+    expect(repository.findLatestDraftEvent).not.toHaveBeenCalled();
+    expect(repository.createAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ response_value: 'Current response' }),
+    );
+    expect(repository.addEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: 'submitted' }),
+    );
+    expect(repository.addEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: 'draft_saved' }),
+    );
+  });
+
   it('returns every immutable attempt and event in history', async () => {
     const attempts = [
       { attempt_number: 1, id: 'attempt-1' },

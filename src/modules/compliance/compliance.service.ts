@@ -18,6 +18,7 @@ import type { CreateRequirementDto } from './dto/create-requirement.dto';
 import type { PrepareComplianceUploadDto } from './dto/prepare-compliance-upload.dto';
 import type { ReviewReasonDto } from './dto/review-reason.dto';
 import type { SaveComplianceDraftDto } from './dto/save-compliance-draft.dto';
+import type { SubmitComplianceRequirementDto } from './dto/submit-compliance-requirement.dto';
 import type { UpdateComplianceSettingsDto } from './dto/update-compliance-settings.dto';
 import type { UpdateRequirementDto } from './dto/update-requirement.dto';
 import type { WaiveRequirementDto } from './dto/waive-requirement.dto';
@@ -565,6 +566,7 @@ export class ComplianceService {
     teamId: string,
     requirementId: string,
     access: OrganizationAccessContext,
+    dto: SubmitComplianceRequirementDto = {},
   ) {
     await this.assertCanSubmitTeam(access, teamId);
     const context = await this.teamRequirementContext(
@@ -579,8 +581,11 @@ export class ComplianceService {
     ensureSubmissionCanBeChanged(
       submission.workflow_status as ComplianceWorkflowStatus,
     );
-    const draft = await this.repository.findLatestDraftEvent(submission.id);
-    const response = readDraftResponse(draft?.metadata);
+    const response = Object.prototype.hasOwnProperty.call(dto, 'response')
+      ? dto.response
+      : readDraftResponse(
+          (await this.repository.findLatestDraftEvent(submission.id))?.metadata,
+        );
     validateComplianceResponse({
       isRequired: context.requirement.is_required,
       maxFileCount: context.requirement.max_file_count,
