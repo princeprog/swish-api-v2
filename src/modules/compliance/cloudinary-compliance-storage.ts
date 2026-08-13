@@ -38,8 +38,12 @@ type CloudinaryClient = {
       params: Record<string, string | number>,
       secret: string,
     ) => string;
+    private_download_url: (
+      publicId: string,
+      format: string,
+      options: Record<string, string | number | boolean>,
+    ) => string;
   };
-  url: (publicId: string, options: Record<string, unknown>) => string;
 };
 
 const ALLOWED_MIME_TYPES = new Set([
@@ -296,11 +300,9 @@ export class CloudinaryComplianceStorage implements ComplianceStorageBoundary {
     }
 
     const expiresAt = new Date(Date.now() + DOWNLOAD_TTL_SECONDS * 1000);
-    const url = this.client.url(file.storage_key, {
-      auth_token: { duration: DOWNLOAD_TTL_SECONDS },
+    const url = this.client.utils.private_download_url(file.storage_key, '', {
+      expires_at: Math.floor(expiresAt.getTime() / 1000),
       resource_type: 'raw',
-      secure: true,
-      sign_url: true,
       type: 'authenticated',
     });
     return { url, expiresAt };
