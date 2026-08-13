@@ -43,8 +43,18 @@ describe('CloudinaryComplianceStorage', () => {
     expect(result.fields.type).toBe('authenticated');
     expect(result.fields.resource_type).toBe('raw');
     expect(result.fields.signature).toBe('signed');
+    expect(client.utils.api_sign_request).toHaveBeenCalledWith(
+      {
+        context: `sha256=${'a'.repeat(64)}`,
+        public_id: expect.stringMatching(/\.pdf$/),
+        timestamp: expect.any(Number),
+        type: 'authenticated',
+      },
+      'test-secret',
+    );
     expect(repository.createPendingFile).toHaveBeenCalledWith(
       expect.objectContaining({
+        storage_key: expect.stringMatching(/\.pdf$/),
         storage_provider: 'cloudinary',
         submission_id: 'submission-1',
         verification_status: 'pending_upload',

@@ -47,6 +47,11 @@ const ALLOWED_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',
 ]);
+const RAW_FILE_EXTENSIONS: Record<string, string> = {
+  'application/pdf': 'pdf',
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+};
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const UPLOAD_TTL_SECONDS = 15 * 60;
 const DOWNLOAD_TTL_SECONDS = 5 * 60;
@@ -88,13 +93,15 @@ export class CloudinaryComplianceStorage implements ComplianceStorageBoundary {
     this.validateFile(input);
 
     const fileId = randomUUID();
-    const storageKey = [
-      this.folder,
-      input.organizationId,
-      input.teamId,
-      input.requirementId,
-      fileId,
-    ].join('/');
+    const fileExtension = RAW_FILE_EXTENSIONS[input.mimeType];
+    const storageKey =
+      [
+        this.folder,
+        input.organizationId,
+        input.teamId,
+        input.requirementId,
+        fileId,
+      ].join('/') + `.${fileExtension}`;
     const now = new Date();
 
     await this.repository.createPendingFile({
@@ -116,7 +123,6 @@ export class CloudinaryComplianceStorage implements ComplianceStorageBoundary {
     const params = {
       context: `sha256=${input.sha256.toLowerCase()}`,
       public_id: storageKey,
-      resource_type: 'raw',
       timestamp,
       type: 'authenticated',
     };
@@ -129,7 +135,7 @@ export class CloudinaryComplianceStorage implements ComplianceStorageBoundary {
         api_key: this.apiKey,
         context: params.context,
         public_id: params.public_id,
-        resource_type: params.resource_type,
+        resource_type: 'raw',
         signature: this.client.utils.api_sign_request(params, this.apiSecret),
         timestamp: String(params.timestamp),
         type: params.type,
