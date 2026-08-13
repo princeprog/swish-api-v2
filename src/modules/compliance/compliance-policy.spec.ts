@@ -3,10 +3,22 @@ import {
   calculateTeamClearance,
   ensureReviewerActionAllowed,
   ensureSubmissionCanBeChanged,
+  reviewQueueStatuses,
   validateComplianceResponse,
 } from './compliance-policy';
 
 describe('compliance policy', () => {
+  describe('review queue scopes', () => {
+    it('maps queue scopes to workflow statuses', () => {
+      expect(reviewQueueStatuses('needs_review')).toEqual([
+        'submitted',
+        'under_review',
+      ]);
+      expect(reviewQueueStatuses('completed')).toEqual(['approved', 'waived']);
+      expect(reviewQueueStatuses('all')).toBeUndefined();
+    });
+  });
+
   describe('response validation', () => {
     it.each([
       ['short_text', 'Barangay clearance'],

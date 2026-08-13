@@ -69,18 +69,23 @@ export class NotificationController {
   }
 
   @Sse('stream')
-  stream(@CurrentUser() user: AuthUser): Observable<{ data: string; type: string }> {
+  stream(
+    @CurrentUser() user: AuthUser,
+  ): Observable<{ data: string; type: string }> {
     return new Observable((subscriber) => {
       subscriber.next({
         data: JSON.stringify({ connected: true }),
         type: 'ready',
       });
-      const unsubscribe = this.notificationStream.subscribe(user.id, () => {
-        subscriber.next({
-          data: JSON.stringify({ changed: true }),
-          type: 'notifications',
-        });
-      });
+      const unsubscribe = this.notificationStream.subscribe(
+        user.id,
+        (change) => {
+          subscriber.next({
+            data: JSON.stringify({ changed: true, ...change }),
+            type: 'notifications',
+          });
+        },
+      );
       const heartbeat = setInterval(() => {
         subscriber.next({ data: JSON.stringify({}), type: 'heartbeat' });
       }, 25_000);

@@ -29,4 +29,24 @@ describe('notification stream subscriptions', () => {
     expect(first).toHaveBeenCalledTimes(1);
     expect(second).toHaveBeenCalledTimes(1);
   });
+
+  it('forwards resource metadata with the user invalidation', () => {
+    const stream = new NotificationStreamService();
+    const listener = jest.fn();
+    stream.subscribe('user-1', listener);
+
+    stream.publishLocal('user-1', {
+      eventType: 'compliance.item_submitted',
+      organizationId: 'org-1',
+      resourceId: 'submission-1',
+      resourceType: 'compliance_submission',
+    });
+
+    expect(listener).toHaveBeenCalledWith({
+      eventType: 'compliance.item_submitted',
+      organizationId: 'org-1',
+      resourceId: 'submission-1',
+      resourceType: 'compliance_submission',
+    });
+  });
 });

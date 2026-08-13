@@ -26,6 +26,7 @@ import { CreateRequirementDto } from './dto/create-requirement.dto';
 import { PrepareComplianceUploadDto } from './dto/prepare-compliance-upload.dto';
 import { ReviewReasonDto } from './dto/review-reason.dto';
 import { SaveComplianceDraftDto } from './dto/save-compliance-draft.dto';
+import { SubmitComplianceRequirementDto } from './dto/submit-compliance-requirement.dto';
 import { UpdateComplianceSettingsDto } from './dto/update-compliance-settings.dto';
 import { UpdateRequirementDto } from './dto/update-requirement.dto';
 import { WaiveRequirementDto } from './dto/waive-requirement.dto';
@@ -192,6 +193,22 @@ export class ComplianceController {
     );
   }
 
+  @Get('compliance/submissions/:submissionId/review-detail')
+  @RequireOrganizationPermissions(
+    ORGANIZATION_PERMISSIONS.COMPLIANCE_SUBMISSIONS_REVIEW,
+  )
+  findReviewDetail(
+    @Param('organizationId') organizationId: string,
+    @Param('submissionId') submissionId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+  ) {
+    return this.complianceService.findReviewDetail(
+      organizationId,
+      submissionId,
+      access,
+    );
+  }
+
   @Patch('teams/:teamId/compliance/requirements/:requirementId/draft')
   @RequireOrganizationPermissions(
     ORGANIZATION_PERMISSIONS.COMPLIANCE_SUBMISSIONS_SUBMIT_ASSIGNED,
@@ -221,12 +238,14 @@ export class ComplianceController {
     @Param('teamId') teamId: string,
     @Param('requirementId') requirementId: string,
     @OrganizationAccess() access: OrganizationAccessContext,
+    @Body() dto: SubmitComplianceRequirementDto,
   ) {
     return this.complianceService.submitRequirement(
       organizationId,
       teamId,
       requirementId,
       access,
+      dto,
     );
   }
 

@@ -43,8 +43,18 @@ describe('CloudinaryComplianceStorage', () => {
     expect(result.fields.type).toBe('authenticated');
     expect(result.fields.resource_type).toBe('raw');
     expect(result.fields.signature).toBe('signed');
+    expect(client.utils.api_sign_request).toHaveBeenCalledWith(
+      {
+        context: `sha256=${'a'.repeat(64)}`,
+        public_id: expect.stringMatching(/\.pdf$/),
+        timestamp: expect.any(Number),
+        type: 'authenticated',
+      },
+      'test-secret',
+    );
     expect(repository.createPendingFile).toHaveBeenCalledWith(
       expect.objectContaining({
+        storage_key: expect.stringMatching(/\.pdf$/),
         storage_provider: 'cloudinary',
         submission_id: 'submission-1',
         verification_status: 'pending_upload',
@@ -100,6 +110,39 @@ describe('CloudinaryComplianceStorage', () => {
       ),
     ).rejects.toThrow(BadRequestException);
   });
+
+  it('creates a time-limited download URL for a verified raw asset', async () => {
+    const repository = {
+      findFile: jest.fn().mockResolvedValue({
+        ...fileRecord(),
+        verification_status: 'verified',
+      }),
+    };
+    const client = fakeClient();
+    client.utils.private_download_url = jest
+      .fn()
+      .mockReturnValue('https://download.example/file');
+    const storage = new CloudinaryComplianceStorage(repository, client);
+
+    await expect(
+      storage.createDownloadUrl('file-1', {
+        organizationId: 'org-1',
+        teamId: 'team-1',
+      }),
+    ).resolves.toMatchObject({
+      expiresAt: expect.any(Date),
+      url: 'https://download.example/file',
+    });
+    expect(client.utils.private_download_url).toHaveBeenCalledWith(
+      fileRecord().storage_key,
+      '',
+      expect.objectContaining({
+        expires_at: expect.any(Number),
+        resource_type: 'raw',
+        type: 'authenticated',
+      }),
+    );
+  });
 });
 
 function fakeClient() {
@@ -107,7 +150,10 @@ function fakeClient() {
     config: jest.fn(),
     api: { resource: jest.fn() },
     uploader: { destroy: jest.fn() },
-    utils: { api_sign_request: jest.fn().mockReturnValue('signed') },
+    utils: {
+      api_sign_request: jest.fn().mockReturnValue('signed'),
+      private_download_url: jest.fn(),
+    },
     url: jest.fn().mockReturnValue('https://signed.example/file'),
   };
 }

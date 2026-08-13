@@ -3,6 +3,14 @@ import type { OrganizationAccessContext } from '../../common/auth/roles';
 import type { NormalizedPagination } from '../../common/pagination/pagination.types';
 import { DATABASE, type Database } from '../../database/database.tokens';
 import type { CreateRequirementDto } from './dto/create-requirement.dto';
+import type { ComplianceWorkflowStatus } from './compliance-policy';
+
+const DISPLAYABLE_FILE_STATUSES = [
+  'uploaded',
+  'scanning',
+  'verified',
+  'rejected',
+] as const;
 
 @Injectable()
 export class ComplianceRepository {
@@ -390,20 +398,26 @@ export class ComplianceRepository {
       .execute();
   }
 
-  listFilesForSubmission(submissionId: string, attemptId: string | null) {
-    let query = this.db
+  listDraftFiles(submissionId: string) {
+    return this.db
       .selectFrom('compliance.submission_files')
       .select(['id', 'original_filename', 'verification_status'])
-      .where('submission_id', '=', submissionId);
-    if (attemptId) {
-      query = query.where((eb) =>
-        eb.or([
-          eb('submission_attempt_id', '=', attemptId),
-          eb('submission_attempt_id', 'is', null),
-        ]),
-      );
-    }
-    return query.orderBy('file_order asc').execute();
+      .where('submission_id', '=', submissionId)
+      .where('submission_attempt_id', 'is', null)
+      .where('verification_status', 'in', DISPLAYABLE_FILE_STATUSES)
+      .orderBy('file_order asc')
+      .execute();
+  }
+
+  listAttemptFiles(submissionId: string, attemptId: string) {
+    return this.db
+      .selectFrom('compliance.submission_files')
+      .select(['id', 'original_filename', 'verification_status'])
+      .where('submission_id', '=', submissionId)
+      .where('submission_attempt_id', '=', attemptId)
+      .where('verification_status', 'in', DISPLAYABLE_FILE_STATUSES)
+      .orderBy('file_order asc')
+      .execute();
   }
 
   upsertProjection(
@@ -433,7 +447,11 @@ export class ComplianceRepository {
           pending_requirement_count: clearance.pendingRequirementCount,
           status: clearance.status,
           updated_at: now,
-          version: eb('version', '+', 1),
+          version: eb(
+            eb.ref('compliance.team_clearance_projections.version'),
+            '+',
+            1,
+          ),
         })),
       )
       .returningAll()
@@ -455,6 +473,65 @@ export class ComplianceRepository {
       .selectAll()
       .where('division_settings_id', '=', settingsId)
       .execute();
+  }
+
+  countReviewSubmissions(divisionId: string) {
+    return this.db
+      .selectFrom('compliance.team_submissions as submissions')
+      .innerJoin(
+        'compliance.requirements as requirements',
+        'requirements.id',
+        'submissions.requirement_id',
+      )
+      .innerJoin('admin.teams as teams', 'teams.id', 'submissions.team_id')
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('teams.division_id', '=', divisionId)
+      .where('teams.status', '=', 'active')
+      .where('requirements.archived_at', 'is', null)
+      .where('submissions.workflow_status', 'in', ['submitted', 'under_review'])
+      .executeTakeFirstOrThrow()
+      .then((row) => Number(row.count));
+  }
+
+  findReviewSubmission(organizationId: string, submissionId: string) {
+    return this.db
+      .selectFrom('compliance.team_submissions as submissions')
+      .innerJoin(
+        'compliance.requirements as requirements',
+        'requirements.id',
+        'submissions.requirement_id',
+      )
+      .innerJoin('admin.teams as teams', 'teams.id', 'submissions.team_id')
+      .innerJoin(
+        'admin.divisions as divisions',
+        'divisions.id',
+        'teams.division_id',
+      )
+      .innerJoin(
+        'admin.league_seasons as seasons',
+        'seasons.id',
+        'divisions.league_season_id',
+      )
+      .select([
+        'submissions.current_attempt_id',
+        'submissions.id',
+        'submissions.review_note',
+        'submissions.reviewed_at',
+        'submissions.submitted_at',
+        'submissions.waiver_expires_at',
+        'submissions.waiver_reason',
+        'submissions.workflow_status',
+        'requirements.id as requirement_id',
+        'requirements.is_required',
+        'requirements.response_type',
+        'requirements.title as requirement_title',
+        'divisions.id as division_id',
+        'teams.id as team_id',
+        'teams.name as team_name',
+      ])
+      .where('submissions.id', '=', submissionId)
+      .where('seasons.organization_id', '=', organizationId)
+      .executeTakeFirst();
   }
 
   findComplianceNotificationContext(submissionId: string) {
@@ -547,7 +624,8 @@ export class ComplianceRepository {
 
   async listReviewQueue(
     divisionId: string,
-    status: string | undefined,
+    statuses: readonly ComplianceWorkflowStatus[] | undefined,
+    search: string | undefined,
     pagination: NormalizedPagination,
   ) {
     let base = this.db
@@ -561,7 +639,17 @@ export class ComplianceRepository {
       .where('teams.division_id', '=', divisionId)
       .where('teams.status', '=', 'active')
       .where('requirements.archived_at', 'is', null);
-    if (status) base = base.where('submissions.workflow_status', '=', status);
+    if (statuses?.length) {
+      base = base.where('submissions.workflow_status', 'in', statuses);
+    }
+    if (search) {
+      base = base.where((eb) =>
+        eb.or([
+          eb('teams.name', 'ilike', `%${search}%`),
+          eb('requirements.title', 'ilike', `%${search}%`),
+        ]),
+      );
+    }
     const count = await base
       .select((eb) => eb.fn.countAll().as('count'))
       .executeTakeFirstOrThrow();

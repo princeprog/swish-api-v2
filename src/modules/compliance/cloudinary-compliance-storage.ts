@@ -38,8 +38,12 @@ type CloudinaryClient = {
       params: Record<string, string | number>,
       secret: string,
     ) => string;
+    private_download_url: (
+      publicId: string,
+      format: string,
+      options: Record<string, string | number | boolean>,
+    ) => string;
   };
-  url: (publicId: string, options: Record<string, unknown>) => string;
 };
 
 const ALLOWED_MIME_TYPES = new Set([
@@ -47,6 +51,11 @@ const ALLOWED_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',
 ]);
+const RAW_FILE_EXTENSIONS: Record<string, string> = {
+  'application/pdf': 'pdf',
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+};
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const UPLOAD_TTL_SECONDS = 15 * 60;
 const DOWNLOAD_TTL_SECONDS = 5 * 60;
@@ -88,13 +97,15 @@ export class CloudinaryComplianceStorage implements ComplianceStorageBoundary {
     this.validateFile(input);
 
     const fileId = randomUUID();
-    const storageKey = [
-      this.folder,
-      input.organizationId,
-      input.teamId,
-      input.requirementId,
-      fileId,
-    ].join('/');
+    const fileExtension = RAW_FILE_EXTENSIONS[input.mimeType];
+    const storageKey =
+      [
+        this.folder,
+        input.organizationId,
+        input.teamId,
+        input.requirementId,
+        fileId,
+      ].join('/') + `.${fileExtension}`;
     const now = new Date();
 
     await this.repository.createPendingFile({
@@ -116,7 +127,6 @@ export class CloudinaryComplianceStorage implements ComplianceStorageBoundary {
     const params = {
       context: `sha256=${input.sha256.toLowerCase()}`,
       public_id: storageKey,
-      resource_type: 'raw',
       timestamp,
       type: 'authenticated',
     };
@@ -129,7 +139,7 @@ export class CloudinaryComplianceStorage implements ComplianceStorageBoundary {
         api_key: this.apiKey,
         context: params.context,
         public_id: params.public_id,
-        resource_type: params.resource_type,
+        resource_type: 'raw',
         signature: this.client.utils.api_sign_request(params, this.apiSecret),
         timestamp: String(params.timestamp),
         type: params.type,
@@ -290,11 +300,9 @@ export class CloudinaryComplianceStorage implements ComplianceStorageBoundary {
     }
 
     const expiresAt = new Date(Date.now() + DOWNLOAD_TTL_SECONDS * 1000);
-    const url = this.client.url(file.storage_key, {
-      auth_token: { duration: DOWNLOAD_TTL_SECONDS },
+    const url = this.client.utils.private_download_url(file.storage_key, '', {
+      expires_at: Math.floor(expiresAt.getTime() / 1000),
       resource_type: 'raw',
-      secure: true,
-      sign_url: true,
       type: 'authenticated',
     });
     return { url, expiresAt };

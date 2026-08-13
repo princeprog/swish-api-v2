@@ -10,7 +10,6 @@ import {
   ORGANIZATION_PERMISSIONS,
   type OrganizationAccessContext,
 } from '../../common/auth/roles';
-import type { PaginationQueryDto } from '../../common/pagination/pagination.dto';
 import {
   createPaginatedResponse,
   normalizePagination,
@@ -19,6 +18,7 @@ import type { CreateRequirementDto } from './dto/create-requirement.dto';
 import type { PrepareComplianceUploadDto } from './dto/prepare-compliance-upload.dto';
 import type { ReviewReasonDto } from './dto/review-reason.dto';
 import type { SaveComplianceDraftDto } from './dto/save-compliance-draft.dto';
+import type { SubmitComplianceRequirementDto } from './dto/submit-compliance-requirement.dto';
 import type { UpdateComplianceSettingsDto } from './dto/update-compliance-settings.dto';
 import type { UpdateRequirementDto } from './dto/update-requirement.dto';
 import type { WaiveRequirementDto } from './dto/waive-requirement.dto';
@@ -28,12 +28,14 @@ import {
   calculateTeamClearance,
   ensureReviewerActionAllowed,
   ensureSubmissionCanBeChanged,
+  reviewQueueStatuses,
   validateComplianceResponse,
   type ComplianceResponseType,
   type ComplianceSettingsStatus,
   type ComplianceWorkflowStatus,
 } from './compliance-policy';
 import { ComplianceRepository } from './compliance.repository';
+import type { ComplianceReviewQueryDto } from './dto/compliance-review-query.dto';
 import {
   COMPLIANCE_STORAGE,
   PlaceholderComplianceStorage,
@@ -359,7 +361,13 @@ export class ComplianceService {
     const settings = await this.repository.findSettingsByDivision(divisionId);
     if (!settings) {
       return {
-        counts: { not_required: 0, pending: 0, blocked: 0, cleared: 0 },
+        counts: {
+          not_required: 0,
+          pending: 0,
+          blocked: 0,
+          cleared: 0,
+          needs_review: 0,
+        },
         settings: null,
       };
     }
@@ -371,24 +379,67 @@ export class ComplianceService {
     for (const projection of projections) {
       counts[projection.status as keyof typeof counts] += 1;
     }
-    return { counts, settings };
+    const needsReview =
+      await this.repository.countReviewSubmissions(divisionId);
+    return { counts: { ...counts, needs_review: needsReview }, settings };
   }
 
   async findReviewQueue(
     organizationId: string,
     divisionId: string,
     access: OrganizationAccessContext,
-    query: PaginationQueryDto & { status?: string },
+    query: ComplianceReviewQueryDto,
   ) {
     this.assertCanReview(access);
     await this.assertDivision(organizationId, divisionId);
     const pagination = normalizePagination(query);
+    const scope = query.scope;
+    const statuses = scope
+      ? reviewQueueStatuses(scope)
+      : query.status
+        ? [query.status as ComplianceWorkflowStatus]
+        : undefined;
+    const search = query.search?.trim() || undefined;
     const result = await this.repository.listReviewQueue(
       divisionId,
-      query.status,
+      statuses,
+      search,
       pagination,
     );
     return createPaginatedResponse(result.data, result.total, pagination);
+  }
+
+  async findReviewDetail(
+    organizationId: string,
+    submissionId: string,
+    access: OrganizationAccessContext,
+  ) {
+    this.assertCanReview(access);
+    const submission = await this.repository.findReviewSubmission(
+      organizationId,
+      submissionId,
+    );
+    if (!submission) {
+      throw new NotFoundException('Compliance submission not found.');
+    }
+    const [attempts, events] = await Promise.all([
+      this.repository.listAttempts(submission.id),
+      this.repository.listEvents(submission.id),
+    ]);
+    const currentAttempt =
+      attempts.find(
+        (attempt) => attempt.id === submission.current_attempt_id,
+      ) ?? null;
+    const files = currentAttempt
+      ? await this.repository.listAttemptFiles(submission.id, currentAttempt.id)
+      : [];
+    return {
+      submission,
+      current_attempt: currentAttempt,
+      files,
+      attempts,
+      events,
+    };
   }
 
   async findTeamCompliance(
@@ -423,11 +474,10 @@ export class ComplianceService {
       requirements.map(async (requirement) => {
         const response = requirement.submission_id
           ? requirement.current_attempt_id
-            ? (
+            ? ((
                 await this.repository.listAttempts(requirement.submission_id)
-              ).find(
-                (attempt) => attempt.id === requirement.current_attempt_id,
-              )?.response_value ?? null
+              ).find((attempt) => attempt.id === requirement.current_attempt_id)
+                ?.response_value ?? null)
             : readDraftResponse(
                 (
                   await this.repository.findLatestDraftEvent(
@@ -439,10 +489,12 @@ export class ComplianceService {
         return {
           ...requirement,
           files: requirement.submission_id
-            ? await this.repository.listFilesForSubmission(
-                requirement.submission_id,
-                requirement.current_attempt_id,
-              )
+            ? requirement.current_attempt_id
+              ? await this.repository.listAttemptFiles(
+                  requirement.submission_id,
+                  requirement.current_attempt_id,
+                )
+              : await this.repository.listDraftFiles(requirement.submission_id)
             : [],
           response,
         };
@@ -553,6 +605,7 @@ export class ComplianceService {
     teamId: string,
     requirementId: string,
     access: OrganizationAccessContext,
+    dto: SubmitComplianceRequirementDto = {},
   ) {
     await this.assertCanSubmitTeam(access, teamId);
     const context = await this.teamRequirementContext(
@@ -567,8 +620,11 @@ export class ComplianceService {
     ensureSubmissionCanBeChanged(
       submission.workflow_status as ComplianceWorkflowStatus,
     );
-    const draft = await this.repository.findLatestDraftEvent(submission.id);
-    const response = readDraftResponse(draft?.metadata);
+    const response = Object.prototype.hasOwnProperty.call(dto, 'response')
+      ? dto.response
+      : readDraftResponse(
+          (await this.repository.findLatestDraftEvent(submission.id))?.metadata,
+        );
     validateComplianceResponse({
       isRequired: context.requirement.is_required,
       maxFileCount: context.requirement.max_file_count,

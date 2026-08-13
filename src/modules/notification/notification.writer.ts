@@ -135,18 +135,28 @@ export class NotificationWriter {
     const inserted = await db
       .insertInto('notification.notifications')
       .values(rows as any)
-      .onConflict((conflict: any) =>
-        conflict.column('dedupe_key').doNothing(),
-      )
+      .onConflict((conflict: any) => conflict.column('dedupe_key').doNothing())
       .returningAll()
       .execute();
 
-    for (const row of inserted as Array<{ recipient_user_id?: string | null }>) {
+    for (const row of inserted as Array<{
+      event_type?: string | null;
+      organization_id?: string | null;
+      recipient_user_id?: string | null;
+      resource_id?: string | null;
+      resource_type?: string | null;
+    }>) {
       if (row.recipient_user_id) {
         await (db as any).executeQuery({
           parameters: [
             'notification_changed',
-            JSON.stringify({ userId: row.recipient_user_id }),
+            JSON.stringify({
+              eventType: row.event_type ?? undefined,
+              organizationId: row.organization_id ?? undefined,
+              resourceId: row.resource_id ?? undefined,
+              resourceType: row.resource_type ?? undefined,
+              userId: row.recipient_user_id,
+            }),
           ],
           sql: 'select pg_notify($1, $2)',
         });

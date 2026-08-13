@@ -113,10 +113,14 @@ function createRepository(overrides: Record<string, unknown> = {}) {
       .fn()
       .mockResolvedValue([{ id: 'team-1' }, { id: 'team-2' }]),
     listAttempts: jest.fn().mockResolvedValue([]),
+    listAttemptFiles: jest.fn().mockResolvedValue([]),
+    countReviewSubmissions: jest.fn().mockResolvedValue(0),
+    listDraftFiles: jest.fn().mockResolvedValue([]),
     listEvents: jest.fn().mockResolvedValue([]),
     listRequirements: jest.fn().mockResolvedValue([required]),
     listSubmissionsForSettings: jest.fn().mockResolvedValue([]),
     listTeamSubmissions: jest.fn().mockResolvedValue([]),
+    listProjections: jest.fn().mockResolvedValue([]),
     updateRequirement: jest.fn(),
     updateSettings: jest.fn().mockImplementation(async (_id, value) => ({
       ...settings,
@@ -235,6 +239,34 @@ describe('ComplianceService', () => {
     );
   });
 
+  it('submits the supplied response without writing a duplicate draft event', async () => {
+    const repository = createRepository({
+      findLatestDraftEvent: jest.fn().mockResolvedValue({
+        metadata: { response: 'Older draft', responseType: 'short_text' },
+      }),
+    });
+    const service = new ComplianceService(repository as never);
+
+    await service.submitRequirement(
+      'org-1',
+      'team-1',
+      'requirement-1',
+      managerAccess,
+      { response: 'Current response' },
+    );
+
+    expect(repository.findLatestDraftEvent).not.toHaveBeenCalled();
+    expect(repository.createAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ response_value: 'Current response' }),
+    );
+    expect(repository.addEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: 'submitted' }),
+    );
+    expect(repository.addEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: 'draft_saved' }),
+    );
+  });
+
   it('returns every immutable attempt and event in history', async () => {
     const attempts = [
       { attempt_number: 1, id: 'attempt-1' },
@@ -250,6 +282,115 @@ describe('ComplianceService', () => {
     await expect(
       service.findHistory('org-1', 'team-1', 'requirement-1', managerAccess),
     ).resolves.toEqual({ attempts, events });
+  });
+
+  it('forwards review inbox scope, search, and pagination to the repository', async () => {
+    const repository = createRepository({
+      listReviewQueue: jest.fn().mockResolvedValue({ data: [], total: 0 }),
+    });
+    const service = new ComplianceService(repository as never);
+
+    await service.findReviewQueue('org-1', 'division-1', reviewerAccess, {
+      page: 3,
+      pageSize: 20,
+      scope: 'needs_review',
+      search: '  Eagles  ',
+    });
+
+    expect(repository.listReviewQueue).toHaveBeenCalledWith(
+      'division-1',
+      ['submitted', 'under_review'],
+      'Eagles',
+      { limit: 20, offset: 40, page: 3, pageSize: 20 },
+    );
+  });
+
+  it('returns a reviewer count separate from team-clearance counts', async () => {
+    const repository = createRepository({
+      countReviewSubmissions: jest.fn().mockResolvedValue(3),
+      listProjections: jest
+        .fn()
+        .mockResolvedValue([{ status: 'pending' }, { status: 'cleared' }]),
+    });
+    const service = new ComplianceService(repository as never);
+
+    await expect(
+      service.findDivisionOverview('org-1', 'division-1', reviewerAccess),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        counts: expect.objectContaining({
+          needs_review: 3,
+          pending: 1,
+          cleared: 1,
+        }),
+      }),
+    );
+  });
+
+  it('returns one focused review record with current attempt evidence and history', async () => {
+    const currentAttempt = {
+      attempt_number: 1,
+      id: 'attempt-1',
+      response_type: 'file',
+      response_value: { files: [{ id: 'file-1' }] },
+      submission_id: 'submission-1',
+      submitted_at: new Date('2026-08-11T00:00:00.000Z'),
+      submitted_by_member_id: 'manager-member',
+    };
+    const submission = {
+      current_attempt_id: 'attempt-1',
+      division_id: 'division-1',
+      id: 'submission-1',
+      is_required: true,
+      requirement_id: 'requirement-1',
+      requirement_title: 'Proof of registration',
+      response_type: 'file',
+      review_note: null,
+      reviewed_at: null,
+      team_id: 'team-1',
+      team_name: 'Blue Eagles',
+      submitted_at: currentAttempt.submitted_at,
+      waiver_expires_at: null,
+      waiver_reason: null,
+      workflow_status: 'submitted',
+    };
+    const repository = createRepository({
+      findReviewSubmission: jest.fn().mockResolvedValue(submission),
+      listAttempts: jest.fn().mockResolvedValue([currentAttempt]),
+      listAttemptFiles: jest.fn().mockResolvedValue([
+        {
+          id: 'file-1',
+          original_filename: 'registration.pdf',
+          verification_status: 'verified',
+        },
+      ]),
+      listEvents: jest
+        .fn()
+        .mockResolvedValue([{ event_type: 'submitted', id: 'event-1' }]),
+    });
+    const service = new ComplianceService(repository as never);
+
+    const result = await service.findReviewDetail(
+      'org-1',
+      'submission-1',
+      reviewerAccess,
+    );
+
+    expect(result).toEqual({
+      submission,
+      current_attempt: currentAttempt,
+      files: [
+        {
+          id: 'file-1',
+          original_filename: 'registration.pdf',
+          verification_status: 'verified',
+        },
+      ],
+      attempts: [currentAttempt],
+      events: [{ event_type: 'submitted', id: 'event-1' }],
+    });
+
+    expect(result.submission.division_id).toBe('division-1');
   });
 
   it('allows a reviewer to request changes and records the reason', async () => {
@@ -337,6 +478,54 @@ describe('ComplianceService', () => {
     expect(result.requirements[0]).toEqual(
       expect.objectContaining({ response: 'Coach Maria Santos' }),
     );
+  });
+
+  it('uses draft files for drafts and exact attempt files for submitted items', async () => {
+    const listDraftFiles = jest.fn().mockResolvedValue([{ id: 'draft-file' }]);
+    const listAttemptFiles = jest
+      .fn()
+      .mockResolvedValue([{ id: 'attempt-file' }]);
+    const repository = createRepository({
+      findSettingsByDivision: jest.fn().mockResolvedValue({
+        ...settings,
+        published_at: new Date('2026-08-11T00:00:00.000Z'),
+        status: 'published',
+      }),
+      findProjection: jest.fn().mockResolvedValue({ status: 'pending' }),
+      listDraftFiles,
+      listAttemptFiles,
+      listTeamSubmissions: jest.fn().mockResolvedValue([
+        {
+          ...required,
+          current_attempt_id: null,
+          requirement_id: 'requirement-draft',
+          submission_id: 'submission-draft',
+          workflow_status: 'draft',
+        },
+        {
+          ...required,
+          current_attempt_id: 'attempt-1',
+          requirement_id: 'requirement-submitted',
+          submission_id: 'submission-submitted',
+          workflow_status: 'submitted',
+        },
+      ]),
+    });
+    const service = new ComplianceService(repository as never);
+
+    const result = await service.findTeamCompliance(
+      'org-1',
+      'team-1',
+      managerAccess,
+    );
+
+    expect(listDraftFiles).toHaveBeenCalledWith('submission-draft');
+    expect(listAttemptFiles).toHaveBeenCalledWith(
+      'submission-submitted',
+      'attempt-1',
+    );
+    expect(result.requirements[0].files).toEqual([{ id: 'draft-file' }]);
+    expect(result.requirements[1].files).toEqual([{ id: 'attempt-file' }]);
   });
 
   it('does not expose unpublished requirements to team managers', async () => {
