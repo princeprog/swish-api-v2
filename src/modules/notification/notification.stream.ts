@@ -2,7 +2,14 @@ import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Client } from 'pg';
 import { createDatabasePoolConfig } from '../../database/database.config';
 
-type StreamListener = () => void;
+export type NotificationChange = {
+  eventType?: string;
+  organizationId?: string;
+  resourceId?: string;
+  resourceType?: string;
+};
+
+type StreamListener = (change: NotificationChange) => void;
 
 @Injectable()
 export class NotificationStreamService
@@ -26,9 +33,28 @@ export class NotificationStreamService
         }
 
         try {
-          const payload = JSON.parse(message.payload) as { userId?: unknown };
+          const payload = JSON.parse(message.payload) as {
+            eventType?: unknown;
+            organizationId?: unknown;
+            resourceId?: unknown;
+            resourceType?: unknown;
+            userId?: unknown;
+          };
           if (typeof payload.userId === 'string') {
-            this.publishLocal(payload.userId);
+            this.publishLocal(payload.userId, {
+              ...(typeof payload.eventType === 'string'
+                ? { eventType: payload.eventType }
+                : {}),
+              ...(typeof payload.organizationId === 'string'
+                ? { organizationId: payload.organizationId }
+                : {}),
+              ...(typeof payload.resourceId === 'string'
+                ? { resourceId: payload.resourceId }
+                : {}),
+              ...(typeof payload.resourceType === 'string'
+                ? { resourceType: payload.resourceType }
+                : {}),
+            });
           }
         } catch {
           // Invalid signals are ignored; clients refetch on reconnect.
@@ -46,7 +72,8 @@ export class NotificationStreamService
   }
 
   subscribe(userId: string, listener: StreamListener): () => void {
-    const userListeners = this.listeners.get(userId) ?? new Set<StreamListener>();
+    const userListeners =
+      this.listeners.get(userId) ?? new Set<StreamListener>();
     userListeners.add(listener);
     this.listeners.set(userId, userListeners);
 
@@ -58,9 +85,9 @@ export class NotificationStreamService
     };
   }
 
-  publishLocal(userId: string): void {
+  publishLocal(userId: string, change: NotificationChange = {}): void {
     for (const listener of this.listeners.get(userId) ?? []) {
-      listener();
+      listener(change);
     }
   }
 }

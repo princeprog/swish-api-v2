@@ -94,4 +94,55 @@ describe('notification writer', () => {
     expect(query.where).toHaveBeenCalledWith('resource_id', '=', 'inv-1');
     expect(execute).toHaveBeenCalled();
   });
+
+  it('publishes notification metadata for realtime consumers', async () => {
+    const executeQuery = jest.fn().mockResolvedValue(undefined);
+    const insertExecute = jest.fn().mockResolvedValue([
+      {
+        event_type: 'compliance.item_submitted',
+        organization_id: 'org-1',
+        recipient_user_id: 'user-1',
+        resource_id: 'submission-1',
+        resource_type: 'compliance_submission',
+      },
+    ]);
+    const insertQuery: any = {
+      execute: insertExecute,
+      onConflict: jest.fn().mockReturnThis(),
+      returningAll: jest.fn().mockReturnThis(),
+      values: jest.fn().mockReturnThis(),
+    };
+    const db: any = {
+      executeQuery,
+      insertInto: jest.fn().mockReturnValue(insertQuery),
+    };
+    const writer = new NotificationWriter(db);
+
+    await writer.create(
+      {
+        context: { teamName: 'Falcons' },
+        dedupeKey: 'submission-1:submitted',
+        eventType: 'compliance.item_submitted',
+        organizationId: 'org-1',
+        recipients: [{ userId: 'user-1' }],
+        resourceId: 'submission-1',
+        resourceType: 'compliance_submission',
+      },
+      db,
+    );
+
+    expect(executeQuery).toHaveBeenCalledWith({
+      parameters: [
+        'notification_changed',
+        JSON.stringify({
+          eventType: 'compliance.item_submitted',
+          organizationId: 'org-1',
+          resourceId: 'submission-1',
+          resourceType: 'compliance_submission',
+          userId: 'user-1',
+        }),
+      ],
+      sql: 'select pg_notify($1, $2)',
+    });
+  });
 });
