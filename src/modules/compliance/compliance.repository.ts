@@ -434,7 +434,11 @@ export class ComplianceRepository {
           pending_requirement_count: clearance.pendingRequirementCount,
           status: clearance.status,
           updated_at: now,
-          version: eb('version', '+', 1),
+          version: eb(
+            eb.ref('compliance.team_clearance_projections.version'),
+            '+',
+            1,
+          ),
         })),
       )
       .returningAll()
