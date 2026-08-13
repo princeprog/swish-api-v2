@@ -525,6 +525,7 @@ export class ComplianceRepository {
         'requirements.is_required',
         'requirements.response_type',
         'requirements.title as requirement_title',
+        'divisions.id as division_id',
         'teams.id as team_id',
         'teams.name as team_name',
       ])

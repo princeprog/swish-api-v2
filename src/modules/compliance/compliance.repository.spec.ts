@@ -93,6 +93,19 @@ describe('ComplianceRepository', () => {
       'org-1',
     );
   });
+
+  it('includes the division id in the review detail projection', async () => {
+    const query = createQuery();
+    const repository = new ComplianceRepository({
+      selectFrom: jest.fn().mockReturnValue(query),
+    } as never);
+
+    await repository.findReviewSubmission('org-1', 'submission-1');
+
+    expect(query.select).toHaveBeenCalledWith(
+      expect.arrayContaining(['divisions.id as division_id']),
+    );
+  });
 });
 
 function createQuery() {

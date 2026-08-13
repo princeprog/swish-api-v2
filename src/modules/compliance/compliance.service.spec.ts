@@ -339,6 +339,7 @@ describe('ComplianceService', () => {
     };
     const submission = {
       current_attempt_id: 'attempt-1',
+      division_id: 'division-1',
       id: 'submission-1',
       is_required: true,
       requirement_id: 'requirement-1',
@@ -369,9 +370,13 @@ describe('ComplianceService', () => {
     });
     const service = new ComplianceService(repository as never);
 
-    await expect(
-      service.findReviewDetail('org-1', 'submission-1', reviewerAccess),
-    ).resolves.toEqual({
+    const result = await service.findReviewDetail(
+      'org-1',
+      'submission-1',
+      reviewerAccess,
+    );
+
+    expect(result).toEqual({
       submission,
       current_attempt: currentAttempt,
       files: [
@@ -384,6 +389,8 @@ describe('ComplianceService', () => {
       attempts: [currentAttempt],
       events: [{ event_type: 'submitted', id: 'event-1' }],
     });
+
+    expect(result.submission.division_id).toBe('division-1');
   });
 
   it('allows a reviewer to request changes and records the reason', async () => {
