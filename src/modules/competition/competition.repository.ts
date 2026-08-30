@@ -293,6 +293,27 @@ export class CompetitionRepository {
    * so concurrent format edits and matchup materialization serialize the same
    * way.
    */
+  async lockSeasonForScheduling(
+    trx: any,
+    organizationId: string,
+    divisionId: string,
+  ) {
+    const season = await trx
+      .selectFrom('admin.league_seasons as seasons')
+      .innerJoin(
+        'admin.divisions as divisions',
+        'divisions.league_season_id',
+        'seasons.id',
+      )
+      .select(['seasons.id', 'seasons.schedule_slot_duration_minutes'])
+      .where('seasons.organization_id', '=', organizationId)
+      .where('divisions.id', '=', divisionId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!season) throw new NotFoundException('Competition format not found');
+    return season;
+  }
+
   async lockFormatForScheduling(
     trx: any,
     organizationId: string,
@@ -352,11 +373,7 @@ export class CompetitionRepository {
   }
 
   async markMatchupScheduled(matchupId: string, gameId: string): Promise<void> {
-    await this.markMatchupScheduledInTransaction(
-      matchupId,
-      gameId,
-      this.db,
-    );
+    await this.markMatchupScheduledInTransaction(matchupId, gameId, this.db);
   }
 
   async markMatchupScheduledInTransaction(

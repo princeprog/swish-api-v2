@@ -99,9 +99,7 @@ export class CompetitionService {
       );
     }
     if (new Set(requestedTeamIds).size !== requestedTeamIds.length) {
-      throw new BadRequestException(
-        'A team can only be assigned to one pool.',
-      );
+      throw new BadRequestException('A team can only be assigned to one pool.');
     }
 
     await this.repository.setPoolAssignments(
@@ -181,7 +179,10 @@ export class CompetitionService {
         status: 'locked',
       };
     } catch (error) {
-      if (error instanceof BadRequestException || error instanceof ConflictException) {
+      if (
+        error instanceof BadRequestException ||
+        error instanceof ConflictException
+      ) {
         throw error;
       }
       throw new BadRequestException(
@@ -198,9 +199,7 @@ export class CompetitionService {
       divisionId,
     );
     if (format.status === 'completed') {
-      throw new ConflictException(
-        'A completed competition cannot be reset.',
-      );
+      throw new ConflictException('A completed competition cannot be reset.');
     }
 
     return this.repository.reset(format.id);
@@ -218,7 +217,14 @@ export class CompetitionService {
     }
 
     const inserted = await this.db.transaction().execute(async (trx) => {
-      // Lock in a single global order: format first, then the matchup.
+      // Lock in a single global order: season, format, matchup, assignments.
+      if (typeof this.repository.lockSeasonForScheduling === 'function') {
+        await this.repository.lockSeasonForScheduling(
+          trx,
+          organizationId,
+          divisionId,
+        );
+      }
       const format = await this.repository.lockFormatForScheduling(
         trx,
         organizationId,
@@ -299,7 +305,9 @@ export class CompetitionService {
       );
     }
     const workspace = await this.repository.getWorkspace(format);
-    const pool = workspace.pools.find((candidate) => candidate.id === dto.poolId);
+    const pool = workspace.pools.find(
+      (candidate) => candidate.id === dto.poolId,
+    );
     if (!pool) {
       throw new BadRequestException('The selected pool was not found.');
     }

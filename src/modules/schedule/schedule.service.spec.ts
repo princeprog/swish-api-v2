@@ -115,6 +115,7 @@ describe('ScheduleService final score updates', () => {
   const gameRecord = (overrides: Record<string, unknown> = {}) => ({
     away_score: null,
     away_team_id: 'team-b',
+    competition_kind: 'exhibition',
     created_at: new Date('2026-07-09T00:00:00.000Z'),
     division_id: 'division-1',
     finalized_at: null,
@@ -137,20 +138,31 @@ describe('ScheduleService final score updates', () => {
     ['scored', { home_score: 12 }],
     ['finalized', { finalized_at: new Date('2026-07-09T12:00:00.000Z') }],
     ['generated', { matchup_id: 'matchup-1' }],
-  ])('rejects generic edits to %s games before any update', async (_, overrides) => {
-    const { db, executeTakeFirst, updateExecuteTakeFirstOrThrow } = createDbMock();
-    executeTakeFirst.mockResolvedValueOnce(gameRecord(overrides));
-    const service = new ScheduleService(db as never);
+  ])(
+    'rejects generic edits to %s games before any update',
+    async (_, overrides) => {
+      const { db, executeTakeFirst, updateExecuteTakeFirstOrThrow } =
+        createDbMock();
+      executeTakeFirst.mockResolvedValueOnce(gameRecord(overrides));
+      const service = new ScheduleService(db as never);
 
-    await expect(
-      service.update('org-1', 'game-1', { startsAt: '2026-07-10T10:00:00.000Z' }),
-    ).rejects.toThrow('Use the competition or scoring workflow to change this game.');
-    expect(updateExecuteTakeFirstOrThrow).not.toHaveBeenCalled();
-  });
+      await expect(
+        service.update('org-1', 'game-1', {
+          startsAt: '2026-07-10T10:00:00.000Z',
+        }),
+      ).rejects.toThrow(
+        'Use the competition or scoring workflow to change this game.',
+      );
+      expect(updateExecuteTakeFirstOrThrow).not.toHaveBeenCalled();
+    },
+  );
 
   it('updates an unscored, unlinked exhibition game before game action starts', async () => {
-    const { db, executeTakeFirst, updateExecuteTakeFirstOrThrow } = createDbMock();
-    executeTakeFirst.mockResolvedValueOnce(gameRecord({ competition_kind: 'exhibition' }));
+    const { db, executeTakeFirst, updateExecuteTakeFirstOrThrow } =
+      createDbMock();
+    executeTakeFirst.mockResolvedValueOnce(
+      gameRecord({ competition_kind: 'exhibition' }),
+    );
     const service = new ScheduleService(db as never);
 
     await service.update('org-1', 'game-1', {
@@ -168,7 +180,9 @@ describe('ScheduleService final score updates', () => {
 
       await expect(
         service.update('org-1', 'game-1', { status: status as any }),
-      ).rejects.toThrow('Only draft, scheduled, postponed, or cancelled games can be changed here.');
+      ).rejects.toThrow(
+        'Only draft, scheduled, postponed, or cancelled games can be changed here.',
+      );
       expect(updateExecuteTakeFirstOrThrow).not.toHaveBeenCalled();
     },
   );
@@ -197,7 +211,7 @@ describe('ScheduleService final score updates', () => {
     await service.update('org-1', 'game-1', {
       startsAt: '2026-07-10T10:00:00.000Z',
       status: 'draft',
-      ...( {
+      ...({
         homeScore: 82,
         awayScore: 79,
         matchupId: 'matchup-1',
@@ -207,7 +221,7 @@ describe('ScheduleService final score updates', () => {
         homeTeamId: 'team-c',
         awayTeamId: 'team-d',
       } as any),
-    } as any);
+    });
 
     const updateValues = updateSet.mock.calls[0][0];
     for (const field of [
@@ -560,6 +574,237 @@ describe('ScheduleService assigned game access', () => {
   });
 });
 
+describe('ScheduleService schedule mutex', () => {
+  it('locks the season row before schedule conflict checks', async () => {
+    const forUpdate = jest.fn().mockReturnThis();
+    const executeTakeFirst = jest.fn().mockResolvedValue({
+      id: 'season-1',
+      schedule_slot_duration_minutes: 90,
+    });
+    const query = {
+      executeTakeFirst,
+      forUpdate,
+      select: jest.fn().mockReturnThis(),
+      selectFrom: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const service = new ScheduleService({
+      selectFrom: jest.fn().mockReturnValue(query),
+    } as never);
+
+    await expect(
+      service.lockSeasonForScheduling(query, 'org-1', 'season-1'),
+    ).resolves.toMatchObject({ id: 'season-1' });
+    expect(forUpdate).toHaveBeenCalledTimes(1);
+    expect(executeTakeFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it('checks current staff assignments when a scheduled game is rescheduled', async () => {
+    const query = {
+      executeTakeFirst: jest.fn().mockResolvedValue({
+        id: 'season-1',
+        schedule_slot_duration_minutes: 90,
+      }),
+      forUpdate: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const trx = {
+      selectFrom: jest.fn().mockReturnValue(query),
+      updateTable: jest.fn().mockReturnValue({
+        executeTakeFirstOrThrow: jest.fn().mockResolvedValue({}),
+        set: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+      }),
+    };
+    const db = {
+      transaction: jest.fn().mockReturnValue({
+        execute: jest.fn((callback) => callback(trx)),
+      }),
+    };
+    const service = new ScheduleService(db as never);
+    const game = {
+      away_score: null,
+      away_team_id: 'team-b',
+      competition_kind: 'exhibition',
+      created_at: new Date(),
+      division_id: 'division-1',
+      finalized_at: null,
+      home_score: null,
+      home_team_id: 'team-a',
+      id: 'game-1',
+      league_season_id: 'season-1',
+      matchup_id: null,
+      published_at: new Date(),
+      starts_at: new Date('2026-09-01T11:00:00.000Z'),
+      status: 'scheduled',
+      updated_at: new Date(),
+      venue_id: 'venue-1',
+    };
+    jest.spyOn(service as any, 'findGameSeasonId').mockResolvedValue('season-1');
+    jest.spyOn(service as any, 'findGameRecord').mockResolvedValue(game);
+    jest.spyOn(service as any, 'findGameAssignments').mockResolvedValue({
+      scorekeeperMemberId: 'member-scorekeeper-1',
+      statisticianMemberId: 'member-statistician-1',
+    });
+    jest.spyOn(service as any, 'assertGenericUpdateIsAllowed').mockResolvedValue(undefined);
+    jest.spyOn(service as any, 'assertScheduleRelations').mockResolvedValue(undefined);
+    const conflictCheck = jest
+      .spyOn(service as any, 'assertNoScheduleConflict')
+      .mockResolvedValue(undefined);
+    jest.spyOn(service, 'findOne').mockResolvedValue({ id: 'game-1' });
+
+    await service.update('org-1', 'game-1', {
+      status: 'scheduled',
+    });
+
+    expect(conflictCheck).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scorekeeperMemberId: 'member-scorekeeper-1',
+        statisticianMemberId: 'member-statistician-1',
+        startsAt: new Date('2026-09-01T11:00:00.000Z'),
+      }),
+      trx,
+      90,
+    );
+  });
+
+  it('uses the post-lock game state for generic update guards', async () => {
+    const query = {
+      executeTakeFirst: jest.fn().mockResolvedValue({
+        id: 'season-1',
+        schedule_slot_duration_minutes: 90,
+      }),
+      forUpdate: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const trx = {
+      selectFrom: jest.fn().mockReturnValue(query),
+    };
+    const db = {
+      transaction: jest.fn().mockReturnValue({
+        execute: jest.fn((callback) => callback(trx)),
+      }),
+    };
+    const service = new ScheduleService(db as never);
+    const lockedGame = {
+      away_score: null,
+      away_team_id: 'team-b',
+      competition_kind: 'exhibition',
+      created_at: new Date(),
+      division_id: 'division-1',
+      finalized_at: null,
+      home_score: null,
+      home_team_id: 'team-a',
+      id: 'game-1',
+      league_season_id: 'season-1',
+      matchup_id: null,
+      published_at: new Date(),
+      starts_at: new Date('2026-09-01T10:00:00.000Z'),
+      status: 'live',
+      updated_at: new Date(),
+      venue_id: 'venue-1',
+    };
+    jest.spyOn(service as any, 'findGameSeasonId').mockResolvedValue('season-1');
+    jest.spyOn(service as any, 'findGameRecord').mockResolvedValue(lockedGame);
+
+    await expect(
+      service.update('org-1', 'game-1', {
+        startsAt: '2026-09-01T11:00:00.000Z',
+      }),
+    ).rejects.toThrow('Use the competition or scoring workflow to change this game.');
+  });
+
+  it('uses the post-lock game state for assignment guards', async () => {
+    const query = {
+      executeTakeFirst: jest.fn().mockResolvedValue({
+        id: 'season-1',
+        schedule_slot_duration_minutes: 90,
+      }),
+      forUpdate: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const trx = { selectFrom: jest.fn().mockReturnValue(query) };
+    const db = {
+      transaction: jest.fn().mockReturnValue({
+        execute: jest.fn((callback) => callback(trx)),
+      }),
+    };
+    const service = new ScheduleService(db as never);
+    jest.spyOn(service as any, 'findGameSeasonId').mockResolvedValue('season-1');
+    jest.spyOn(service as any, 'findGameRecord').mockResolvedValue({
+      away_team_id: 'team-b',
+      division_id: 'division-1',
+      home_team_id: 'team-a',
+      id: 'game-1',
+      league_season_id: 'season-1',
+      starts_at: new Date('2026-09-01T10:00:00.000Z'),
+      status: 'live',
+      venue_id: 'venue-1',
+    });
+
+    await expect(
+      service.updateScorekeeperAssignment(
+        'org-1',
+        'game-1',
+        createOrganizationAccessContext({
+          permissions: [ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE],
+          role: AUTH_ROLES.ADMIN,
+        }),
+        { scorekeeperMemberId: 'member-scorekeeper-1' },
+      ),
+    ).rejects.toThrow(
+      'Scorekeeper assignments lock after the game begins. Reopen this only before game day action starts.',
+    );
+  });
+
+  it('uses the post-lock game state for statistician assignment guards', async () => {
+    const query = {
+      executeTakeFirst: jest.fn().mockResolvedValue({
+        id: 'season-1',
+        schedule_slot_duration_minutes: 90,
+      }),
+      forUpdate: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const trx = { selectFrom: jest.fn().mockReturnValue(query) };
+    const db = {
+      transaction: jest.fn().mockReturnValue({
+        execute: jest.fn((callback) => callback(trx)),
+      }),
+    };
+    const service = new ScheduleService(db as never);
+    jest.spyOn(service as any, 'findGameSeasonId').mockResolvedValue('season-1');
+    jest.spyOn(service as any, 'findGameRecord').mockResolvedValue({
+      away_team_id: 'team-b',
+      division_id: 'division-1',
+      home_team_id: 'team-a',
+      id: 'game-1',
+      league_season_id: 'season-1',
+      starts_at: new Date('2026-09-01T10:00:00.000Z'),
+      status: 'live',
+      venue_id: 'venue-1',
+    });
+
+    await expect(
+      service.updateStatisticianAssignment(
+        'org-1',
+        'game-1',
+        createOrganizationAccessContext({
+          permissions: [ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE],
+          role: AUTH_ROLES.ADMIN,
+        }),
+        { statisticianMemberId: 'member-statistician-1' },
+      ),
+    ).rejects.toThrow(
+      'Scorekeeper assignments lock after the game begins. Reopen this only before game day action starts.',
+    );
+  });
+});
+
 describe('ScheduleService scorekeeper assignments', () => {
   it('creates a game and scorekeeper assignment in one transaction', async () => {
     const insertInto = jest
@@ -579,16 +824,18 @@ describe('ScheduleService scorekeeper assignments', () => {
         values: jest.fn().mockReturnThis(),
         execute: jest.fn().mockResolvedValue([]),
       });
-    const transactionExecute = jest.fn(async (callback) =>
-      callback({
+    let transactionContext: any;
+    const transactionExecute = jest.fn(async (callback) => {
+      transactionContext = {
         selectFrom: db.selectFrom,
         deleteFrom: jest.fn().mockReturnValue({
           execute: jest.fn().mockResolvedValue([]),
           where: jest.fn().mockReturnThis(),
         }),
         insertInto,
-      }),
-    );
+      };
+      return callback(transactionContext);
+    });
     const db = {
       insertInto: jest.fn(),
       selectFrom: jest.fn().mockReturnValue({
@@ -625,13 +872,20 @@ describe('ScheduleService scorekeeper assignments', () => {
     );
 
     expect(db.transaction).toHaveBeenCalled();
-    expect(conflictCheck).toHaveBeenCalledWith({
-      awayTeamId: 'team-b',
-      homeTeamId: 'team-a',
-      leagueSeasonId: 'season-1',
-      startsAt: new Date('2026-07-09T10:00:00.000Z'),
-      venueId: 'venue-1',
-    }, expect.anything());
+    expect(conflictCheck).toHaveBeenCalledWith(
+      {
+        awayTeamId: 'team-b',
+        homeTeamId: 'team-a',
+        leagueSeasonId: 'season-1',
+        scorekeeperMemberId: 'member-scorekeeper-1',
+        startsAt: new Date('2026-07-09T10:00:00.000Z'),
+        statisticianMemberId: undefined,
+        venueId: 'venue-1',
+      },
+      expect.anything(),
+      undefined,
+    );
+    expect(conflictCheck.mock.calls[0][1]).toBe(transactionContext);
     expect(transactionExecute).toHaveBeenCalled();
     expect(insertInto).toHaveBeenCalledWith('competition.games');
     expect(insertInto).toHaveBeenCalledWith(
@@ -740,9 +994,9 @@ describe('ScheduleService statistician assignments', () => {
       selectFrom: jest.fn().mockReturnValue(selectChain),
     } as never);
 
-    await expect(service.findEligibleStatisticians('org-1')).resolves.toHaveLength(
-      1,
-    );
+    await expect(
+      service.findEligibleStatisticians('org-1'),
+    ).resolves.toHaveLength(1);
     expect(selectChain.where).toHaveBeenCalledWith(
       'members.role',
       '=',

@@ -56,13 +56,52 @@ export class ScheduleService {
     private readonly officialResultCoordinator?: OfficialResultCoordinator,
   ) {}
 
+  /**
+   * The season row is the canonical mutex for every schedule mutation. Callers
+   * that already own a transaction must acquire this lock before locking a
+   * generated matchup, game, or assignment row.
+   */
+  async lockSeasonForScheduling(
+    trx: any,
+    organizationId: string,
+    leagueSeasonId: string,
+  ) {
+    let query = trx
+      .selectFrom('admin.league_seasons')
+      .select(['id', 'schedule_slot_duration_minutes'])
+      .where('id', '=', leagueSeasonId)
+      .where('organization_id', '=', organizationId);
+    if (typeof query.forUpdate === 'function') query = query.forUpdate();
+    const season = await query.executeTakeFirst();
+    if (!season) {
+      throw new NotFoundException(
+        'League season not found in this organization',
+      );
+    }
+    return season;
+  }
+
+  private async lockGameForScheduling(trx: any, gameId: string) {
+    let query = trx
+      .selectFrom('competition.games')
+      .select(['id'])
+      .where('id', '=', gameId);
+    if (typeof query.forUpdate === 'function') query = query.forUpdate();
+    return query.executeTakeFirst();
+  }
+
   async create(
     organizationId: string,
     access: OrganizationAccessContext,
     createScheduleDto: CreateScheduleDto,
   ) {
-    if (createScheduleDto.status && !['draft', 'scheduled'].includes(createScheduleDto.status)) {
-      throw new BadRequestException('New games can only be drafts or scheduled games.');
+    if (
+      createScheduleDto.status &&
+      !['draft', 'scheduled'].includes(createScheduleDto.status)
+    ) {
+      throw new BadRequestException(
+        'New games can only be drafts or scheduled games.',
+      );
     }
     return this.createGame(organizationId, access, createScheduleDto, {
       competitionKind: 'exhibition',
@@ -148,7 +187,7 @@ export class ScheduleService {
     input: CompetitionScheduleInput,
     db: Database | any = this.db,
   ): Promise<void> {
-    const matchup = await (db as any)
+    const matchup = await db
       .selectFrom('competition.matchups as matchups')
       .innerJoin(
         'competition.division_formats as formats',
@@ -202,7 +241,7 @@ export class ScheduleService {
       );
     }
 
-    const existingGame = await (db as any)
+    const existingGame = await db
       .selectFrom('competition.games')
       .select('id')
       .where('matchup_id', '=', input.matchupId)
@@ -219,7 +258,10 @@ export class ScheduleService {
     organizationId: string,
     access: OrganizationAccessContext,
     createScheduleDto: CreateScheduleDto,
-    competition: { competitionKind: 'stage' | 'playoff' | 'exhibition'; matchupId: string | null },
+    competition: {
+      competitionKind: 'stage' | 'playoff' | 'exhibition';
+      matchupId: string | null;
+    },
     transaction?: any,
     notify = true,
   ) {
@@ -229,13 +271,22 @@ export class ScheduleService {
     );
 
     const insert = async (trx: any) => {
-      await this.assertScheduleRelations(organizationId, {
-        awayTeamId: createScheduleDto.awayTeamId,
-        divisionId: createScheduleDto.divisionId,
-        homeTeamId: createScheduleDto.homeTeamId,
-        leagueSeasonId: createScheduleDto.leagueSeasonId,
-        venueId: createScheduleDto.venueId,
-      }, trx);
+      const season = await this.lockSeasonForScheduling(
+        trx,
+        organizationId,
+        createScheduleDto.leagueSeasonId,
+      );
+      await this.assertScheduleRelations(
+        organizationId,
+        {
+          awayTeamId: createScheduleDto.awayTeamId,
+          divisionId: createScheduleDto.divisionId,
+          homeTeamId: createScheduleDto.homeTeamId,
+          leagueSeasonId: createScheduleDto.leagueSeasonId,
+          venueId: createScheduleDto.venueId,
+        },
+        trx,
+      );
 
       if (createScheduleDto.scorekeeperMemberId) {
         await this.assertScorekeeperCanBeAssigned(
@@ -253,74 +304,80 @@ export class ScheduleService {
       }
 
       if (createScheduleDto.status === 'scheduled') {
-        await this.assertNoScheduleConflict({
-          awayTeamId: createScheduleDto.awayTeamId,
-          homeTeamId: createScheduleDto.homeTeamId,
-          leagueSeasonId: createScheduleDto.leagueSeasonId,
-          startsAt: new Date(createScheduleDto.startsAt),
-          venueId: createScheduleDto.venueId,
-        }, trx);
+        await this.assertNoScheduleConflict(
+          {
+            awayTeamId: createScheduleDto.awayTeamId,
+            homeTeamId: createScheduleDto.homeTeamId,
+            leagueSeasonId: createScheduleDto.leagueSeasonId,
+            startsAt: new Date(createScheduleDto.startsAt),
+            venueId: createScheduleDto.venueId,
+            scorekeeperMemberId: createScheduleDto.scorekeeperMemberId,
+            statisticianMemberId: createScheduleDto.statisticianMemberId,
+          },
+          trx,
+          season.schedule_slot_duration_minutes,
+        );
       }
 
-        const game = await trx
-          .insertInto('competition.games')
+      const game = await trx
+        .insertInto('competition.games')
+        .values({
+          away_team_id: createScheduleDto.awayTeamId,
+          away_score: null,
+          competition_kind: competition.competitionKind,
+          division_id: createScheduleDto.divisionId,
+          finalized_at: null,
+          home_score: null,
+          home_team_id: createScheduleDto.homeTeamId,
+          league_season_id: createScheduleDto.leagueSeasonId,
+          matchup_id: competition.matchupId,
+          published_at:
+            createScheduleDto.status === 'scheduled' ? new Date() : null,
+          starts_at: new Date(createScheduleDto.startsAt),
+          status: createScheduleDto.status ?? 'draft',
+          venue_id: createScheduleDto.venueId,
+        })
+        .returning(['id'])
+        .executeTakeFirstOrThrow();
+
+      if (createScheduleDto.scorekeeperMemberId) {
+        await this.replaceScorekeeperAssignmentInTransaction(
+          trx,
+          game.id,
+          createScheduleDto.scorekeeperMemberId,
+        );
+
+        await this.writeAuditInTransaction(
+          trx,
+          access,
+          'game.scorekeeper_assigned',
+          game.id,
+          {
+            previousScorekeeperMemberId: null,
+            scorekeeperMemberId: createScheduleDto.scorekeeperMemberId,
+          },
+        );
+      }
+
+      if (createScheduleDto.statisticianMemberId) {
+        await trx
+          .insertInto('access.game_statistician_assignments')
           .values({
-            away_team_id: createScheduleDto.awayTeamId,
-            away_score: null,
-            competition_kind: competition.competitionKind,
-            division_id: createScheduleDto.divisionId,
-            finalized_at: null,
-            home_score: null,
-            home_team_id: createScheduleDto.homeTeamId,
-            league_season_id: createScheduleDto.leagueSeasonId,
-            matchup_id: competition.matchupId,
-            published_at:
-              createScheduleDto.status === 'scheduled' ? new Date() : null,
-            starts_at: new Date(createScheduleDto.startsAt),
-            status: createScheduleDto.status ?? 'draft',
-            venue_id: createScheduleDto.venueId,
+            game_id: game.id,
+            organization_member_id: createScheduleDto.statisticianMemberId,
           })
-          .returning(['id'])
-          .executeTakeFirstOrThrow();
-
-        if (createScheduleDto.scorekeeperMemberId) {
-          await this.replaceScorekeeperAssignmentInTransaction(
-            trx,
-            game.id,
-            createScheduleDto.scorekeeperMemberId,
-          );
-
-          await this.writeAuditInTransaction(
-            trx,
-            access,
-            'game.scorekeeper_assigned',
-            game.id,
-            {
-              previousScorekeeperMemberId: null,
-              scorekeeperMemberId: createScheduleDto.scorekeeperMemberId,
-            },
-          );
-        }
-
-        if (createScheduleDto.statisticianMemberId) {
-          await trx
-            .insertInto('access.game_statistician_assignments')
-            .values({
-              game_id: game.id,
-              organization_member_id: createScheduleDto.statisticianMemberId,
-            })
-            .execute();
-          await this.writeAuditInTransaction(
-            trx,
-            access,
-            'game.statistician_assignment.updated',
-            game.id,
-            {
-              previousStatisticianMemberId: null,
-              statisticianMemberId: createScheduleDto.statisticianMemberId,
-            },
-          );
-        }
+          .execute();
+        await this.writeAuditInTransaction(
+          trx,
+          access,
+          'game.statistician_assignment.updated',
+          game.id,
+          {
+            previousStatisticianMemberId: null,
+            statisticianMemberId: createScheduleDto.statisticianMemberId,
+          },
+        );
+      }
 
       return game;
     };
@@ -331,7 +388,12 @@ export class ScheduleService {
 
     if (!notify) return inserted;
 
-    return this.finishCreatedGame(organizationId, access, createScheduleDto, inserted);
+    return this.finishCreatedGame(
+      organizationId,
+      access,
+      createScheduleDto,
+      inserted,
+    );
   }
 
   private async finishCreatedGame(
@@ -340,7 +402,6 @@ export class ScheduleService {
     createScheduleDto: CreateScheduleDto,
     inserted: { id: string },
   ) {
-
     const game = await this.findOne(organizationId, inserted.id);
     if (createScheduleDto.status === 'scheduled') {
       await this.notifyGameRecipients(
@@ -473,62 +534,104 @@ export class ScheduleService {
     gameId: string,
     updateScheduleDto: UpdateScheduleDto,
   ) {
-    const existingGame = await this.findGameRecord(organizationId, gameId);
+    const hasTransaction = typeof (this.db as any).transaction === 'function';
+    const initialGame = hasTransaction
+      ? undefined
+      : await this.findGameRecord(organizationId, gameId);
+    const leagueSeasonId = initialGame?.league_season_id
+      ?? await this.findGameSeasonId(organizationId, gameId);
     const incomingStatus = (updateScheduleDto as { status?: string }).status;
     if (
       incomingStatus !== undefined &&
-      !['draft', 'scheduled', 'postponed', 'cancelled'].includes(incomingStatus) &&
+      !['draft', 'scheduled', 'postponed', 'cancelled'].includes(
+        incomingStatus,
+      ) &&
       incomingStatus !== 'final'
     ) {
       throw new BadRequestException(
         'Only draft, scheduled, postponed, or cancelled games can be changed here.',
       );
     }
-    await this.assertGenericUpdateIsAllowed(existingGame, gameId);
-    this.assertGameIsNotFinal(existingGame.status);
-    if ((updateScheduleDto as { status?: string }).status === 'final') {
-      throw new BadRequestException(
-        'Use Finalize game to record an official result and update standings.',
+    let existingGame: ScheduleGameRecord | undefined;
+    const mutate = async (trx: any) => {
+      const season = await this.lockSeasonForScheduling(
+        trx,
+        organizationId,
+        leagueSeasonId,
       );
+      await this.lockGameForScheduling(trx, gameId);
+      existingGame = hasTransaction
+        ? await this.findGameRecord(organizationId, gameId, trx)
+        : initialGame;
+      if (!existingGame) {
+        throw new NotFoundException('Schedule game not found');
+      }
+      await this.assertGenericUpdateIsAllowed(existingGame, gameId, trx);
+      this.assertGameIsNotFinal(existingGame.status);
+      if ((updateScheduleDto as { status?: string }).status === 'final') {
+        throw new BadRequestException(
+          'Use Finalize game to record an official result and update standings.',
+        );
+      }
+      const nextStartsAt = updateScheduleDto.startsAt
+        ? new Date(updateScheduleDto.startsAt)
+        : existingGame.starts_at;
+      const nextStatus = updateScheduleDto.status ?? existingGame.status;
+      const assignments = await this.findGameAssignments(trx, gameId);
+      await this.assertScheduleRelations(
+        organizationId,
+        {
+          awayTeamId: existingGame.away_team_id,
+          divisionId: existingGame.division_id,
+          homeTeamId: existingGame.home_team_id,
+          leagueSeasonId: existingGame.league_season_id,
+          venueId: updateScheduleDto.venueId ?? existingGame.venue_id,
+        },
+        trx,
+      );
+      if (nextStatus === 'scheduled') {
+        await this.assertNoScheduleConflict(
+          {
+            awayTeamId: existingGame.away_team_id,
+            excludedGameId: gameId,
+            homeTeamId: existingGame.home_team_id,
+            leagueSeasonId: existingGame.league_season_id,
+            scorekeeperMemberId:
+              assignments.scorekeeperMemberId,
+            startsAt: nextStartsAt,
+            statisticianMemberId: assignments.statisticianMemberId,
+            venueId: updateScheduleDto.venueId ?? existingGame.venue_id,
+          },
+          trx,
+          season.schedule_slot_duration_minutes,
+        );
+      }
+      await trx
+        .updateTable('competition.games')
+        .set({
+          published_at: this.resolvePublishedAt(
+            existingGame,
+            updateScheduleDto,
+          ),
+          starts_at: updateScheduleDto.startsAt
+            ? new Date(updateScheduleDto.startsAt)
+            : undefined,
+          status: updateScheduleDto.status,
+          updated_at: new Date(),
+          venue_id: updateScheduleDto.venueId,
+        })
+        .where('id', '=', gameId)
+        .executeTakeFirstOrThrow();
+    };
+    if (typeof (this.db as any).transaction === 'function') {
+      await (this.db as any).transaction().execute(mutate);
+    } else {
+      await mutate(this.db);
     }
 
-    await this.assertScheduleRelations(organizationId, {
-      awayTeamId: existingGame.away_team_id,
-      divisionId: existingGame.division_id,
-      homeTeamId: existingGame.home_team_id,
-      leagueSeasonId: existingGame.league_season_id,
-      venueId: updateScheduleDto.venueId ?? existingGame.venue_id,
-    });
-
-    const nextStartsAt = updateScheduleDto.startsAt
-      ? new Date(updateScheduleDto.startsAt)
-      : existingGame.starts_at;
-    const nextStatus = updateScheduleDto.status ?? existingGame.status;
-    if (nextStatus === 'scheduled') {
-      await this.assertNoScheduleConflict({
-        awayTeamId: existingGame.away_team_id,
-        excludedGameId: gameId,
-        homeTeamId: existingGame.home_team_id,
-        leagueSeasonId: existingGame.league_season_id,
-        startsAt: nextStartsAt,
-        venueId: updateScheduleDto.venueId ?? existingGame.venue_id,
-      });
+    if (!existingGame) {
+      throw new NotFoundException('Schedule game not found');
     }
-
-    await this.db
-      .updateTable('competition.games')
-      .set({
-        published_at: this.resolvePublishedAt(existingGame, updateScheduleDto),
-        starts_at: updateScheduleDto.startsAt
-          ? new Date(updateScheduleDto.startsAt)
-          : undefined,
-        status: updateScheduleDto.status,
-        updated_at: new Date(),
-        venue_id: updateScheduleDto.venueId,
-      })
-      .where('id', '=', gameId)
-      .executeTakeFirstOrThrow();
-
     const updatedGame = await this.findOne(organizationId, gameId);
     if (updateScheduleDto.status === 'postponed') {
       await this.notifyGameRecipients(
@@ -537,16 +640,17 @@ export class ScheduleService {
         undefined,
         'schedule.game_postponed',
       );
-    } else if (updateScheduleDto.status === 'scheduled' && !existingGame.published_at) {
+    } else if (
+      updateScheduleDto.status === 'scheduled' &&
+      !existingGame.published_at
+    ) {
       await this.notifyGameRecipients(
         organizationId,
         gameId,
         undefined,
         'schedule.game_published',
       );
-    } else if (
-      updateScheduleDto.startsAt || updateScheduleDto.venueId
-    ) {
+    } else if (updateScheduleDto.startsAt || updateScheduleDto.venueId) {
       await this.notifyGameRecipients(
         organizationId,
         gameId,
@@ -616,28 +720,56 @@ export class ScheduleService {
     access: OrganizationAccessContext,
     updateScorekeeperAssignmentDto: UpdateScorekeeperAssignmentDto,
   ) {
-    const existingGame = await this.findGameRecord(organizationId, gameId);
-
-    this.assertScorekeeperAssignmentIsOpen(existingGame.status);
-
     const nextScorekeeperMemberId =
       updateScorekeeperAssignmentDto.scorekeeperMemberId;
-
-    if (nextScorekeeperMemberId) {
-      await this.assertScorekeeperCanBeAssigned(
-        this.db,
+    const hasTransaction = typeof (this.db as any).transaction === 'function';
+    const initialGame = hasTransaction
+      ? undefined
+      : await this.findGameRecord(organizationId, gameId);
+    if (initialGame) this.assertScorekeeperAssignmentIsOpen(initialGame.status);
+    const leagueSeasonId = initialGame?.league_season_id
+      ?? await this.findGameSeasonId(organizationId, gameId);
+    let existingGame: ScheduleGameRecord | undefined;
+    let previousAssignment: { organization_member_id: string } | undefined;
+    const assign = async (trx: any) => {
+      const season = await this.lockSeasonForScheduling(
+        trx,
         organizationId,
-        nextScorekeeperMemberId,
+        leagueSeasonId,
       );
-    }
-
-    const previousAssignment = await this.db
-      .selectFrom('access.game_scorekeeper_assignments')
-      .select(['organization_member_id'])
-      .where('game_id', '=', gameId)
-      .executeTakeFirst();
-
-    await (this.db as any).transaction().execute(async (trx) => {
+      await this.lockGameForScheduling(trx, gameId);
+      existingGame = hasTransaction
+        ? await this.findGameRecord(organizationId, gameId, trx)
+        : initialGame;
+      if (!existingGame) throw new NotFoundException('Schedule game not found');
+      this.assertScorekeeperAssignmentIsOpen(existingGame.status);
+      if (nextScorekeeperMemberId) {
+        await this.assertScorekeeperCanBeAssigned(
+          trx,
+          organizationId,
+          nextScorekeeperMemberId,
+        );
+        if (existingGame.status === 'scheduled') {
+          await this.assertNoScheduleConflict(
+            {
+              awayTeamId: existingGame.away_team_id,
+              excludedGameId: gameId,
+              homeTeamId: existingGame.home_team_id,
+              leagueSeasonId: existingGame.league_season_id,
+              scorekeeperMemberId: nextScorekeeperMemberId,
+              startsAt: existingGame.starts_at,
+              venueId: existingGame.venue_id,
+            },
+            trx,
+            season.schedule_slot_duration_minutes,
+          );
+        }
+      }
+      previousAssignment = await trx
+        .selectFrom('access.game_scorekeeper_assignments')
+        .select(['organization_member_id'])
+        .where('game_id', '=', gameId)
+        .executeTakeFirst();
       await this.replaceScorekeeperAssignmentInTransaction(
         trx,
         gameId,
@@ -655,7 +787,12 @@ export class ScheduleService {
           scorekeeperMemberId: nextScorekeeperMemberId ?? null,
         },
       );
-    });
+    };
+    if (hasTransaction) {
+      await (this.db as any).transaction().execute(assign);
+    } else {
+      await assign(this.db);
+    }
 
     if (previousAssignment?.organization_member_id) {
       await this.notifyScorekeeperAssignment(
@@ -685,24 +822,55 @@ export class ScheduleService {
     access: OrganizationAccessContext,
     dto: UpdateStatisticianAssignmentDto,
   ) {
-    const existingGame = await this.findGameRecord(organizationId, gameId);
-    this.assertScorekeeperAssignmentIsOpen(existingGame.status);
     const statisticianMemberId = dto.statisticianMemberId;
-
-    if (statisticianMemberId) {
-      await this.assertStatisticianCanBeAssigned(
+    const hasTransaction = typeof (this.db as any).transaction === 'function';
+    const initialGame = hasTransaction
+      ? undefined
+      : await this.findGameRecord(organizationId, gameId);
+    if (initialGame) this.assertScorekeeperAssignmentIsOpen(initialGame.status);
+    const leagueSeasonId = initialGame?.league_season_id
+      ?? await this.findGameSeasonId(organizationId, gameId);
+    let existingGame: ScheduleGameRecord | undefined;
+    let previous: { organization_member_id: string } | undefined;
+    const assign = async (trx: any) => {
+      const season = await this.lockSeasonForScheduling(
+        trx,
         organizationId,
-        statisticianMemberId,
+        leagueSeasonId,
       );
-    }
-
-    const previous = await this.db
-      .selectFrom('access.game_statistician_assignments')
-      .select('organization_member_id')
-      .where('game_id', '=', gameId)
-      .executeTakeFirst();
-
-    await (this.db as any).transaction().execute(async (trx) => {
+      await this.lockGameForScheduling(trx, gameId);
+      existingGame = hasTransaction
+        ? await this.findGameRecord(organizationId, gameId, trx)
+        : initialGame;
+      if (!existingGame) throw new NotFoundException('Schedule game not found');
+      this.assertScorekeeperAssignmentIsOpen(existingGame.status);
+      if (statisticianMemberId) {
+        await this.assertStatisticianCanBeAssigned(
+          organizationId,
+          statisticianMemberId,
+          trx,
+        );
+        if (existingGame.status === 'scheduled') {
+          await this.assertNoScheduleConflict(
+            {
+              awayTeamId: existingGame.away_team_id,
+              excludedGameId: gameId,
+              homeTeamId: existingGame.home_team_id,
+              leagueSeasonId: existingGame.league_season_id,
+              startsAt: existingGame.starts_at,
+              statisticianMemberId,
+              venueId: existingGame.venue_id,
+            },
+            trx,
+            season.schedule_slot_duration_minutes,
+          );
+        }
+      }
+      previous = await trx
+        .selectFrom('access.game_statistician_assignments')
+        .select('organization_member_id')
+        .where('game_id', '=', gameId)
+        .executeTakeFirst();
       await trx
         .deleteFrom('access.game_statistician_assignments')
         .where('game_id', '=', gameId)
@@ -727,7 +895,12 @@ export class ScheduleService {
           statisticianMemberId: statisticianMemberId ?? null,
         },
       );
-    });
+    };
+    if (hasTransaction) {
+      await (this.db as any).transaction().execute(assign);
+    } else {
+      await assign(this.db);
+    }
 
     return this.findOne(organizationId, gameId);
   }
@@ -938,38 +1111,62 @@ export class ScheduleService {
     );
   }
 
-  private async assertNoScheduleConflict(params: {
-    awayTeamId: string;
-    excludedGameId?: string;
-    homeTeamId: string;
-    leagueSeasonId: string;
-    startsAt: Date;
-    venueId: string;
-  }, db: Database | any = this.db): Promise<void> {
-    const [season, games] = await Promise.all([
-      db
-        .selectFrom('admin.league_seasons')
-        .select('schedule_slot_duration_minutes')
-        .where('id', '=', params.leagueSeasonId)
-        .executeTakeFirstOrThrow(),
-      db
-        .selectFrom('competition.games')
-        .select([
-          'away_team_id',
-          'home_team_id',
-          'id',
-          'starts_at',
-          'venue_id',
-        ])
-        .where('league_season_id', '=', params.leagueSeasonId)
-        .where('status', 'in', ['scheduled', 'live', 'reopened'])
-        .execute(),
-    ]);
+  private async assertNoScheduleConflict(
+    params: {
+      awayTeamId: string;
+      excludedGameId?: string;
+      homeTeamId: string;
+      leagueSeasonId: string;
+      scorekeeperMemberId?: string | null;
+      startsAt: Date;
+      statisticianMemberId?: string | null;
+      venueId: string;
+    },
+    db: Database | any = this.db,
+    slotDurationMinutes?: number,
+  ): Promise<void> {
+    const season =
+      slotDurationMinutes === undefined
+        ? await db
+            .selectFrom('admin.league_seasons')
+            .select('schedule_slot_duration_minutes')
+            .where('id', '=', params.leagueSeasonId)
+            .executeTakeFirstOrThrow()
+        : { schedule_slot_duration_minutes: slotDurationMinutes };
+    let gamesQuery = db.selectFrom('competition.games as games');
+    if (typeof gamesQuery.leftJoin === 'function') {
+      gamesQuery = gamesQuery
+        .leftJoin(
+          'access.game_scorekeeper_assignments as scorekeepers',
+          'scorekeepers.game_id',
+          'games.id',
+        )
+        .leftJoin(
+          'access.game_statistician_assignments as statisticians',
+          'statisticians.game_id',
+          'games.id',
+        );
+    }
+    const games = await gamesQuery
+      .select([
+        'games.away_team_id',
+        'games.home_team_id',
+        'games.id',
+        'games.starts_at',
+        'games.venue_id',
+        'scorekeepers.organization_member_id as scorekeeper_member_id',
+        'statisticians.organization_member_id as statistician_member_id',
+      ])
+      .where('games.league_season_id', '=', params.leagueSeasonId)
+      .where('games.status', 'in', ['scheduled', 'live', 'reopened'])
+      .execute();
     const conflict = findScheduleConflict(
       {
         awayTeamId: params.awayTeamId,
         homeTeamId: params.homeTeamId,
+        scorekeeperMemberId: params.scorekeeperMemberId,
         startsAt: params.startsAt,
+        statisticianMemberId: params.statisticianMemberId,
         venueId: params.venueId,
       },
       season.schedule_slot_duration_minutes,
@@ -978,20 +1175,23 @@ export class ScheduleService {
         homeTeamId: game.home_team_id,
         id: game.id,
         startsAt: new Date(game.starts_at),
+        scorekeeperMemberId: game.scorekeeper_member_id,
+        statisticianMemberId: game.statistician_member_id,
         venueId: game.venue_id,
       })),
       params.excludedGameId,
     );
 
     if (!conflict) return;
-    if (conflict.kind === 'team') {
-      throw new ConflictException(
-        'One of these teams already has a game during the selected time slot.',
-      );
-    }
-    throw new ConflictException(
-      'This venue is already booked during the selected time slot.',
-    );
+    const messages = {
+      team: 'One of these teams already has a game during the selected time slot.',
+      venue: 'This venue is already booked during the selected time slot.',
+      scorekeeper:
+        'This scorekeeper is already assigned to another game during the selected time slot.',
+      statistician:
+        'This statistician is already assigned to another game during the selected time slot.',
+    } as const;
+    throw new ConflictException(messages[conflict.kind]);
   }
 
   private async assertLeagueSeasonBelongsToOrganization(
@@ -1067,8 +1267,9 @@ export class ScheduleService {
   private async findGameRecord(
     organizationId: string,
     gameId: string,
+    db: Database | any = this.db,
   ): Promise<ScheduleGameRecord> {
-    const game = await this.db
+    const game = await db
       .selectFrom('competition.games as games')
       .innerJoin(
         'admin.league_seasons as league_seasons',
@@ -1102,6 +1303,50 @@ export class ScheduleService {
     }
 
     return game;
+  }
+
+  private async findGameSeasonId(
+    organizationId: string,
+    gameId: string,
+  ): Promise<string> {
+    const game = await this.db
+      .selectFrom('competition.games as games')
+      .innerJoin(
+        'admin.league_seasons as seasons',
+        'seasons.id',
+        'games.league_season_id',
+      )
+      .select('games.league_season_id')
+      .where('games.id', '=', gameId)
+      .where('seasons.organization_id', '=', organizationId)
+      .executeTakeFirst();
+    if (!game) throw new NotFoundException('Schedule game not found');
+    return game.league_season_id;
+  }
+
+  private async findGameAssignments(
+    db: Database | any,
+    gameId: string,
+  ): Promise<{
+    scorekeeperMemberId: string | null;
+    statisticianMemberId: string | null;
+  }> {
+    const [scorekeeper, statistician] = await Promise.all([
+      db
+        .selectFrom('access.game_scorekeeper_assignments')
+        .select('organization_member_id')
+        .where('game_id', '=', gameId)
+        .executeTakeFirst(),
+      db
+        .selectFrom('access.game_statistician_assignments')
+        .select('organization_member_id')
+        .where('game_id', '=', gameId)
+        .executeTakeFirst(),
+    ]);
+    return {
+      scorekeeperMemberId: scorekeeper?.organization_member_id ?? null,
+      statisticianMemberId: statistician?.organization_member_id ?? null,
+    };
   }
 
   private assertScorekeeperAssignmentIsOpen(status: string): void {
@@ -1228,6 +1473,7 @@ export class ScheduleService {
   private async assertGenericUpdateIsAllowed(
     game: ScheduleGameRecord,
     gameId: string,
+    db: Database | any = this.db,
   ): Promise<void> {
     if (
       ['live', 'final', 'reopened'].includes(game.status) ||
@@ -1242,7 +1488,7 @@ export class ScheduleService {
       );
     }
 
-    const scoringState = await this.db
+    const scoringState = await db
       .selectFrom('scoring.game_states')
       .select(['game_id'])
       .where('game_id', '=', gameId)
@@ -1407,5 +1653,4 @@ export class ScheduleService {
 
     return existingGame.published_at;
   }
-
 }

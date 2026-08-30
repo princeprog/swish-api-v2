@@ -1,6 +1,8 @@
 export type ScheduleSlot = {
   awayTeamId: string;
   homeTeamId: string;
+  scorekeeperMemberId?: string | null;
+  statisticianMemberId?: string | null;
   startsAt: Date;
   venueId: string;
 };
@@ -9,7 +11,7 @@ export type ExistingScheduleSlot = ScheduleSlot & { id: string };
 
 export type ScheduleConflict = {
   conflictingGameId: string;
-  kind: 'team' | 'venue';
+  kind: 'team' | 'venue' | 'scorekeeper' | 'statistician';
   resourceId: string;
 };
 
@@ -30,14 +32,10 @@ export function findScheduleConflict(
     const overlaps = proposedStart < existingEnd && existingStart < proposedEnd;
     if (!overlaps) continue;
 
-    const proposedTeams = new Set([
-      proposed.homeTeamId,
-      proposed.awayTeamId,
-    ]);
-    const conflictingTeamId = [
-      existing.homeTeamId,
-      existing.awayTeamId,
-    ].find((teamId) => proposedTeams.has(teamId));
+    const proposedTeams = new Set([proposed.homeTeamId, proposed.awayTeamId]);
+    const conflictingTeamId = [existing.homeTeamId, existing.awayTeamId].find(
+      (teamId) => proposedTeams.has(teamId),
+    );
     if (conflictingTeamId) {
       return {
         conflictingGameId: existing.id,
@@ -50,6 +48,26 @@ export function findScheduleConflict(
         conflictingGameId: existing.id,
         kind: 'venue',
         resourceId: existing.venueId,
+      };
+    }
+    if (
+      proposed.scorekeeperMemberId &&
+      existing.scorekeeperMemberId === proposed.scorekeeperMemberId
+    ) {
+      return {
+        conflictingGameId: existing.id,
+        kind: 'scorekeeper',
+        resourceId: proposed.scorekeeperMemberId,
+      };
+    }
+    if (
+      proposed.statisticianMemberId &&
+      existing.statisticianMemberId === proposed.statisticianMemberId
+    ) {
+      return {
+        conflictingGameId: existing.id,
+        kind: 'statistician',
+        resourceId: proposed.statisticianMemberId,
       };
     }
   }
