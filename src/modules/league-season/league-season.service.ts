@@ -298,6 +298,10 @@ export class LeagueSeasonService {
   }
 
   async remove(organizationId: string, leagueSeasonId: string) {
+    throw new ConflictException(
+      'This record cannot be deleted. Archive support is being prepared so league history remains available.',
+    );
+
     await this.findOne(organizationId, leagueSeasonId);
 
     await this.db

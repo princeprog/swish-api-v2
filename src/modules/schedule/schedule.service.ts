@@ -408,6 +408,10 @@ export class ScheduleService {
   }
 
   async remove(organizationId: string, gameId: string) {
+    throw new ConflictException(
+      'This record cannot be deleted. Archive support is being prepared so league history remains available.',
+    );
+
     const existingGame = await this.findGameRecord(organizationId, gameId);
     this.assertGameCanBeDeleted(existingGame.status);
 

@@ -193,6 +193,10 @@ export class DivisionService {
   }
 
   async remove(organizationId: string, divisionId: string) {
+    throw new ConflictException(
+      'This record cannot be deleted. Archive support is being prepared so league history remains available.',
+    );
+
     await this.findOne(organizationId, divisionId);
 
     await this.db

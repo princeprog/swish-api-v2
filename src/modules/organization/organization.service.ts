@@ -142,6 +142,10 @@ export class OrganizationService {
   }
 
   async remove(organizationId: string, access: OrganizationAccessContext) {
+    throw new ConflictException(
+      'This record cannot be deleted. Archive support is being prepared so league history remains available.',
+    );
+
     await this.findOne(organizationId);
     await this.writeAudit(
       access,

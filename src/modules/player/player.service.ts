@@ -330,6 +330,10 @@ export class PlayerService {
     playerId: string,
     access: OrganizationAccessContext,
   ) {
+    throw new ConflictException(
+      'This record cannot be deleted. Archive support is being prepared so league history remains available.',
+    );
+
     const player = await this.findOne(organizationId, playerId, access);
     await this.assertCanManageTeamRoster(access, player.team_id);
     await this.rosterService.assertRosterEditable(player.team_id);

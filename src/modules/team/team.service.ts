@@ -329,6 +329,10 @@ export class TeamService {
   }
 
   async remove(organizationId: string, teamId: string) {
+    throw new ConflictException(
+      'This record cannot be deleted. Archive support is being prepared so league history remains available.',
+    );
+
     await this.findOne(organizationId, teamId);
 
     await this.db.deleteFrom('admin.teams').where('id', '=', teamId).execute();
