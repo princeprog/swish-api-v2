@@ -26,6 +26,11 @@ import {
   type ScoringState,
 } from './scoring-engine';
 import { NotificationWriter } from '../notification/notification.writer';
+import {
+  projectPeriodScores,
+  projectPersonalFouls,
+  type ScoringProjectionEvent,
+} from './scoring-projections';
 
 type ScheduleGame = {
   away_score: number | null;
@@ -91,7 +96,10 @@ export class ScoringService {
     const state = materializeClocks(await this.ensureScoringState(game), now);
     const control = await this.getControlStatus(gameId, access, now);
 
-    return this.toStateResponse(game, state, control, now);
+    return {
+      ...this.toStateResponse(game, state, control, now),
+      ...(await this.findDetailProjections(gameId)),
+    };
   }
 
   async listEvents(
@@ -392,6 +400,18 @@ export class ScoringService {
             );
           }
 
+          if (input.command.type === 'game.start') {
+            await this.ensureGameRosterSnapshots(game, trx);
+          }
+          if (input.command.type === 'personal_foul.record') {
+            await this.assertPersonalFoulPlayer(
+              gameId,
+              input.command.payload.playerId,
+              input.command.payload.teamId,
+              trx,
+            );
+          }
+
           const applied = applyScoringCommand(lockedState, input.command, now);
           let responseGame = game;
 
@@ -408,6 +428,13 @@ export class ScoringService {
             applied.state,
             insertedEvent.id,
           );
+          if (
+            ['score.record', 'personal_foul.record', 'event.reverse'].includes(
+              input.command.type,
+            )
+          ) {
+            await this.rebuildDetailProjections(game, trx);
+          }
 
           if (input.command.type === 'game.start') {
             await trx
@@ -469,6 +496,11 @@ export class ScoringService {
             ),
           };
         });
+
+      result.state = {
+        ...result.state,
+        ...(await this.findDetailProjections(gameId)),
+      };
 
       if (this.notificationWriter) {
         if (input.command.type === 'game.finalize') {
@@ -741,6 +773,233 @@ export class ScoringService {
     return this.toEngineState(game, inserted, null);
   }
 
+  private async ensureGameRosterSnapshots(game: ScheduleGame, db: any) {
+    const existing = await db
+      .selectFrom('scoring.game_roster_snapshots')
+      .select(['id', 'team_id'])
+      .where('game_id', '=', game.id)
+      .execute();
+    const existingTeams = new Set(
+      existing.map((row: { team_id: string }) => row.team_id),
+    );
+
+    for (const teamId of [game.home_team_id, game.away_team_id]) {
+      if (existingTeams.has(teamId)) continue;
+      const roster = await db
+        .selectFrom('admin.team_rosters')
+        .select('published_version_id')
+        .where('team_id', '=', teamId)
+        .executeTakeFirst();
+      if (!roster?.published_version_id) {
+        throw new ScoringActionError(
+          'ROSTER_NOT_PUBLISHED',
+          'Publish both team rosters before starting the game.',
+        );
+      }
+      const players = await db
+        .selectFrom('admin.roster_version_players')
+        .selectAll()
+        .where('roster_version_id', '=', roster.published_version_id)
+        .orderBy('sort_order asc')
+        .execute();
+      const snapshot = await db
+        .insertInto('scoring.game_roster_snapshots')
+        .values({
+          game_id: game.id,
+          source_roster_version_id: roster.published_version_id,
+          team_id: teamId,
+        })
+        .returning('id')
+        .executeTakeFirstOrThrow();
+      if (players.length > 0) {
+        await db
+          .insertInto('scoring.game_roster_players')
+          .values(
+            players.map(
+              (player: {
+                jersey_number: string;
+                name: string;
+                position: string | null;
+                sort_order: number;
+                source_player_id: string | null;
+              }) => ({
+                game_roster_snapshot_id: snapshot.id,
+                jersey_number: player.jersey_number,
+                name: player.name,
+                position: player.position,
+                sort_order: player.sort_order,
+                source_player_id: player.source_player_id,
+              }),
+            ),
+          )
+          .execute();
+      }
+    }
+  }
+
+  private async assertPersonalFoulPlayer(
+    gameId: string,
+    playerId: string,
+    teamId: string,
+    db: any,
+  ) {
+    const player = await db
+      .selectFrom('scoring.game_roster_players as players')
+      .innerJoin(
+        'scoring.game_roster_snapshots as snapshots',
+        'snapshots.id',
+        'players.game_roster_snapshot_id',
+      )
+      .select('players.id')
+      .where('players.id', '=', playerId)
+      .where('snapshots.game_id', '=', gameId)
+      .where('snapshots.team_id', '=', teamId)
+      .executeTakeFirst();
+    if (!player) {
+      throw new ScoringActionError(
+        'PLAYER_NOT_ON_GAME_ROSTER',
+        'Choose a player from the published game roster.',
+      );
+    }
+  }
+
+  private async rebuildDetailProjections(game: ScheduleGame, db: any) {
+    const [eventRows, rules] = await Promise.all([
+      db
+        .selectFrom('scoring.game_events')
+        .select([
+          'id',
+          'overtime_number',
+          'payload',
+          'period_number',
+          'reverses_event_id',
+          'type',
+        ])
+        .where('game_id', '=', game.id)
+        .orderBy('sequence asc')
+        .execute(),
+      db
+        .selectFrom('admin.league_season_game_rules')
+        .select('personal_foul_limit')
+        .where('league_season_id', '=', game.league_season_id)
+        .executeTakeFirstOrThrow(),
+    ]);
+    const events: ScoringProjectionEvent[] = eventRows.map(
+      (event: {
+        id: string;
+        overtime_number: number;
+        payload: Record<string, unknown>;
+        period_number: number;
+        reverses_event_id: string | null;
+        type: string;
+      }) => ({
+        id: event.id,
+        overtimeNumber: event.overtime_number,
+        payload: event.payload,
+        periodNumber: event.period_number,
+        reversesEventId: event.reverses_event_id,
+        type: event.type,
+      }),
+    );
+    const periodScores = projectPeriodScores(
+      events,
+      game.home_team_id,
+      game.away_team_id,
+    );
+    const playerFouls = projectPersonalFouls(
+      events,
+      rules.personal_foul_limit,
+    );
+
+    await db
+      .deleteFrom('scoring.game_period_scores')
+      .where('game_id', '=', game.id)
+      .execute();
+    if (periodScores.length > 0) {
+      await db
+        .insertInto('scoring.game_period_scores')
+        .values(
+          periodScores.map((period) => ({
+            away_score: period.awayScore,
+            game_id: game.id,
+            home_score: period.homeScore,
+            overtime_number: period.overtimeNumber,
+            period_number: period.periodNumber,
+          })),
+        )
+        .execute();
+    }
+    await db
+      .deleteFrom('scoring.player_foul_totals')
+      .where('game_id', '=', game.id)
+      .execute();
+    if (playerFouls.length > 0) {
+      await db
+        .insertInto('scoring.player_foul_totals')
+        .values(
+          playerFouls.map((foul) => ({
+            fouled_out: foul.fouledOut,
+            game_id: game.id,
+            game_roster_player_id: foul.playerId,
+            personal_fouls: foul.personalFouls,
+            team_id: foul.teamId,
+          })),
+        )
+        .execute();
+    }
+  }
+
+  private async findDetailProjections(gameId: string) {
+    const [periodScores, playerFouls, roster] = await Promise.all([
+      this.db
+        .selectFrom('scoring.game_period_scores')
+        .selectAll()
+        .where('game_id', '=', gameId)
+        .orderBy('period_number asc')
+        .orderBy('overtime_number asc')
+        .execute(),
+      this.db
+        .selectFrom('scoring.player_foul_totals as fouls')
+        .innerJoin(
+          'scoring.game_roster_players as players',
+          'players.id',
+          'fouls.game_roster_player_id',
+        )
+        .select([
+          'fouls.fouled_out',
+          'fouls.game_roster_player_id',
+          'players.jersey_number',
+          'players.name',
+          'fouls.personal_fouls',
+          'fouls.team_id',
+        ])
+        .where('fouls.game_id', '=', gameId)
+        .orderBy('fouls.team_id asc')
+        .orderBy('players.name asc')
+        .execute(),
+      this.db
+        .selectFrom('scoring.game_roster_players as players')
+        .innerJoin(
+          'scoring.game_roster_snapshots as snapshots',
+          'snapshots.id',
+          'players.game_roster_snapshot_id',
+        )
+        .select([
+          'players.id',
+          'players.jersey_number',
+          'players.name',
+          'players.position',
+          'players.sort_order',
+          'snapshots.team_id',
+        ])
+        .where('snapshots.game_id', '=', gameId)
+        .orderBy('snapshots.team_id asc')
+        .orderBy('players.sort_order asc')
+        .execute(),
+    ]);
+    return { periodScores, playerFouls, roster };
+  }
+
   private async findSeasonGameRules(
     leagueSeasonId: string,
     db: any,
@@ -836,7 +1095,12 @@ export class ScoringService {
 
     if (
       !event ||
-      !['score.record', 'team_foul.record', 'timeout.record'].includes(
+      ![
+        'score.record',
+        'personal_foul.record',
+        'team_foul.record',
+        'timeout.record',
+      ].includes(
         event.type,
       )
     ) {
@@ -926,6 +1190,10 @@ export class ScoringService {
 
     if (type === 'timeout.record') {
       return 'Timeout';
+    }
+
+    if (type === 'personal_foul.record') {
+      return 'Personal foul';
     }
 
     return 'Team foul';

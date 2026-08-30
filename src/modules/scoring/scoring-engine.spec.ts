@@ -280,6 +280,33 @@ describe('scoring engine', () => {
     expect(nextPeriod.gameClockRemainingMs).toBe(600000);
   });
 
+  it('attributes a personal foul while deriving the team foul total', () => {
+    const result = applyScoringCommand(
+      createInitialScoringState(game),
+      {
+        idempotencyKey: 'personal-foul-1',
+        payload: {
+          playerId: 'game-roster-player-1',
+          teamId: 'home-team',
+        },
+        type: 'personal_foul.record',
+      },
+      new Date('2026-07-29T10:00:00.000Z'),
+    );
+
+    expect(result.state.homeTeamFouls).toBe(1);
+    expect(result.event).toMatchObject({
+      payload: {
+        playerId: 'game-roster-player-1',
+        teamId: 'home-team',
+      },
+      type: 'personal_foul.record',
+    });
+    expect(result.state.latestReversibleEvent?.summary).toBe(
+      'Home personal foul',
+    );
+  });
+
   it('blocks ending a period while time remains on the game clock', () => {
     expect(() =>
       applyScoringCommand(

@@ -42,7 +42,11 @@ export type LatestReversibleScoringEvent = {
   id: string;
   payload: Record<string, unknown>;
   summary: string;
-  type: 'score.record' | 'team_foul.record' | 'timeout.record';
+  type:
+    | 'score.record'
+    | 'personal_foul.record'
+    | 'team_foul.record'
+    | 'timeout.record';
 };
 
 export type ScoringState = {
@@ -136,6 +140,10 @@ export type ScoringCommand =
   | (BaseCommand & {
       payload: { teamId: string };
       type: 'team_foul.record';
+    })
+  | (BaseCommand & {
+      payload: { playerId: string; teamId: string };
+      type: 'personal_foul.record';
     })
   | (BaseCommand & {
       payload: { teamId: string };
@@ -419,6 +427,22 @@ export function applyScoringCommand(
         payload: command.payload,
         summary: `${capitalize(side)} team foul`,
         type: 'team_foul.record',
+      };
+      break;
+    }
+    case 'personal_foul.record': {
+      assertPeriodActionAvailable(next);
+      const side = resolveTeamSide(next, command.payload.teamId);
+      if (side === 'home') {
+        next.homeTeamFouls += 1;
+      } else {
+        next.awayTeamFouls += 1;
+      }
+      next.latestReversibleEvent = {
+        id: eventId,
+        payload: command.payload,
+        summary: `${capitalize(side)} personal foul`,
+        type: 'personal_foul.record',
       };
       break;
     }
