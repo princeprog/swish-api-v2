@@ -23,6 +23,8 @@ import {
   type StatisticEventType,
   type StatisticRecordedEvent,
 } from './statistics-engine';
+import { suggestPlayerOfGame } from './player-of-game';
+import { AUTH_ROLES } from '../../common/auth/roles';
 
 type StatisticsGameContext = {
   away_score: number | null;
@@ -512,6 +514,143 @@ export class StatisticsService {
         .execute();
     });
     return { status: 'reopened' };
+  }
+
+  async getPlayerOfGame(
+    organizationId: string,
+    gameId: string,
+    access: OrganizationAccessContext,
+  ) {
+    const game = await this.assertGameAccess(organizationId, gameId, access);
+    if (game.status !== 'final') {
+      throw new ConflictException(
+        'Player of the Game can be selected after the official result is finalized.',
+      );
+    }
+    const [sheet, candidates] = await Promise.all([
+      this.db
+        .selectFrom('statistics.game_stat_sheets')
+        .select('status')
+        .where('game_id', '=', gameId)
+        .executeTakeFirst(),
+      this.db
+        .selectFrom('statistics.player_box_scores as boxScores')
+        .innerJoin(
+          'scoring.game_roster_players as players',
+          'players.id',
+          'boxScores.game_roster_player_id',
+        )
+        .select([
+          'boxScores.assists',
+          'boxScores.game_roster_player_id as playerId',
+          'players.name as playerName',
+          'boxScores.points',
+          'boxScores.rebounds',
+          'boxScores.steals',
+          'boxScores.team_id as teamId',
+          'boxScores.turnovers',
+        ])
+        .where('boxScores.game_id', '=', gameId)
+        .execute(),
+    ]);
+    if (sheet?.status !== 'finalized') {
+      throw new ConflictException(
+        'Finalize the player stat sheet before selecting Player of the Game.',
+      );
+    }
+    const winningTeamId =
+      (game.home_score ?? 0) > (game.away_score ?? 0)
+        ? game.home_team_id
+        : game.away_team_id;
+    const suggestion = suggestPlayerOfGame(candidates, winningTeamId);
+    if (!suggestion) {
+      throw new ConflictException(
+        'Player statistics are required before selecting Player of the Game.',
+      );
+    }
+    const storedAward = await this.db
+      .insertInto('statistics.game_awards')
+      .values({
+        game_id: gameId,
+        suggested_player_id: suggestion.playerId,
+        suggested_score: suggestion.metricScore,
+      })
+      .onConflict((conflict) =>
+        conflict.column('game_id').doUpdateSet({
+          suggested_player_id: suggestion.playerId,
+          suggested_score: suggestion.metricScore,
+          updated_at: new Date(),
+        }),
+      )
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    return {
+      award: storedAward,
+      candidates,
+      suggestion,
+    };
+  }
+
+  async confirmPlayerOfGame(
+    organizationId: string,
+    gameId: string,
+    access: OrganizationAccessContext,
+    playerId: string,
+    reason?: string,
+  ) {
+    if (
+      access.role !== AUTH_ROLES.OWNER &&
+      access.role !== AUTH_ROLES.ADMIN &&
+      access.role !== AUTH_ROLES.STATISTICIAN
+    ) {
+      throw new BadRequestException(
+        'Only the assigned statistician or a league administrator can confirm Player of the Game.',
+      );
+    }
+    const state = await this.getPlayerOfGame(organizationId, gameId, access);
+    if (!state.candidates.some((candidate) => candidate.playerId === playerId)) {
+      throw new BadRequestException(
+        'Choose a player who participated in this game.',
+      );
+    }
+    if (playerId !== state.suggestion.playerId && !reason?.trim()) {
+      throw new BadRequestException(
+        'Explain why another player was selected instead of the suggested player.',
+      );
+    }
+    const now = new Date();
+    const award = await this.db.transaction().execute(async (trx) => {
+      const confirmed = await trx
+        .updateTable('statistics.game_awards')
+        .set({
+          confirmation_reason: reason?.trim() ?? null,
+          confirmed_at: now,
+          confirmed_by_member_id: access.membershipId,
+          selected_player_id: playerId,
+          updated_at: now,
+        })
+        .where('game_id', '=', gameId)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await trx
+        .insertInto('access.audit_events')
+        .values({
+          action: 'game.player_of_game.confirmed',
+          actor_member_id: access.membershipId,
+          metadata: {
+            reason: reason?.trim() ?? null,
+            selectedPlayerId: playerId,
+            suggestedPlayerId: state.suggestion.playerId,
+          },
+          organization_id: organizationId,
+          target_id: gameId,
+          target_type: 'game',
+        })
+        .execute();
+      return confirmed;
+    });
+    return { award, suggestion: state.suggestion };
   }
 
   private async assertGameAccess(

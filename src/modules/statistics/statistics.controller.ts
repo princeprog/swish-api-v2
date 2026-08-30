@@ -24,6 +24,7 @@ import {
   TakeoverStatisticsControlDto,
 } from './dto/statistics-command.dto';
 import { StatisticsService } from './statistics.service';
+import { ConfirmPlayerOfGameDto } from './dto/player-of-game.dto';
 
 @Controller('organizations/:organizationId/games/:gameId/statistics')
 @UseGuards(JwtAuthGuard, OrganizationPermissionsGuard)
@@ -159,6 +160,35 @@ export class StatisticsController {
       organizationId,
       gameId,
       access,
+      dto.reason,
+    );
+  }
+
+  @Get('player-of-game')
+  getPlayerOfGame(
+    @Param('organizationId') organizationId: string,
+    @Param('gameId') gameId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+  ) {
+    return this.statisticsService.getPlayerOfGame(
+      organizationId,
+      gameId,
+      access,
+    );
+  }
+
+  @Post('player-of-game/confirm')
+  confirmPlayerOfGame(
+    @Param('organizationId') organizationId: string,
+    @Param('gameId') gameId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+    @Body() dto: ConfirmPlayerOfGameDto,
+  ) {
+    return this.statisticsService.confirmPlayerOfGame(
+      organizationId,
+      gameId,
+      access,
+      dto.playerId,
       dto.reason,
     );
   }

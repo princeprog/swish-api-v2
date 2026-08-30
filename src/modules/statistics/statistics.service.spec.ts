@@ -66,4 +66,37 @@ describe('StatisticsService submission', () => {
       expect.objectContaining({ status: 'submitted' }),
     );
   });
+
+  it('requires a reason when confirming someone other than the suggestion', async () => {
+    const service = new StatisticsService({} as never);
+    jest.spyOn(service, 'getPlayerOfGame').mockResolvedValue({
+      award: {},
+      candidates: [
+        { playerId: 'suggested-player' },
+        { playerId: 'selected-player' },
+      ],
+      suggestion: {
+        metricScore: 30,
+        playerId: 'suggested-player',
+        teamId: 'team-a',
+      },
+    } as never);
+
+    await expect(
+      service.confirmPlayerOfGame(
+        'org-1',
+        'game-1',
+        {
+          membershipId: 'member-1',
+          organizationId: 'org-1',
+          permissions: [],
+          role: 'admin',
+          userId: 'user-1',
+        },
+        'selected-player',
+      ),
+    ).rejects.toThrow(
+      'Explain why another player was selected instead of the suggested player.',
+    );
+  });
 });
