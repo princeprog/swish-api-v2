@@ -4,8 +4,14 @@ describe('StatisticsService submission', () => {
   it('reconciles a submitted stat sheet against the live score projection', async () => {
     const stateQuery = {
       executeTakeFirst: jest.fn().mockResolvedValue({
-        away_score: 79,
-        home_score: 82,
+      away_score: 79,
+      home_score: 82,
+      phase: 'period_break',
+      current_period_number: 4,
+      regulation_periods: 4,
+      game_clock_remaining_ms: 0,
+      game_clock_running: false,
+      shot_clock_running: false,
       }),
       select: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
@@ -65,6 +71,103 @@ describe('StatisticsService submission', () => {
     expect(updateSet).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'submitted' }),
     );
+  });
+
+  it('rejects a reconciled sheet while the game is still in an active period', async () => {
+    const stateQuery = {
+      executeTakeFirst: jest.fn().mockResolvedValue({
+        away_score: 79,
+        home_score: 82,
+        phase: 'live',
+        current_period_number: 1,
+        regulation_periods: 4,
+        game_clock_remaining_ms: 300_000,
+        game_clock_running: true,
+        shot_clock_running: true,
+      }),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const updateQuery = {
+      executeTakeFirstOrThrow: jest.fn().mockResolvedValue({}),
+      set: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const db = {
+      selectFrom: jest.fn().mockReturnValue(stateQuery),
+      updateTable: jest.fn().mockReturnValue(updateQuery),
+    };
+    const service = new StatisticsService(db as never, {} as never);
+    jest.spyOn(service as any, 'assertGameAccess').mockResolvedValue({
+      away_score: null,
+      away_team_id: 'away-team',
+      home_score: null,
+      home_team_id: 'home-team',
+      id: 'game-1',
+      organization_id: 'org-1',
+      status: 'live',
+    });
+    jest.spyOn(service as any, 'assertControl').mockResolvedValue(undefined);
+    jest.spyOn(service, 'getState').mockResolvedValue({
+      boxScores: [
+        { assists: 0, playerId: 'home-player', points: 82, rebounds: 0, steals: 0, teamId: 'home-team', turnovers: 0 },
+        { assists: 0, playerId: 'away-player', points: 79, rebounds: 0, steals: 0, teamId: 'away-team', turnovers: 0 },
+      ],
+    } as never);
+
+    await expect(
+      service.submit('org-1', 'game-1', {} as never, 'control-token'),
+    ).rejects.toThrow(
+      'The game must be complete and both clocks stopped before the stat sheet can be submitted.',
+    );
+    expect(updateQuery.set).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['running game clock', { game_clock_running: true }],
+    ['running shot clock', { shot_clock_running: true }],
+    ['pre-regulation period', { current_period_number: 3 }],
+    ['nonzero game clock', { game_clock_remaining_ms: 1 }],
+    ['wrong phase', { phase: 'paused' }],
+    ['tied score', { away_score: 82 }],
+  ])('rejects submission with %s', (_label, override) => {
+    const service = new StatisticsService({} as never, {} as never);
+    const projection = {
+      awayScore: 79,
+      homeScore: 82,
+      away_score: 79,
+      home_score: 82,
+      phase: 'period_break',
+      current_period_number: 4,
+      regulation_periods: 4,
+      game_clock_remaining_ms: 0,
+      game_clock_running: false,
+      shot_clock_running: false,
+      ...override,
+    };
+
+    expect(() => (service as any).assertSubmissionReady(projection)).toThrow(
+      'The game must be complete and both clocks stopped before the stat sheet can be submitted.',
+    );
+  });
+
+  it('accepts a completed overtime period when the score is no longer tied', () => {
+    const service = new StatisticsService({} as never, {} as never);
+
+    expect(() =>
+      (service as any).assertSubmissionReady({
+        awayScore: 101,
+        homeScore: 99,
+        away_score: 101,
+        home_score: 99,
+        phase: 'period_break',
+        current_period_number: 5,
+        regulation_periods: 4,
+        game_clock_remaining_ms: 0,
+        game_clock_running: false,
+        shot_clock_running: false,
+      }),
+    ).not.toThrow();
   });
 
   it('requires a reason when confirming someone other than the suggestion', async () => {

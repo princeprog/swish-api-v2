@@ -37,6 +37,19 @@ type StatisticsGameContext = {
   status: string;
 };
 
+type OfficialScoreProjection = {
+  awayScore: number | null;
+  homeScore: number | null;
+  away_score: number | null;
+  home_score: number | null;
+  phase: string;
+  current_period_number: number;
+  regulation_periods: number;
+  game_clock_remaining_ms: number;
+  game_clock_running: boolean;
+  shot_clock_running: boolean;
+};
+
 @Injectable()
 export class StatisticsService {
   private static readonly CONTROL_TTL_MS = 90_000;
@@ -400,20 +413,18 @@ export class StatisticsService {
   ) {
     const game = await this.assertGameAccess(organizationId, gameId, access);
     await this.assertControl(gameId, access, controlToken);
-    const score =
-      game.home_score !== null && game.away_score !== null
-        ? { awayScore: game.away_score, homeScore: game.home_score }
-        : await this.findLiveOfficialScore(gameId);
-    if (!score) {
+    const score = await this.findLiveOfficialScore(gameId);
+    if (!score || score.away_score === null || score.home_score === null) {
       throw new ConflictException(
         'The scorekeeper must record a team score before player statistics can be submitted.',
       );
     }
+    this.assertSubmissionReady(score);
     const state = await this.getState(organizationId, gameId, access);
     const reconciliation = reconcilePlayerPoints(state.boxScores, {
-      awayScore: score.awayScore,
+      awayScore: score.away_score,
       awayTeamId: game.away_team_id,
-      homeScore: score.homeScore,
+      homeScore: score.home_score,
       homeTeamId: game.home_team_id,
     });
     if (!reconciliation.reconciled) {
@@ -435,14 +446,42 @@ export class StatisticsService {
     return { reconciliation, status: 'submitted' };
   }
 
-  private async findLiveOfficialScore(gameId: string) {
+  private assertSubmissionReady(projection: OfficialScoreProjection) {
+    const complete =
+      projection.phase === 'period_break' &&
+      projection.current_period_number >= projection.regulation_periods &&
+      projection.game_clock_remaining_ms === 0 &&
+      !projection.game_clock_running &&
+      !projection.shot_clock_running &&
+      projection.home_score !== projection.away_score;
+    if (!complete) {
+      throw new ConflictException(
+        'The game must be complete and both clocks stopped before the stat sheet can be submitted.',
+      );
+    }
+  }
+
+  private async findLiveOfficialScore(gameId: string): Promise<OfficialScoreProjection | null> {
     const state = await this.db
       .selectFrom('scoring.game_states')
-      .select(['away_score', 'home_score'])
+      .select([
+        'away_score',
+        'home_score',
+        'phase',
+        'current_period_number',
+        'regulation_periods',
+        'game_clock_remaining_ms',
+        'game_clock_running',
+        'shot_clock_running',
+      ])
       .where('game_id', '=', gameId)
       .executeTakeFirst();
     return state
-      ? { awayScore: state.away_score, homeScore: state.home_score }
+      ? {
+          ...state,
+          awayScore: state.away_score,
+          homeScore: state.home_score,
+        }
       : null;
   }
 
