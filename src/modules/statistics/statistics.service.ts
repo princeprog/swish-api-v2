@@ -394,16 +394,20 @@ export class StatisticsService {
   ) {
     const game = await this.assertGameAccess(organizationId, gameId, access);
     await this.assertControl(gameId, access, controlToken);
-    if (game.home_score === null || game.away_score === null) {
+    const score =
+      game.home_score !== null && game.away_score !== null
+        ? { awayScore: game.away_score, homeScore: game.home_score }
+        : await this.findLiveOfficialScore(gameId);
+    if (!score) {
       throw new ConflictException(
-        'The official score must be available before submitting player statistics.',
+        'The scorekeeper must record a team score before player statistics can be submitted.',
       );
     }
     const state = await this.getState(organizationId, gameId, access);
     const reconciliation = reconcilePlayerPoints(state.boxScores, {
-      awayScore: game.away_score,
+      awayScore: score.awayScore,
       awayTeamId: game.away_team_id,
-      homeScore: game.home_score,
+      homeScore: score.homeScore,
       homeTeamId: game.home_team_id,
     });
     if (!reconciliation.reconciled) {
@@ -414,10 +418,26 @@ export class StatisticsService {
     const now = new Date();
     await this.db
       .updateTable('statistics.game_stat_sheets')
-      .set({ reconciled_at: now, status: 'submitted', submitted_at: now, updated_at: now })
+      .set({
+        reconciled_at: now,
+        status: 'submitted',
+        submitted_at: now,
+        updated_at: now,
+      })
       .where('game_id', '=', gameId)
       .executeTakeFirstOrThrow();
     return { reconciliation, status: 'submitted' };
+  }
+
+  private async findLiveOfficialScore(gameId: string) {
+    const state = await this.db
+      .selectFrom('scoring.game_states')
+      .select(['away_score', 'home_score'])
+      .where('game_id', '=', gameId)
+      .executeTakeFirst();
+    return state
+      ? { awayScore: state.away_score, homeScore: state.home_score }
+      : null;
   }
 
   async overrideReconciliation(

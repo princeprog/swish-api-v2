@@ -21,6 +21,7 @@ import { NotificationWriter } from '../notification/notification.writer';
 import type { NotificationEventType } from '../notification/notification.events';
 import { findScheduleConflict } from './schedule-conflicts';
 import type { UpdateStatisticianAssignmentDto } from './dto/update-statistician-assignment.dto';
+import { OfficialResultCoordinator } from '../official-result/official-result.service';
 
 type ScheduleGameRecord = {
   away_score: number | null;
@@ -44,6 +45,8 @@ export class ScheduleService {
   constructor(
     @Inject(DATABASE) private readonly db: Database,
     @Optional() private readonly notificationWriter?: NotificationWriter,
+    @Optional()
+    private readonly officialResultCoordinator?: OfficialResultCoordinator,
   ) {}
 
   async create(
@@ -262,6 +265,11 @@ export class ScheduleService {
   ) {
     const existingGame = await this.findGameRecord(organizationId, gameId);
     this.assertGameIsNotFinal(existingGame.status);
+    if (updateScheduleDto.status === 'final') {
+      throw new BadRequestException(
+        'Use Finalize game to record an official result and update standings.',
+      );
+    }
 
     const nextLeagueSeasonId =
       updateScheduleDto.leagueSeasonId ?? existingGame.league_season_id;
@@ -389,43 +397,17 @@ export class ScheduleService {
     this.assertManualFinalScore(finalizeScheduleGameDto);
     await this.assertGameHasNoScoringActivity(gameId);
 
-    const finalizedAt = new Date();
-
-    await (this.db as any).transaction().execute(async (trx) => {
-      await trx
-        .updateTable('competition.games')
-        .set({
-          away_score: finalizeScheduleGameDto.awayScore,
-          finalized_at: finalizedAt,
-          home_score: finalizeScheduleGameDto.homeScore,
-          status: 'final',
-          updated_at: finalizedAt,
-        })
-        .where('id', '=', gameId)
-        .executeTakeFirstOrThrow();
-
-      await this.writeAuditInTransaction(
-        trx,
-        access,
-        'game.manually_finalized',
-        gameId,
-        {
-          previousStatus: existingGame.status,
-          homeScore: finalizeScheduleGameDto.homeScore,
-          awayScore: finalizeScheduleGameDto.awayScore,
-        },
-      );
-    });
-
-    await this.notifyGameRecipients(
-      organizationId,
-      gameId,
+    if (!this.officialResultCoordinator) {
+      throw new Error('Official result coordinator is unavailable');
+    }
+    await this.officialResultCoordinator.finalize({
       access,
-      'scoring.game_finalized',
-      {
-        resultLabel: `${finalizeScheduleGameDto.homeScore}–${finalizeScheduleGameDto.awayScore}`,
-      },
-    );
+      awayScore: finalizeScheduleGameDto.awayScore,
+      gameId,
+      homeScore: finalizeScheduleGameDto.homeScore,
+      organizationId,
+      source: 'manual',
+    });
 
     return this.findOne(organizationId, gameId);
   }

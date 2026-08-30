@@ -118,24 +118,20 @@ describe('ScheduleService final score updates', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('sets finalized_at when final status has both scores', async () => {
+  it('routes official results through the dedicated finalization endpoint', async () => {
     const { db, updateSet } = createDbMock();
     const service = new ScheduleService(db as never);
 
-    await service.update('org-1', 'game-1', {
-      awayScore: 79,
-      homeScore: 82,
-      status: 'final',
-    });
-
-    expect(updateSet).toHaveBeenCalledWith(
-      expect.objectContaining({
-        away_score: 79,
-        finalized_at: expect.any(Date),
-        home_score: 82,
+    await expect(
+      service.update('org-1', 'game-1', {
+        awayScore: 79,
+        homeScore: 82,
         status: 'final',
       }),
+    ).rejects.toThrow(
+      'Use Finalize game to record an official result and update standings.',
     );
+    expect(updateSet).not.toHaveBeenCalled();
   });
 
   it('rejects direct result changes after scoring state exists', async () => {
@@ -212,22 +208,15 @@ describe('ScheduleService finalized game protection', () => {
 
 describe('ScheduleService manual finalization', () => {
   it('finalizes a scheduled game with an official non-tied score', async () => {
-    const { db, updateSet } = createDbMock();
-    const auditInsertValues = jest.fn().mockReturnThis();
-    const auditInsertExecute = jest.fn().mockResolvedValue([]);
-    const transactionExecute = jest.fn(async (callback) =>
-      callback({
-        insertInto: jest.fn().mockReturnValue({
-          execute: auditInsertExecute,
-          values: auditInsertValues,
-        }),
-        updateTable: db.updateTable,
-      }),
+    const { db } = createDbMock();
+    const officialResultCoordinator = {
+      finalize: jest.fn().mockResolvedValue({ alreadyFinalized: false }),
+    };
+    const service = new ScheduleService(
+      db as never,
+      undefined,
+      officialResultCoordinator as never,
     );
-    (db as any).transaction = jest
-      .fn()
-      .mockReturnValue({ execute: transactionExecute });
-    const service = new ScheduleService(db as never);
     jest.spyOn(service, 'findOne').mockResolvedValue({
       away_score: 79,
       home_score: 82,
@@ -244,28 +233,14 @@ describe('ScheduleService manual finalization', () => {
       homeScore: 82,
     });
 
-    expect(transactionExecute).toHaveBeenCalled();
-    expect(updateSet).toHaveBeenCalledWith(
-      expect.objectContaining({
-        away_score: 79,
-        finalized_at: expect.any(Date),
-        home_score: 82,
-        status: 'final',
-        updated_at: expect.any(Date),
-      }),
-    );
-    expect(auditInsertValues).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: 'game.manually_finalized',
-        metadata: {
-          awayScore: 79,
-          homeScore: 82,
-          previousStatus: 'scheduled',
-        },
-        target_id: 'game-1',
-        target_type: 'game',
-      }),
-    );
+    expect(officialResultCoordinator.finalize).toHaveBeenCalledWith({
+      access,
+      awayScore: 79,
+      gameId: 'game-1',
+      homeScore: 82,
+      organizationId: 'org-1',
+      source: 'manual',
+    });
   });
 
   it('rejects tied manual final scores', async () => {

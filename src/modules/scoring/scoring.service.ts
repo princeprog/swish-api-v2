@@ -31,6 +31,7 @@ import {
   projectPersonalFouls,
   type ScoringProjectionEvent,
 } from './scoring-projections';
+import { OfficialResultCoordinator } from '../official-result/official-result.service';
 
 type ScheduleGame = {
   away_score: number | null;
@@ -84,6 +85,8 @@ export class ScoringService {
   constructor(
     @Inject(DATABASE) private readonly db: Database,
     @Optional() private readonly notificationWriter?: NotificationWriter,
+    @Optional()
+    private readonly officialResultCoordinator?: OfficialResultCoordinator,
   ) {}
 
   async getState(
@@ -449,17 +452,17 @@ export class ScoringService {
           }
 
           if (input.command.type === 'game.finalize') {
-            await trx
-              .updateTable('competition.games')
-              .set({
-                away_score: applied.state.awayScore,
-                finalized_at: now,
-                home_score: applied.state.homeScore,
-                status: 'final',
-                updated_at: now,
-              })
-              .where('id', '=', gameId)
-              .execute();
+            if (!this.officialResultCoordinator) {
+              throw new Error('Official result coordinator is unavailable');
+            }
+            await this.officialResultCoordinator.finalizeInTransaction(trx, {
+              access,
+              awayScore: applied.state.awayScore,
+              gameId,
+              homeScore: applied.state.homeScore,
+              organizationId,
+              source: 'scorekeeper',
+            });
             responseGame = { ...game, status: 'final' };
           }
 
@@ -503,17 +506,6 @@ export class ScoringService {
       };
 
       if (this.notificationWriter) {
-        if (input.command.type === 'game.finalize') {
-          await this.notifyOfficialResult(
-            organizationId,
-            game,
-            access,
-            game.status === 'reopened'
-              ? 'scoring.result_corrected'
-              : 'scoring.game_finalized',
-            `${result.state.scores.home}–${result.state.scores.away}`,
-          );
-        }
         if (input.command.type === 'game.reopen') {
           await this.notifyOfficialResult(
             organizationId,
