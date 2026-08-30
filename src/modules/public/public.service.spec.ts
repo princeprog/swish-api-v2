@@ -107,4 +107,76 @@ describe('PublicService', () => {
       },
     });
   });
+
+  it('publishes live scores as unofficial and separates finalized results', async () => {
+    const query = (rows: unknown[], first?: unknown) => ({
+      execute: jest.fn().mockResolvedValue(rows),
+      executeTakeFirst: jest.fn().mockResolvedValue(first),
+      groupBy: jest.fn().mockReturnThis(),
+      innerJoin: jest.fn().mockReturnThis(),
+      leftJoin: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    });
+    const games = [
+      {
+        away_score: 70,
+        away_team_id: 'team-b',
+        away_team_name: 'Bears',
+        competition_kind: 'stage',
+        division_id: 'division-1',
+        division_name: 'Seniors',
+        home_score: 72,
+        home_team_id: 'team-a',
+        home_team_name: 'Aces',
+        id: 'live-game',
+        starts_at: new Date('2026-09-01T10:00:00.000Z'),
+        status: 'live',
+        venue_name: 'Main Court',
+      },
+      {
+        away_score: 79,
+        away_team_id: 'team-d',
+        away_team_name: 'Dragons',
+        competition_kind: 'playoff',
+        division_id: 'division-1',
+        division_name: 'Seniors',
+        home_score: 82,
+        home_team_id: 'team-c',
+        home_team_name: 'Comets',
+        id: 'final-game',
+        starts_at: new Date('2026-09-01T12:00:00.000Z'),
+        status: 'final',
+        venue_name: 'Main Court',
+      },
+    ];
+    const db = {
+      selectFrom: jest.fn((table: string) =>
+        table.startsWith('admin.league_seasons')
+          ? query([], { id: 'season-1' })
+          : table.startsWith('competition.games')
+            ? query(games)
+            : query([]),
+      ),
+    };
+    const service = new PublicService(db as never);
+    jest.spyOn(service, 'getLeagueShell').mockResolvedValue({
+      divisions: [],
+      organization: { id: 'org-1', name: 'League', slug: 'league' },
+      season: { id: 'season-1', name: 'Season', slug: 'season' },
+    });
+
+    const portal = await service.getLeaguePortal('league', 'season');
+
+    expect(portal.schedule).toEqual([
+      expect.objectContaining({ id: 'live-game', liveScoreIsUnofficial: true }),
+    ]);
+    expect(portal.results).toEqual([
+      expect.objectContaining({ id: 'final-game', liveScoreIsUnofficial: false }),
+    ]);
+    expect(JSON.stringify(portal)).not.toMatch(
+      /control_token|override_reason|audit_events|scorekeeper_member_id/,
+    );
+  });
 });

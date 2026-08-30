@@ -53,6 +53,7 @@ function createController() {
   const publicService = {
     getOrganization: jest.fn(),
     getLeagueShell: jest.fn(),
+    getLeaguePortal: jest.fn(),
   } as unknown as jest.Mocked<PublicService>;
 
   return {
@@ -90,6 +91,27 @@ describe('PublicController', () => {
     expect(publicService.getLeagueShell).toHaveBeenCalledWith(
       'swish-league',
       'season-1',
+    );
+  });
+
+  it('returns the complete public league portal without private operations data', async () => {
+    const { controller, publicService } = createController();
+    const portal = {
+      ...publicLeagueShell,
+      awards: [],
+      bracket: [],
+      leaders: [],
+      results: [],
+      schedule: [],
+      standings: [],
+    };
+    publicService.getLeaguePortal.mockResolvedValue(portal as never);
+
+    await expect(
+      controller.getLeaguePortal('swish-league', 'season-1'),
+    ).resolves.toEqual(portal);
+    expect(JSON.stringify(portal)).not.toMatch(
+      /control_token|audit_events|override_reason|statistician_member_id/,
     );
   });
 });

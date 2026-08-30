@@ -17,4 +17,12 @@ export class PublicController {
   ) {
     return this.publicService.getLeagueShell(organizationSlug, seasonSlug);
   }
+
+  @Get('organizations/:organizationSlug/seasons/:seasonSlug/portal')
+  getLeaguePortal(
+    @Param('organizationSlug') organizationSlug: string,
+    @Param('seasonSlug') seasonSlug: string,
+  ) {
+    return this.publicService.getLeaguePortal(organizationSlug, seasonSlug);
+  }
 }
