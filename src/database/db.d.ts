@@ -21,6 +21,8 @@ export type JsonPrimitive = boolean | number | string | null;
 
 export type JsonValue = JsonArray | JsonObject | JsonPrimitive;
 
+export type Numeric = ColumnType<string, number | string, number | string>;
+
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
 export interface AccessAuditEvents {
@@ -188,6 +190,7 @@ export interface AdminScheduleGames {
   away_team_id: string | null;
   away_team_name: string | null;
   away_team_slug: string | null;
+  competition_kind: string | null;
   created_at: Timestamp | null;
   division_id: string | null;
   division_name: string | null;
@@ -202,6 +205,7 @@ export interface AdminScheduleGames {
   league_season_id: string | null;
   league_season_name: string | null;
   league_season_slug: string | null;
+  matchup_id: string | null;
   organization_id: string | null;
   published_at: Timestamp | null;
   scorekeeper_member_id: string | null;
@@ -334,6 +338,7 @@ export interface CompetitionFinalizedGameResults {
 export interface CompetitionGames {
   away_score: number | null;
   away_team_id: string;
+  competition_kind: Generated<string>;
   created_at: Generated<Timestamp>;
   division_id: string;
   finalized_at: Timestamp | null;
@@ -341,11 +346,40 @@ export interface CompetitionGames {
   home_team_id: string;
   id: Generated<string>;
   league_season_id: string;
+  matchup_id: string | null;
   published_at: Timestamp | null;
   starts_at: Timestamp;
   status: Generated<string>;
   updated_at: Generated<Timestamp>;
   venue_id: string;
+}
+
+export interface CompetitionMatchups {
+  away_source_ref: string | null;
+  away_source_type: string;
+  away_team_id: string | null;
+  bracket_side: string;
+  created_at: Generated<Timestamp>;
+  division_format_id: string;
+  format_revision: number;
+  home_source_ref: string | null;
+  home_source_type: string;
+  home_team_id: string | null;
+  id: Generated<string>;
+  is_reset_final: Generated<boolean>;
+  label: string | null;
+  loser_team_id: string | null;
+  loser_to_matchup_id: string | null;
+  loser_to_slot: string | null;
+  pool_id: string | null;
+  position: number;
+  round_number: number;
+  stage: string;
+  status: Generated<string>;
+  updated_at: Generated<Timestamp>;
+  winner_team_id: string | null;
+  winner_to_matchup_id: string | null;
+  winner_to_slot: string | null;
 }
 
 export interface CompetitionPools {
@@ -363,6 +397,37 @@ export interface CompetitionPoolTeams {
   pool_id: string;
   seed: number | null;
   team_id: string;
+}
+
+export interface CompetitionStandingsProjections {
+  division_format_id: string;
+  games_played: Generated<number>;
+  id: Generated<string>;
+  losses: Generated<number>;
+  point_differential: Generated<number>;
+  points_against: Generated<number>;
+  points_for: Generated<number>;
+  pool_id: string;
+  qualification_status: Generated<string>;
+  rank: number | null;
+  ranking_explanation: Generated<Json>;
+  team_id: string;
+  updated_at: Generated<Timestamp>;
+  version: Generated<number>;
+  win_percentage: Generated<Numeric>;
+  wins: Generated<number>;
+}
+
+export interface CompetitionTieDecisions {
+  created_at: Generated<Timestamp>;
+  decided_by_member_id: string;
+  division_format_id: string;
+  id: Generated<string>;
+  ordered_team_ids: Json;
+  pool_id: string;
+  reason: string;
+  team_ids: Json;
+  tie_key: string;
 }
 
 export interface ComplianceDivisionSettings {
@@ -623,8 +688,11 @@ export interface DB {
   "competition.division_formats": CompetitionDivisionFormats;
   "competition.finalized_game_results": CompetitionFinalizedGameResults;
   "competition.games": CompetitionGames;
+  "competition.matchups": CompetitionMatchups;
   "competition.pool_teams": CompetitionPoolTeams;
   "competition.pools": CompetitionPools;
+  "competition.standings_projections": CompetitionStandingsProjections;
+  "competition.tie_decisions": CompetitionTieDecisions;
   "compliance.division_settings": ComplianceDivisionSettings;
   "compliance.file_scan_jobs": ComplianceFileScanJobs;
   "compliance.requirements": ComplianceRequirements;
