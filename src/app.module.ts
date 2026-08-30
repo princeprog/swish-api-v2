@@ -21,6 +21,7 @@ import { TeamModule } from './modules/team/team.module';
 import { VenueModule } from './modules/venue/venue.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { CompetitionModule } from './modules/competition/competition.module';
+import { StatisticsModule } from './modules/statistics/statistics.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { CompetitionModule } from './modules/competition/competition.module';
     VenueModule,
     NotificationModule,
     CompetitionModule,
+    StatisticsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

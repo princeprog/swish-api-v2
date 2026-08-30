@@ -24,6 +24,22 @@ export type PlayerBoxScore = {
   turnovers: number;
 };
 
+export type StatisticRecordedEvent = StatisticProjectionEvent & {
+  idempotencyKey: string;
+  sequence: number;
+};
+
+export type StatisticCommand = {
+  eventId: string;
+  expectedVersion: number;
+  idempotencyKey: string;
+  playerId?: string;
+  reversesEventId?: string;
+  teamId?: string;
+  type?: StatisticEventType;
+  value?: number;
+};
+
 export function validateStatisticEvent(input: {
   type: StatisticEventType;
   value: number;
@@ -98,5 +114,78 @@ export function reconcilePlayerPoints(
     homePlayerPoints,
     homeReconciled,
     reconciled: homeReconciled && awayReconciled,
+  };
+}
+
+export function applyStatisticCommand(
+  state: { events: StatisticRecordedEvent[]; version: number },
+  command: StatisticCommand,
+) {
+  if (
+    state.events.some(
+      (event) => event.idempotencyKey === command.idempotencyKey,
+    )
+  ) {
+    return {
+      ...state,
+      boxScores: projectPlayerBoxScores(state.events),
+      idempotent: true,
+    };
+  }
+  if (state.version !== command.expectedVersion) {
+    throw new Error(
+      'Statistics changed on another device. Refresh before continuing.',
+    );
+  }
+
+  let playerId = command.playerId;
+  let teamId = command.teamId;
+  let type = command.type;
+  let value = command.value;
+  let reversesEventId: string | null = null;
+
+  if (command.reversesEventId) {
+    const original = state.events.find(
+      (event) => event.id === command.reversesEventId,
+    );
+    if (!original || original.reversesEventId) {
+      throw new Error('The statistic selected for reversal was not found.');
+    }
+    if (
+      state.events.some(
+        (event) => event.reversesEventId === command.reversesEventId,
+      )
+    ) {
+      throw new Error('This statistic has already been reversed.');
+    }
+    playerId = original.playerId;
+    teamId = original.teamId;
+    type = original.type;
+    value = original.value;
+    reversesEventId = original.id;
+  }
+
+  if (!playerId || !teamId || !type || value === undefined) {
+    throw new Error('Choose a player and statistic before saving.');
+  }
+  validateStatisticEvent({ type, value });
+
+  const event: StatisticRecordedEvent = {
+    id: command.eventId,
+    idempotencyKey: command.idempotencyKey,
+    playerId,
+    reversesEventId,
+    sequence: state.version + 1,
+    teamId,
+    type,
+    value,
+  };
+  const events = [...state.events, event];
+
+  return {
+    boxScores: projectPlayerBoxScores(events),
+    events,
+    idempotent: false,
+    version: state.version + 1,
   };
 }

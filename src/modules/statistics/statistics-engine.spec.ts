@@ -1,4 +1,5 @@
 import {
+  applyStatisticCommand,
   projectPlayerBoxScores,
   reconcilePlayerPoints,
   validateStatisticEvent,
@@ -87,6 +88,79 @@ describe('statistics engine', () => {
     expect(() =>
       validateStatisticEvent({ type: 'assist', value: 2 }),
     ).toThrow('Non-scoring statistics must be recorded one at a time.');
+  });
+
+  it('applies commands with optimistic versions and idempotency', () => {
+    const first = applyStatisticCommand(
+      { events: [], version: 0 },
+      {
+        eventId: 'e1',
+        expectedVersion: 0,
+        idempotencyKey: 'command-1',
+        playerId: 'home-player',
+        teamId: 'home',
+        type: 'points',
+        value: 2,
+      },
+    );
+
+    expect(first.version).toBe(1);
+    expect(first.events[0]).toMatchObject({
+      id: 'e1',
+      idempotencyKey: 'command-1',
+      sequence: 1,
+    });
+    expect(
+      applyStatisticCommand(first, {
+        eventId: 'different-id',
+        expectedVersion: 0,
+        idempotencyKey: 'command-1',
+        playerId: 'home-player',
+        teamId: 'home',
+        type: 'points',
+        value: 2,
+      }),
+    ).toEqual({ ...first, idempotent: true });
+    expect(() =>
+      applyStatisticCommand(first, {
+        eventId: 'e2',
+        expectedVersion: 0,
+        idempotencyKey: 'command-2',
+        playerId: 'home-player',
+        teamId: 'home',
+        type: 'rebound',
+        value: 1,
+      }),
+    ).toThrow('Statistics changed on another device. Refresh before continuing.');
+  });
+
+  it('only reverses an active event once', () => {
+    const initial = {
+      events: [
+        {
+          ...event('e1', 'home-player', 'home', 'rebound', 1),
+          idempotencyKey: 'command-1',
+          sequence: 1,
+        },
+      ],
+      version: 1,
+    };
+    const reversed = applyStatisticCommand(initial, {
+      eventId: 'e2',
+      expectedVersion: 1,
+      idempotencyKey: 'command-2',
+      reversesEventId: 'e1',
+    });
+
+    expect(reversed.boxScores[0]?.rebounds).toBe(0);
+    expect(() =>
+      applyStatisticCommand(reversed, {
+        eventId: 'e3',
+        expectedVersion: 2,
+        idempotencyKey: 'command-3',
+        reversesEventId: 'e1',
+      }),
+    ).toThrow('This statistic has already been reversed.');
   });
 });
 
