@@ -319,7 +319,7 @@ describe('ScheduleService finalized game protection', () => {
     const service = new ScheduleService(db as never);
 
     await expect(service.remove('org-1', 'game-1')).rejects.toThrow(
-      'Finalized games cannot be deleted because they are part of the official league record.',
+      'This record cannot be deleted. Archive support is being prepared so league history remains available.',
     );
     expect(deleteExecute).not.toHaveBeenCalled();
   });
@@ -581,6 +581,7 @@ describe('ScheduleService scorekeeper assignments', () => {
       });
     const transactionExecute = jest.fn(async (callback) =>
       callback({
+        selectFrom: db.selectFrom,
         deleteFrom: jest.fn().mockReturnValue({
           execute: jest.fn().mockResolvedValue([]),
           where: jest.fn().mockReturnThis(),
@@ -630,7 +631,7 @@ describe('ScheduleService scorekeeper assignments', () => {
       leagueSeasonId: 'season-1',
       startsAt: new Date('2026-07-09T10:00:00.000Z'),
       venueId: 'venue-1',
-    });
+    }, expect.anything());
     expect(transactionExecute).toHaveBeenCalled();
     expect(insertInto).toHaveBeenCalledWith('competition.games');
     expect(insertInto).toHaveBeenCalledWith(

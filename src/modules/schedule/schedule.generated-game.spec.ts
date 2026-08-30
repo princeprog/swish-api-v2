@@ -106,13 +106,13 @@ describe('ScheduleService generated fixture identity', () => {
     });
 
     await expect(
-      service.createCompetitionGame('org-1', {
+      service.createCompetitionGameInTransaction('org-1', {
         membershipId: 'member-1',
         organizationId: 'org-1',
         permissions: [],
         role: 'admin',
         userId: 'user-1',
-      }, input),
+      }, input, db),
     ).rejects.toThrow(ConflictException);
     expect(db.transaction).not.toHaveBeenCalled();
   });
@@ -138,7 +138,7 @@ describe('ScheduleService generated fixture identity', () => {
       const { db, service } = createService({ ...validMatchup, ...missingTeam });
 
       await expect(
-        service.createCompetitionGame(
+        service.createCompetitionGameInTransaction(
           'org-1',
           {
             membershipId: 'member-1',
@@ -148,9 +148,42 @@ describe('ScheduleService generated fixture identity', () => {
             userId: 'user-1',
           },
           input,
+          db,
         ),
       ).rejects.toThrow(ConflictException);
       expect(db.transaction).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('ScheduleService post-commit competition completion', () => {
+  it('returns the committed game when enrichment and notifications fail', async () => {
+    const service = new ScheduleService({} as never);
+    const inserted = { id: 'game-1' };
+    jest.spyOn(service, 'findOne').mockRejectedValue(new Error('read failed'));
+    jest
+      .spyOn(service as any, 'notifyGameRecipients')
+      .mockRejectedValue(new Error('notification failed'));
+    jest
+      .spyOn(service as any, 'notifyScorekeeperAssignment')
+      .mockRejectedValue(new Error('assignment notification failed'));
+
+    await expect(
+      service.completeCompetitionGame(
+        'org-1',
+        {
+          membershipId: 'member-1',
+          organizationId: 'org-1',
+          permissions: [],
+          role: 'admin',
+          userId: 'user-1',
+        },
+        inserted,
+        {
+          scorekeeperMemberId: 'member-scorekeeper-1',
+          status: 'scheduled',
+        },
+      ),
+    ).resolves.toBe(inserted);
+  });
 });

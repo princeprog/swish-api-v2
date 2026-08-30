@@ -287,8 +287,84 @@ export class CompetitionRepository {
     return matchup;
   }
 
+  /**
+   * Acquire the format lock before a generated matchup is scheduled. Every
+   * caller must use this method as the first lock in the scheduling workflow
+   * so concurrent format edits and matchup materialization serialize the same
+   * way.
+   */
+  async lockFormatForScheduling(
+    trx: any,
+    organizationId: string,
+    divisionId: string,
+  ): Promise<CompetitionFormatContext> {
+    const format = await trx
+      .selectFrom('competition.division_formats as formats')
+      .innerJoin(
+        'admin.divisions as divisions',
+        'divisions.id',
+        'formats.division_id',
+      )
+      .innerJoin(
+        'admin.league_seasons as seasons',
+        'seasons.id',
+        'divisions.league_season_id',
+      )
+      .select([
+        'formats.crossover_template',
+        'formats.division_id',
+        'divisions.name as division_name',
+        'formats.id',
+        'divisions.league_season_id',
+        'formats.playoff_format',
+        'formats.pool_count',
+        'formats.qualifiers_per_pool',
+        'formats.qualifying_format',
+        'formats.revision',
+        'seasons.schedule_slot_duration_minutes',
+        'formats.status',
+        'formats.tiebreakers',
+      ])
+      .where('formats.division_id', '=', divisionId)
+      .where('seasons.organization_id', '=', organizationId)
+      .forUpdate()
+      .executeTakeFirst();
+
+    if (!format) throw new NotFoundException('Competition format not found');
+    return format;
+  }
+
+  /** Lock the target matchup only after its parent format has been locked. */
+  async lockMatchupForScheduling(
+    trx: any,
+    formatId: string,
+    matchupId: string,
+  ) {
+    const matchup = await trx
+      .selectFrom('competition.matchups')
+      .selectAll()
+      .where('id', '=', matchupId)
+      .where('division_format_id', '=', formatId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!matchup) throw new NotFoundException('Matchup not found');
+    return matchup;
+  }
+
   async markMatchupScheduled(matchupId: string, gameId: string): Promise<void> {
-    const game = await this.db
+    await this.markMatchupScheduledInTransaction(
+      matchupId,
+      gameId,
+      this.db,
+    );
+  }
+
+  async markMatchupScheduledInTransaction(
+    matchupId: string,
+    gameId: string,
+    trx: any,
+  ): Promise<void> {
+    const game = await trx
       .selectFrom('competition.games')
       .select(['id', 'matchup_id'])
       .where('id', '=', gameId)
@@ -301,7 +377,7 @@ export class CompetitionRepository {
       );
     }
 
-    const updated = await this.db
+    const updated = await trx
       .updateTable('competition.matchups')
       .set({ status: 'scheduled', updated_at: new Date() })
       .where('id', '=', matchupId)

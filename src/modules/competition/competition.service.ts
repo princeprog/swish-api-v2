@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   Optional,
 } from '@nestjs/common';
@@ -20,6 +21,7 @@ import { ScheduleService } from '../schedule/schedule.service';
 import type { ScheduleMatchupDto } from './dto/schedule-matchup.dto';
 import type { RecordTieDecisionDto } from './dto/record-tie-decision.dto';
 import { OfficialResultCoordinator } from '../official-result/official-result.service';
+import { DATABASE, type Database } from '../../database/database.tokens';
 
 @Injectable()
 export class CompetitionService {
@@ -28,6 +30,7 @@ export class CompetitionService {
     @Optional() private readonly scheduleService?: ScheduleService,
     @Optional()
     private readonly officialResultCoordinator?: OfficialResultCoordinator,
+    @Optional() @Inject(DATABASE) private readonly db?: Database,
   ) {}
 
   async getWorkspace(organizationId: string, divisionId: string) {
@@ -210,41 +213,74 @@ export class CompetitionService {
     access: OrganizationAccessContext,
     dto: ScheduleMatchupDto,
   ) {
-    const format = await this.repository.findFormatContext(
-      organizationId,
-      divisionId,
-    );
-    const matchup = await this.repository.findMatchup(format.id, matchupId);
-
-    if (!matchup.home_team_id || !matchup.away_team_id) {
-      throw new ConflictException(
-        'This matchup is waiting for both teams and cannot be scheduled yet.',
-      );
-    }
-    if (matchup.status !== 'ready') {
-      throw new ConflictException(
-        'This matchup has already been scheduled or completed.',
-      );
-    }
-    if (!this.scheduleService) {
+    if (!this.scheduleService || !this.db) {
       throw new ConflictException('Scheduling is temporarily unavailable.');
     }
 
-    const game = await this.scheduleService.createCompetitionGame(organizationId, access, {
-      awayTeamId: matchup.away_team_id,
-      competitionKind: matchup.stage === 'playoff' ? 'playoff' : 'stage',
-      divisionId,
-      homeTeamId: matchup.home_team_id,
-      leagueSeasonId: format.league_season_id,
-      matchupId,
-      scorekeeperMemberId: dto.scorekeeperMemberId,
-      statisticianMemberId: dto.statisticianMemberId,
-      startsAt: dto.startsAt,
-      status: 'scheduled',
-      venueId: dto.venueId,
+    const inserted = await this.db.transaction().execute(async (trx) => {
+      // Lock in a single global order: format first, then the matchup.
+      const format = await this.repository.lockFormatForScheduling(
+        trx,
+        organizationId,
+        divisionId,
+      );
+      const matchup = await this.repository.lockMatchupForScheduling(
+        trx,
+        format.id,
+        matchupId,
+      );
+
+      if (!matchup.home_team_id || !matchup.away_team_id) {
+        throw new ConflictException(
+          'This matchup is waiting for both teams and cannot be scheduled yet.',
+        );
+      }
+      if (matchup.status !== 'ready') {
+        throw new ConflictException(
+          'This matchup has already been scheduled or completed.',
+        );
+      }
+      if (matchup.format_revision !== format.revision) {
+        throw new ConflictException(
+          'This generated matchup is no longer current. Refresh before scheduling it.',
+        );
+      }
+
+      return this.scheduleService!.createCompetitionGameInTransaction(
+        organizationId,
+        access,
+        {
+          awayTeamId: matchup.away_team_id,
+          competitionKind: matchup.stage === 'playoff' ? 'playoff' : 'stage',
+          divisionId,
+          homeTeamId: matchup.home_team_id,
+          leagueSeasonId: format.league_season_id,
+          matchupId: matchup.id,
+          scorekeeperMemberId: dto.scorekeeperMemberId,
+          statisticianMemberId: dto.statisticianMemberId,
+          startsAt: dto.startsAt,
+          status: 'scheduled',
+          venueId: dto.venueId,
+        },
+        trx,
+      ).then(async (game) => {
+        await this.repository.markMatchupScheduledInTransaction(
+          matchup.id,
+          game.id,
+          trx,
+        );
+        return game;
+      });
     });
-    await this.repository.markMatchupScheduled(matchupId, game.id);
-    return game;
+
+    // Notifications are deliberately emitted after commit. A delivery issue
+    // must not turn an already committed official schedule into a rollback.
+    return this.scheduleService.completeCompetitionGame(
+      organizationId,
+      access,
+      inserted,
+      { scorekeeperMemberId: dto.scorekeeperMemberId, status: 'scheduled' },
+    );
   }
 
   async recordTieDecision(

@@ -70,16 +70,72 @@ export class ScheduleService {
     });
   }
 
-  async createCompetitionGame(
+  /**
+   * Materialize a generated matchup using a caller-owned transaction. The
+   * competition service owns the parent format/matchup locks and performs the
+   * status transition in this same transaction.
+   */
+  async createCompetitionGameInTransaction(
     organizationId: string,
     access: OrganizationAccessContext,
     input: CompetitionScheduleInput,
+    trx: any,
   ) {
-    await this.assertCompetitionGameIdentity(organizationId, input);
-    return this.createGame(organizationId, access, input, {
-      competitionKind: input.competitionKind,
-      matchupId: input.matchupId,
-    });
+    await this.assertCompetitionGameIdentity(organizationId, input, trx);
+    return this.createGame(
+      organizationId,
+      access,
+      input,
+      {
+        competitionKind: input.competitionKind,
+        matchupId: input.matchupId,
+      },
+      trx,
+      false,
+    );
+  }
+
+  /** Finish the post-commit portion of a competition-game schedule request. */
+  async completeCompetitionGame(
+    organizationId: string,
+    access: OrganizationAccessContext,
+    inserted: { id: string },
+    input: Pick<CompetitionScheduleInput, 'scorekeeperMemberId' | 'status'>,
+  ) {
+    let game: any = inserted;
+    try {
+      game = await this.findOne(organizationId, inserted.id);
+    } catch {
+      // The official transaction has already committed. Return its durable
+      // inserted record if read enrichment is temporarily unavailable.
+      game = inserted;
+    }
+    const notifications: Promise<unknown>[] = [];
+    if (input.status === 'scheduled') {
+      notifications.push(
+        this.notifyGameRecipients(
+          organizationId,
+          inserted.id,
+          access,
+          'schedule.game_published',
+        ),
+      );
+    }
+    if (input.scorekeeperMemberId) {
+      notifications.push(
+        this.notifyScorekeeperAssignment(
+          organizationId,
+          inserted.id,
+          access,
+          input.scorekeeperMemberId,
+          'schedule.scorekeeper_assigned',
+        ),
+      );
+    }
+    // Delivery is post-commit best effort. A notification provider outage
+    // cannot make a successful official schedule look like a failed write.
+    await Promise.allSettled(notifications);
+    return game;
   }
 
   /**
@@ -90,8 +146,9 @@ export class ScheduleService {
   private async assertCompetitionGameIdentity(
     organizationId: string,
     input: CompetitionScheduleInput,
+    db: Database | any = this.db,
   ): Promise<void> {
-    const matchup = await (this.db as any)
+    const matchup = await (db as any)
       .selectFrom('competition.matchups as matchups')
       .innerJoin(
         'competition.division_formats as formats',
@@ -145,7 +202,7 @@ export class ScheduleService {
       );
     }
 
-    const existingGame = await (this.db as any)
+    const existingGame = await (db as any)
       .selectFrom('competition.games')
       .select('id')
       .where('matchup_id', '=', input.matchupId)
@@ -163,47 +220,48 @@ export class ScheduleService {
     access: OrganizationAccessContext,
     createScheduleDto: CreateScheduleDto,
     competition: { competitionKind: 'stage' | 'playoff' | 'exhibition'; matchupId: string | null },
+    transaction?: any,
+    notify = true,
   ) {
     this.assertDistinctTeams(
       createScheduleDto.homeTeamId,
       createScheduleDto.awayTeamId,
     );
 
-    await this.assertScheduleRelations(organizationId, {
-      awayTeamId: createScheduleDto.awayTeamId,
-      divisionId: createScheduleDto.divisionId,
-      homeTeamId: createScheduleDto.homeTeamId,
-      leagueSeasonId: createScheduleDto.leagueSeasonId,
-      venueId: createScheduleDto.venueId,
-    });
-
-    if (createScheduleDto.scorekeeperMemberId) {
-      await this.assertScorekeeperCanBeAssigned(
-        this.db,
-        organizationId,
-        createScheduleDto.scorekeeperMemberId,
-      );
-    }
-    if (createScheduleDto.statisticianMemberId) {
-      await this.assertStatisticianCanBeAssigned(
-        organizationId,
-        createScheduleDto.statisticianMemberId,
-      );
-    }
-
-    if (createScheduleDto.status === 'scheduled') {
-      await this.assertNoScheduleConflict({
+    const insert = async (trx: any) => {
+      await this.assertScheduleRelations(organizationId, {
         awayTeamId: createScheduleDto.awayTeamId,
+        divisionId: createScheduleDto.divisionId,
         homeTeamId: createScheduleDto.homeTeamId,
         leagueSeasonId: createScheduleDto.leagueSeasonId,
-        startsAt: new Date(createScheduleDto.startsAt),
         venueId: createScheduleDto.venueId,
-      });
-    }
+      }, trx);
 
-    const inserted = await (this.db as any)
-      .transaction()
-      .execute(async (trx) => {
+      if (createScheduleDto.scorekeeperMemberId) {
+        await this.assertScorekeeperCanBeAssigned(
+          trx,
+          organizationId,
+          createScheduleDto.scorekeeperMemberId,
+        );
+      }
+      if (createScheduleDto.statisticianMemberId) {
+        await this.assertStatisticianCanBeAssigned(
+          organizationId,
+          createScheduleDto.statisticianMemberId,
+          trx,
+        );
+      }
+
+      if (createScheduleDto.status === 'scheduled') {
+        await this.assertNoScheduleConflict({
+          awayTeamId: createScheduleDto.awayTeamId,
+          homeTeamId: createScheduleDto.homeTeamId,
+          leagueSeasonId: createScheduleDto.leagueSeasonId,
+          startsAt: new Date(createScheduleDto.startsAt),
+          venueId: createScheduleDto.venueId,
+        }, trx);
+      }
+
         const game = await trx
           .insertInto('competition.games')
           .values({
@@ -264,8 +322,24 @@ export class ScheduleService {
           );
         }
 
-        return game;
-      });
+      return game;
+    };
+
+    const inserted = transaction
+      ? await insert(transaction)
+      : await (this.db as any).transaction().execute(insert);
+
+    if (!notify) return inserted;
+
+    return this.finishCreatedGame(organizationId, access, createScheduleDto, inserted);
+  }
+
+  private async finishCreatedGame(
+    organizationId: string,
+    access: OrganizationAccessContext,
+    createScheduleDto: CreateScheduleDto,
+    inserted: { id: string },
+  ) {
 
     const game = await this.findOne(organizationId, inserted.id);
     if (createScheduleDto.status === 'scheduled') {
@@ -835,26 +909,32 @@ export class ScheduleService {
       leagueSeasonId: string;
       venueId: string;
     },
+    db: Database | any = this.db,
   ): Promise<void> {
     await this.assertLeagueSeasonBelongsToOrganization(
       organizationId,
       params.leagueSeasonId,
+      db,
     );
     await this.assertDivisionBelongsToLeagueSeason(
       params.divisionId,
       params.leagueSeasonId,
+      db,
     );
     await this.assertVenueBelongsToLeagueSeason(
       params.venueId,
       params.leagueSeasonId,
+      db,
     );
     await this.assertTeamBelongsToDivision(
       params.homeTeamId,
       params.divisionId,
+      db,
     );
     await this.assertTeamBelongsToDivision(
       params.awayTeamId,
       params.divisionId,
+      db,
     );
   }
 
@@ -865,14 +945,14 @@ export class ScheduleService {
     leagueSeasonId: string;
     startsAt: Date;
     venueId: string;
-  }): Promise<void> {
+  }, db: Database | any = this.db): Promise<void> {
     const [season, games] = await Promise.all([
-      this.db
+      db
         .selectFrom('admin.league_seasons')
         .select('schedule_slot_duration_minutes')
         .where('id', '=', params.leagueSeasonId)
         .executeTakeFirstOrThrow(),
-      this.db
+      db
         .selectFrom('competition.games')
         .select([
           'away_team_id',
@@ -917,8 +997,9 @@ export class ScheduleService {
   private async assertLeagueSeasonBelongsToOrganization(
     organizationId: string,
     leagueSeasonId: string,
+    db: Database | any = this.db,
   ): Promise<void> {
-    const leagueSeason = await this.db
+    const leagueSeason = await db
       .selectFrom('admin.league_seasons')
       .select(['id'])
       .where('id', '=', leagueSeasonId)
@@ -935,8 +1016,9 @@ export class ScheduleService {
   private async assertDivisionBelongsToLeagueSeason(
     divisionId: string,
     leagueSeasonId: string,
+    db: Database | any = this.db,
   ): Promise<void> {
-    const division = await this.db
+    const division = await db
       .selectFrom('admin.divisions')
       .select(['id'])
       .where('id', '=', divisionId)
@@ -951,8 +1033,9 @@ export class ScheduleService {
   private async assertVenueBelongsToLeagueSeason(
     venueId: string,
     leagueSeasonId: string,
+    db: Database | any = this.db,
   ): Promise<void> {
-    const venue = await this.db
+    const venue = await db
       .selectFrom('admin.venues')
       .select(['id'])
       .where('id', '=', venueId)
@@ -967,8 +1050,9 @@ export class ScheduleService {
   private async assertTeamBelongsToDivision(
     teamId: string,
     divisionId: string,
+    db: Database | any = this.db,
   ): Promise<void> {
-    const team = await this.db
+    const team = await db
       .selectFrom('admin.teams')
       .select(['id'])
       .where('id', '=', teamId)
@@ -1173,8 +1257,9 @@ export class ScheduleService {
   private async assertStatisticianCanBeAssigned(
     organizationId: string,
     statisticianMemberId: string,
+    db: Database | any = this.db,
   ): Promise<void> {
-    const statistician = await this.db
+    const statistician = await db
       .selectFrom('admin.organization_members')
       .select('id')
       .where('id', '=', statisticianMemberId)
