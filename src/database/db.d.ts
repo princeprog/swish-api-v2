@@ -218,6 +218,8 @@ export interface AdminScheduleGames {
   scorekeeper_member_id: string | null;
   scorekeeper_name: string | null;
   starts_at: Timestamp | null;
+  statistician_member_id: string | null;
+  statistician_name: string | null;
   status: string | null;
   updated_at: Timestamp | null;
   venue_id: string | null;
