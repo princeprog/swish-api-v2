@@ -62,4 +62,8 @@ export class CreateScheduleDto {
   @ValidateIf((_, value) => value !== null && value !== undefined)
   @IsUUID()
   scorekeeperMemberId?: string | null;
+
+  @ValidateIf((_, value) => value !== null && value !== undefined)
+  @IsUUID()
+  statisticianMemberId?: string | null;
 }

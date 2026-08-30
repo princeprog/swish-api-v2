@@ -134,6 +134,7 @@ describe('CompetitionService', () => {
     await expect(
       service.scheduleMatchup('org-1', 'division-1', 'matchup-1', access, {
         startsAt: '2026-09-01T10:00:00.000Z',
+        statisticianMemberId: 'c0a80121-0000-4000-8000-000000000099',
         venueId: 'c0a80121-0000-4000-8000-000000000001',
       }),
     ).resolves.toEqual({ id: 'game-1', status: 'scheduled' });
@@ -148,6 +149,7 @@ describe('CompetitionService', () => {
         leagueSeasonId: 'season-1',
         matchupId: 'matchup-1',
         status: 'scheduled',
+        statisticianMemberId: 'c0a80121-0000-4000-8000-000000000099',
       }),
     );
     expect(repo.markMatchupScheduled).toHaveBeenCalledWith(

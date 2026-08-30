@@ -238,6 +238,7 @@ export class CompetitionService {
       leagueSeasonId: format.league_season_id,
       matchupId,
       scorekeeperMemberId: dto.scorekeeperMemberId,
+      statisticianMemberId: dto.statisticianMemberId,
       startsAt: dto.startsAt,
       status: 'scheduled',
       venueId: dto.venueId,

@@ -74,6 +74,12 @@ export class ScheduleService {
         createScheduleDto.scorekeeperMemberId,
       );
     }
+    if (createScheduleDto.statisticianMemberId) {
+      await this.assertStatisticianCanBeAssigned(
+        organizationId,
+        createScheduleDto.statisticianMemberId,
+      );
+    }
 
     if (createScheduleDto.status === 'scheduled') {
       await this.assertNoScheduleConflict({
@@ -124,6 +130,26 @@ export class ScheduleService {
             {
               previousScorekeeperMemberId: null,
               scorekeeperMemberId: createScheduleDto.scorekeeperMemberId,
+            },
+          );
+        }
+
+        if (createScheduleDto.statisticianMemberId) {
+          await trx
+            .insertInto('access.game_statistician_assignments')
+            .values({
+              game_id: game.id,
+              organization_member_id: createScheduleDto.statisticianMemberId,
+            })
+            .execute();
+          await this.writeAuditInTransaction(
+            trx,
+            access,
+            'game.statistician_assignment.updated',
+            game.id,
+            {
+              previousStatisticianMemberId: null,
+              statisticianMemberId: createScheduleDto.statisticianMemberId,
             },
           );
         }
