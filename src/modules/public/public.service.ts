@@ -181,12 +181,15 @@ export class PublicService {
         .innerJoin('admin.teams as homeTeams', 'homeTeams.id', 'games.home_team_id')
         .innerJoin('admin.teams as awayTeams', 'awayTeams.id', 'games.away_team_id')
         .innerJoin('admin.venues as venues', 'venues.id', 'games.venue_id')
+        .leftJoin('scoring.game_states as liveStates', 'liveStates.game_id', 'games.id')
         .select([
           'games.id',
           'games.starts_at',
           'games.status',
           'games.home_score',
           'games.away_score',
+          'liveStates.home_score as live_home_score',
+          'liveStates.away_score as live_away_score',
           'games.competition_kind',
           'divisions.id as division_id',
           'divisions.name as division_name',
@@ -336,11 +339,17 @@ export class PublicService {
     ]);
 
     const publicGames = games.map((game: any) => ({
-      awayScore: game.away_score,
+      awayScore:
+        game.status === 'live' || game.status === 'reopened'
+          ? (game.live_away_score ?? game.away_score)
+          : game.away_score,
       awayTeam: { id: game.away_team_id, name: game.away_team_name },
       competitionKind: game.competition_kind,
       division: { id: game.division_id, name: game.division_name },
-      homeScore: game.home_score,
+      homeScore:
+        game.status === 'live' || game.status === 'reopened'
+          ? (game.live_home_score ?? game.home_score)
+          : game.home_score,
       homeTeam: { id: game.home_team_id, name: game.home_team_name },
       id: game.id,
       liveScoreIsUnofficial: game.status === 'live' || game.status === 'reopened',
