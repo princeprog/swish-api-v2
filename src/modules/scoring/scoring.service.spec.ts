@@ -121,18 +121,23 @@ describe('ScoringService season rule snapshots', () => {
   });
 });
 
-describe('ScoringService compliance gate', () => {
-  it('returns a clear action message when a scheduled game has uncleared teams', async () => {
+describe('ScoringService parked compliance', () => {
+  it('starts the scoring transaction without consulting division requirements', async () => {
     const complianceService = {
       checkGameStartClearance: jest.fn().mockResolvedValue({
         allowed: false,
         blockedTeams: [{ name: 'Away', status: 'pending' }],
       }),
     };
-    const service = new ScoringService(
-      {} as never,
+    const transactionExecute = jest
+      .fn()
+      .mockRejectedValue(new Error('scoring transaction reached'));
+    const service = new (ScoringService as any)(
+      {
+        transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
+      },
       undefined,
-      complianceService as never,
+      complianceService,
     );
     jest
       .spyOn(service as never, 'findGameForScoring' as never)
@@ -147,10 +152,9 @@ describe('ScoringService compliance gate', () => {
         expectedVersion: 0,
         occurredAt: new Date(),
       }),
-    ).rejects.toMatchObject({
-      response: {
-        code: 'TEAM_COMPLIANCE_REQUIRED',
-      },
-    });
+    ).rejects.toThrow('scoring transaction reached');
+
+    expect(complianceService.checkGameStartClearance).not.toHaveBeenCalled();
+    expect(transactionExecute).toHaveBeenCalledTimes(1);
   });
 });

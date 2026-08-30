@@ -26,7 +26,6 @@ import {
   type ScoringState,
 } from './scoring-engine';
 import { NotificationWriter } from '../notification/notification.writer';
-import { ComplianceService } from '../compliance/compliance.service';
 
 type ScheduleGame = {
   away_score: number | null;
@@ -80,7 +79,6 @@ export class ScoringService {
   constructor(
     @Inject(DATABASE) private readonly db: Database,
     @Optional() private readonly notificationWriter?: NotificationWriter,
-    @Optional() private readonly complianceService?: ComplianceService,
   ) {}
 
   async getState(
@@ -353,25 +351,6 @@ export class ScoringService {
     await this.assertControlSession(gameId, access, input.controlToken, false);
 
     try {
-      if (input.command.type === 'game.start' && this.complianceService) {
-        const clearance = await this.complianceService.checkGameStartClearance({
-          organizationId,
-          divisionId: game.division_id,
-          homeTeamId: game.home_team_id,
-          homeTeamName: game.home_team_name,
-          awayTeamId: game.away_team_id,
-          awayTeamName: game.away_team_name,
-        });
-        if (!clearance.allowed) {
-          const teams = clearance.blockedTeams
-            .map((team) => team.name)
-            .join(' and ');
-          throw new ScoringActionError(
-            'TEAM_COMPLIANCE_REQUIRED',
-            `${teams} must complete the division requirements before this game can start.`,
-          );
-        }
-      }
       const result = await (this.db as any)
         .transaction()
         .execute(async (trx) => {

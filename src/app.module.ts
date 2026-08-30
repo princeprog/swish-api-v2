@@ -20,7 +20,6 @@ import { TeamManagerWorkspaceModule } from './modules/team-manager-workspace/tea
 import { TeamModule } from './modules/team/team.module';
 import { VenueModule } from './modules/venue/venue.module';
 import { NotificationModule } from './modules/notification/notification.module';
-import { ComplianceModule } from './modules/compliance/compliance.module';
 
 @Module({
   imports: [
@@ -43,7 +42,6 @@ import { ComplianceModule } from './modules/compliance/compliance.module';
     PlayerModule,
     VenueModule,
     NotificationModule,
-    ComplianceModule,
   ],
   controllers: [AppController],
   providers: [AppService],
