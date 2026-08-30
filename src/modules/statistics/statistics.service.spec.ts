@@ -20,7 +20,7 @@ describe('StatisticsService submission', () => {
       selectFrom: jest.fn().mockReturnValue(stateQuery),
       updateTable: jest.fn().mockReturnValue(updateQuery),
     };
-    const service = new StatisticsService(db as never);
+    const service = new StatisticsService(db as never, {} as never);
     jest.spyOn(service as any, 'assertGameAccess').mockResolvedValue({
       away_score: null,
       away_team_id: 'away-team',
@@ -68,7 +68,7 @@ describe('StatisticsService submission', () => {
   });
 
   it('requires a reason when confirming someone other than the suggestion', async () => {
-    const service = new StatisticsService({} as never);
+    const service = new StatisticsService({} as never, {} as never);
     jest.spyOn(service, 'getPlayerOfGame').mockResolvedValue({
       award: {},
       candidates: [
@@ -98,5 +98,41 @@ describe('StatisticsService submission', () => {
     ).rejects.toThrow(
       'Explain why another player was selected instead of the suggested player.',
     );
+  });
+
+  it('routes finalized stat sheet corrections through official result reopening', async () => {
+    const coordinator = {
+      reopen: jest.fn().mockResolvedValue({
+        gameId: 'game-1',
+        unscheduledGameIds: [],
+      }),
+    };
+    const service = new StatisticsService({} as never, coordinator as never);
+    const access = {
+      membershipId: 'member-1',
+      organizationId: 'org-1',
+      permissions: ['game.stats.override'],
+      role: 'admin',
+      userId: 'user-1',
+    };
+    jest.spyOn(service as any, 'assertGameAccess').mockResolvedValue({
+      id: 'game-1',
+      status: 'final',
+    });
+
+    await expect(
+      service.reopen(
+        'org-1',
+        'game-1',
+        access as never,
+        'Correct an attributed rebound.',
+      ),
+    ).resolves.toEqual({ gameId: 'game-1', unscheduledGameIds: [] });
+    expect(coordinator.reopen).toHaveBeenCalledWith({
+      access,
+      gameId: 'game-1',
+      organizationId: 'org-1',
+      reason: 'Correct an attributed rebound.',
+    });
   });
 });

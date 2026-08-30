@@ -25,6 +25,7 @@ import {
 } from './statistics-engine';
 import { suggestPlayerOfGame } from './player-of-game';
 import { AUTH_ROLES } from '../../common/auth/roles';
+import { OfficialResultCoordinator } from '../official-result/official-result.service';
 
 type StatisticsGameContext = {
   away_score: number | null;
@@ -40,7 +41,10 @@ type StatisticsGameContext = {
 export class StatisticsService {
   private static readonly CONTROL_TTL_MS = 90_000;
 
-  constructor(@Inject(DATABASE) private readonly db: Database) {}
+  constructor(
+    @Inject(DATABASE) private readonly db: Database,
+    private readonly officialResultCoordinator: OfficialResultCoordinator,
+  ) {}
 
   async getState(
     organizationId: string,
@@ -463,9 +467,14 @@ export class StatisticsService {
       })
       .where('game_id', '=', gameId)
       .executeTakeFirstOrThrow();
-    await this.writeAudit(access, gameId, 'statistics.reconciliation.overridden', {
-      reason,
-    });
+    await this.writeAudit(
+      access,
+      gameId,
+      'statistics.reconciliation.overridden',
+      {
+        reason,
+      },
+    );
     return { status: 'submitted', overridden: true };
   }
 
@@ -477,43 +486,12 @@ export class StatisticsService {
   ) {
     this.assertOverrideAccess(access);
     await this.assertGameAccess(organizationId, gameId, access);
-    const now = new Date();
-    await this.db.transaction().execute(async (trx) => {
-      await trx
-        .updateTable('statistics.game_stat_sheets')
-        .set({
-          finalized_at: null,
-          reconciled_at: null,
-          reopened_at: now,
-          status: 'reopened',
-          updated_at: now,
-        })
-        .where('game_id', '=', gameId)
-        .executeTakeFirstOrThrow();
-      await trx
-        .updateTable('statistics.game_awards')
-        .set({
-          confirmation_reason: null,
-          confirmed_at: null,
-          confirmed_by_member_id: null,
-          selected_player_id: null,
-          updated_at: now,
-        })
-        .where('game_id', '=', gameId)
-        .execute();
-      await trx
-        .insertInto('access.audit_events')
-        .values({
-          action: 'statistics.sheet.reopened',
-          actor_member_id: access.membershipId,
-          metadata: { reason },
-          organization_id: access.organizationId,
-          target_id: gameId,
-          target_type: 'game',
-        })
-        .execute();
+    return this.officialResultCoordinator.reopen({
+      access,
+      gameId,
+      organizationId,
+      reason,
     });
-    return { status: 'reopened' };
   }
 
   async getPlayerOfGame(
@@ -609,7 +587,9 @@ export class StatisticsService {
       );
     }
     const state = await this.getPlayerOfGame(organizationId, gameId, access);
-    if (!state.candidates.some((candidate) => candidate.playerId === playerId)) {
+    if (
+      !state.candidates.some((candidate) => candidate.playerId === playerId)
+    ) {
       throw new BadRequestException(
         'Choose a player who participated in this game.',
       );
@@ -695,7 +675,9 @@ export class StatisticsService {
     return game;
   }
 
-  private async ensureRosterAndSheet(game: StatisticsGameContext): Promise<void> {
+  private async ensureRosterAndSheet(
+    game: StatisticsGameContext,
+  ): Promise<void> {
     await this.db.transaction().execute(async (trx) => {
       await trx
         .insertInto('statistics.game_stat_sheets')

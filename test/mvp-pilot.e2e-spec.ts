@@ -653,6 +653,7 @@ describe('Basketball League OS MVP database pilot', () => {
         .executeTakeFirstOrThrow();
       const statisticsService = new StatisticsService(
         reusePilotTransaction(trx),
+        coordinator,
       );
       const awardState = await statisticsService.getPlayerOfGame(
         organizationId,
@@ -690,10 +691,7 @@ describe('Basketball League OS MVP database pilot', () => {
           qualifiers_per_pool: 8,
           qualifying_format: 'none',
           status: 'locked',
-          tiebreakers: JSON.stringify([
-            'win_percentage',
-            'manual_decision',
-          ]),
+          tiebreakers: JSON.stringify(['win_percentage', 'manual_decision']),
         })
         .execute();
       const doubleTeamIds = Array.from({ length: 8 }, () => randomUUID());
@@ -971,10 +969,13 @@ describe('Basketball League OS MVP database pilot', () => {
         .selectAll()
         .where('division_format_id', '=', formatId)
         .execute();
-      const teamOrder = new Map(teamIds.map((teamId, index) => [teamId, index]));
+      const teamOrder = new Map(
+        teamIds.map((teamId, index) => [teamId, index]),
+      );
       const games = matchups.map((matchup: any, index: number) => {
         const homeWins =
-          teamOrder.get(matchup.home_team_id) < teamOrder.get(matchup.away_team_id);
+          teamOrder.get(matchup.home_team_id) <
+          teamOrder.get(matchup.away_team_id);
         return {
           away_score: homeWins ? 70 : 80,
           away_team_id: matchup.away_team_id,

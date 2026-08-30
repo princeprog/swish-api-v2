@@ -211,6 +211,7 @@ export class OfficialResultCoordinator {
       .updateTable('statistics.game_stat_sheets')
       .set({
         finalized_at: null,
+        reconciled_at: null,
         reopened_at: now,
         status: 'reopened',
         updated_at: now,
