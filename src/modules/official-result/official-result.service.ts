@@ -8,6 +8,7 @@ import {
 import type { OrganizationAccessContext } from '../../common/auth/roles';
 import { DATABASE, type Database } from '../../database/database.tokens';
 import { NotificationWriter } from '../notification/notification.writer';
+import { resolveByeProgression } from '../competition/bye-progression';
 import { calculateRankedStandings } from '../standings/standings-calculator';
 import type {
   FinalizedGameResult,
@@ -622,7 +623,13 @@ export class OfficialResultCoordinator {
         .where('id', 'in', plan.voidMatchupIds)
         .execute();
     }
-    if (plan.championTeamId) {
+    const byeProgression = await this.advanceResolvedByes(
+      db,
+      matchup.division_format_id,
+    );
+    const championTeamId =
+      plan.championTeamId ?? byeProgression.championTeamId;
+    if (championTeamId) {
       await db
         .updateTable('competition.division_formats')
         .set({ status: 'completed', updated_at: new Date() })
@@ -635,9 +642,104 @@ export class OfficialResultCoordinator {
       input,
       winnerTeamId,
       plan.eliminatedTeamIds,
-      plan.championTeamId,
+      championTeamId,
     );
-    return plan.championTeamId;
+    for (const autoAdvancedTeamId of byeProgression.advancedTeamIds) {
+      await this.writeCompetitionNotification(
+        db,
+        game,
+        input,
+        'playoffs.team_advanced',
+        `advance:${game.id}:${autoAdvancedTeamId}`,
+      );
+    }
+    return championTeamId;
+  }
+
+  private async advanceResolvedByes(db: any, formatId: string) {
+    const matchups = await db
+      .selectFrom('competition.matchups')
+      .selectAll()
+      .where('division_format_id', '=', formatId)
+      .execute();
+    const resolved = resolveByeProgression(
+      matchups.map((matchup: any) => ({
+        awaySource: {
+          ref: matchup.away_source_ref,
+          type: matchup.away_source_type,
+        },
+        awayTeamId: matchup.away_team_id,
+        bracketSide: matchup.bracket_side,
+        homeSource: {
+          ref: matchup.home_source_ref,
+          type: matchup.home_source_type,
+        },
+        homeTeamId: matchup.home_team_id,
+        isResetFinal: matchup.is_reset_final,
+        key: matchup.id,
+        label: matchup.label ?? 'Generated matchup',
+        loserTeamId: matchup.loser_team_id,
+        loserTo: matchup.loser_to_matchup_id
+          ? {
+              matchupKey: matchup.loser_to_matchup_id,
+              slot: matchup.loser_to_slot,
+            }
+          : null,
+        poolId: matchup.pool_id,
+        position: matchup.position,
+        roundNumber: matchup.round_number,
+        stage: matchup.stage,
+        status: matchup.status,
+        winnerTeamId: matchup.winner_team_id,
+        winnerTo: matchup.winner_to_matchup_id
+          ? {
+              matchupKey: matchup.winner_to_matchup_id,
+              slot: matchup.winner_to_slot,
+            }
+          : null,
+      })),
+    );
+    const originalById = new Map(
+      matchups.map((matchup: any) => [matchup.id, matchup]),
+    );
+    const advancedTeamIds: string[] = [];
+    let championTeamId: string | null = null;
+
+    for (const matchup of resolved) {
+      const original: any = originalById.get(matchup.key);
+      if (
+        !original ||
+        (original.away_team_id === matchup.awayTeamId &&
+          original.home_team_id === matchup.homeTeamId &&
+          original.loser_team_id === matchup.loserTeamId &&
+          original.status === matchup.status &&
+          original.winner_team_id === matchup.winnerTeamId)
+      ) {
+        continue;
+      }
+      await db
+        .updateTable('competition.matchups')
+        .set({
+          away_team_id: matchup.awayTeamId,
+          home_team_id: matchup.homeTeamId,
+          loser_team_id: matchup.loserTeamId,
+          status: matchup.status,
+          updated_at: new Date(),
+          winner_team_id: matchup.winnerTeamId,
+        })
+        .where('id', '=', matchup.key)
+        .execute();
+      if (
+        matchup.status === 'final' &&
+        matchup.winnerTeamId &&
+        original.status !== 'final'
+      ) {
+        advancedTeamIds.push(matchup.winnerTeamId);
+        if (!matchup.winnerTo) championTeamId = matchup.winnerTeamId;
+      }
+    }
+
+    return { advancedTeamIds, championTeamId };
   }
 
   private async rebuildPoolStandings(

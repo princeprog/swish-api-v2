@@ -6,6 +6,7 @@ import type { CompetitionPlanMatchup } from './competition-plan.builder';
 import type { PoolTeamAssignmentDto } from './dto/set-pool-assignments.dto';
 import type { UpdateCompetitionFormatDto } from './dto/update-competition-format.dto';
 import type { OrganizationAccessContext } from '../../common/auth/roles';
+import { resolveGeneratedByes } from './bye-progression';
 
 export type CompetitionFormatContext = {
   crossover_template: Json;
@@ -311,6 +312,9 @@ export class CompetitionRepository {
       }
 
       const idsByKey = new Map(plan.map((matchup) => [matchup.key, randomUUID()]));
+      const resolvedByKey = new Map(
+        resolveGeneratedByes(plan).map((matchup) => [matchup.key, matchup]),
+      );
       const sourceRef = (
         type: string,
         ref: string | null,
@@ -324,12 +328,21 @@ export class CompetitionRepository {
           .insertInto('competition.matchups')
           .values(
             plan.map((matchup) => ({
+              ...(() => {
+                const resolved = resolvedByKey.get(matchup.key)!;
+                return {
+                  away_team_id: resolved.awayTeamId,
+                  home_team_id: resolved.homeTeamId,
+                  loser_team_id: resolved.loserTeamId,
+                  status: resolved.status,
+                  winner_team_id: resolved.winnerTeamId,
+                };
+              })(),
               away_source_ref: sourceRef(
                 matchup.awaySource.type,
                 matchup.awaySource.ref,
               ),
               away_source_type: matchup.awaySource.type,
-              away_team_id: matchup.awayTeamId,
               bracket_side: matchup.bracketSide,
               division_format_id: format.id,
               format_revision: format.revision,
@@ -338,7 +351,6 @@ export class CompetitionRepository {
                 matchup.homeSource.ref,
               ),
               home_source_type: matchup.homeSource.type,
-              home_team_id: matchup.homeTeamId,
               id: idsByKey.get(matchup.key),
               is_reset_final: matchup.isResetFinal,
               label: matchup.label,
@@ -346,8 +358,6 @@ export class CompetitionRepository {
               position: matchup.position,
               round_number: matchup.roundNumber,
               stage: matchup.stage,
-              status:
-                matchup.homeTeamId && matchup.awayTeamId ? 'ready' : 'pending',
             })),
           )
           .execute();
