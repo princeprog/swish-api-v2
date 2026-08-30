@@ -77,13 +77,15 @@ describe('DivisionService competition defaults', () => {
     ).resolves.toEqual(division);
 
     expect(formatInsert.values).toHaveBeenCalledWith({
-      crossover_template: seasonDefaults.default_crossover_template,
+      crossover_template: JSON.stringify(
+        seasonDefaults.default_crossover_template,
+      ),
       division_id: 'division-1',
       playoff_format: 'single_elimination',
       pool_count: 2,
       qualifiers_per_pool: 2,
       qualifying_format: 'single_round_robin',
-      tiebreakers: seasonDefaults.default_tiebreakers,
+      tiebreakers: JSON.stringify(seasonDefaults.default_tiebreakers),
     });
     expect(poolsInsert.values).toHaveBeenCalledWith([
       {

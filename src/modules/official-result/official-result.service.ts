@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { OrganizationAccessContext } from '../../common/auth/roles';
+import { serializeJsonArray } from '../../common/database/json-value';
 import { DATABASE, type Database } from '../../database/database.tokens';
 import { NotificationWriter } from '../notification/notification.writer';
 import { resolveByeProgression } from '../competition/bye-progression';
@@ -63,15 +64,15 @@ export class OfficialResultCoordinator {
   ) {}
 
   finalize(input: FinalizeOfficialResultInput) {
-    return this.db.transaction().execute((trx) =>
-      this.finalizeInTransaction(trx, input),
-    );
+    return this.db
+      .transaction()
+      .execute((trx) => this.finalizeInTransaction(trx, input));
   }
 
   reopen(input: ReopenOfficialResultInput) {
-    return this.db.transaction().execute((trx) =>
-      this.reopenInTransaction(trx, input),
-    );
+    return this.db
+      .transaction()
+      .execute((trx) => this.reopenInTransaction(trx, input));
   }
 
   async reopenInTransaction(db: any, input: ReopenOfficialResultInput) {
@@ -102,7 +103,9 @@ export class OfficialResultCoordinator {
         const downstreamMatchupIds =
           sourceMatchup.stage === 'qualifier'
             ? matchups
-                .filter((matchup: { stage: string }) => matchup.stage === 'playoff')
+                .filter(
+                  (matchup: { stage: string }) => matchup.stage === 'playoff',
+                )
                 .sort(
                   (
                     left: { round_number: number },
@@ -139,10 +142,7 @@ export class OfficialResultCoordinator {
               ['live', 'final', 'reopened'].includes(candidate.status),
             )
             .sort(
-              (
-                left: { matchup_id: string },
-                right: { matchup_id: string },
-              ) =>
+              (left: { matchup_id: string }, right: { matchup_id: string }) =>
                 (order.get(left.matchup_id) ?? Number.MAX_SAFE_INTEGER) -
                 (order.get(right.matchup_id) ?? Number.MAX_SAFE_INTEGER),
             );
@@ -165,7 +165,10 @@ export class OfficialResultCoordinator {
           }
 
           const scheduledIds = downstreamGames
-            .filter((candidate: { status: string }) => candidate.status === 'scheduled')
+            .filter(
+              (candidate: { status: string }) =>
+                candidate.status === 'scheduled',
+            )
             .map((candidate: { id: string }) => candidate.id);
           if (scheduledIds.length > 0) {
             await db
@@ -416,10 +419,7 @@ export class OfficialResultCoordinator {
     downstreamMatchupIds: string[],
     now: Date,
   ) {
-    const invalidatedIds = new Set([
-      sourceMatchup.id,
-      ...downstreamMatchupIds,
-    ]);
+    const invalidatedIds = new Set([sourceMatchup.id, ...downstreamMatchupIds]);
     const reopeningQualifier = sourceMatchup.stage === 'qualifier';
 
     for (const matchup of matchups.filter(
@@ -433,12 +433,14 @@ export class OfficialResultCoordinator {
           (reopeningQualifier && matchup.home_source_type === 'pool_seed') ||
           (['matchup_winner', 'matchup_loser'].includes(
             matchup.home_source_type,
-          ) && invalidatedIds.has(matchup.home_source_ref));
+          ) &&
+            invalidatedIds.has(matchup.home_source_ref));
         const clearAway =
           (reopeningQualifier && matchup.away_source_type === 'pool_seed') ||
           (['matchup_winner', 'matchup_loser'].includes(
             matchup.away_source_type,
-          ) && invalidatedIds.has(matchup.away_source_ref));
+          ) &&
+            invalidatedIds.has(matchup.away_source_ref));
         if (clearHome) homeTeamId = null;
         if (clearAway) awayTeamId = null;
       }
@@ -485,7 +487,10 @@ export class OfficialResultCoordinator {
         .select('team_id')
         .where('game_id', '=', game.id)
         .execute();
-      if (new Set(snapshots.map((row: { team_id: string }) => row.team_id)).size !== 2) {
+      if (
+        new Set(snapshots.map((row: { team_id: string }) => row.team_id))
+          .size !== 2
+      ) {
         throw new ConflictException(
           'Both published game rosters are required before this result can be finalized.',
         );
@@ -544,11 +549,7 @@ export class OfficialResultCoordinator {
 
     let championTeamId: string | null = null;
     if (game.matchup_id) {
-      championTeamId = await this.completeAndAdvanceMatchup(
-        db,
-        game,
-        input,
-      );
+      championTeamId = await this.completeAndAdvanceMatchup(db, game, input);
     }
     await this.rebuildPoolStandings(db, format, game, input);
     return { championTeamId, standingsRebuilt: true };
@@ -567,9 +568,7 @@ export class OfficialResultCoordinator {
       .executeTakeFirst();
     if (!matchup) return null;
     const winnerTeamId =
-      input.homeScore > input.awayScore
-        ? game.home_team_id
-        : game.away_team_id;
+      input.homeScore > input.awayScore ? game.home_team_id : game.away_team_id;
     const loserTeamId =
       winnerTeamId === game.home_team_id
         ? game.away_team_id
@@ -627,8 +626,7 @@ export class OfficialResultCoordinator {
       db,
       matchup.division_format_id,
     );
-    const championTeamId =
-      plan.championTeamId ?? byeProgression.championTeamId;
+    const championTeamId = plan.championTeamId ?? byeProgression.championTeamId;
     if (championTeamId) {
       await db
         .updateTable('competition.division_formats')
@@ -802,17 +800,17 @@ export class OfficialResultCoordinator {
         .where('games.status', '=', 'final')
         .where('games.competition_kind', '!=', 'exhibition')
         .execute()) as FinalizedGameResult[];
-      const decisions = (await db
-        .selectFrom('competition.tie_decisions')
-        .select(['ordered_team_ids', 'team_ids'])
-        .where('division_format_id', '=', format.id)
-        .where('pool_id', '=', pool.id)
-        .execute()).map(
-        (decision: { ordered_team_ids: unknown; team_ids: unknown }) => ({
-          orderedTeamIds: decision.ordered_team_ids as string[],
-          teamIds: decision.team_ids as string[],
-        }),
-      ) as ManualTieDecision[];
+      const decisions = (
+        await db
+          .selectFrom('competition.tie_decisions')
+          .select(['ordered_team_ids', 'team_ids'])
+          .where('division_format_id', '=', format.id)
+          .where('pool_id', '=', pool.id)
+          .execute()
+      ).map((decision: { ordered_team_ids: unknown; team_ids: unknown }) => ({
+        orderedTeamIds: decision.ordered_team_ids as string[],
+        teamIds: decision.team_ids as string[],
+      })) as ManualTieDecision[];
       const ranked = calculateRankedStandings(
         teams,
         results,
@@ -827,7 +825,9 @@ export class OfficialResultCoordinator {
         .execute();
       const poolComplete =
         required.length > 0 &&
-        required.every((matchup: { status: string }) => matchup.status === 'final');
+        required.every(
+          (matchup: { status: string }) => matchup.status === 'final',
+        );
       allPoolsComplete = allPoolsComplete && poolComplete;
       hasUnresolvedTies = hasUnresolvedTies || ranked.unresolvedTies.length > 0;
 
@@ -853,7 +853,7 @@ export class OfficialResultCoordinator {
                     ? 'eliminated'
                     : 'pending',
               rank: row.rank,
-              ranking_explanation: row.rankingExplanation,
+              ranking_explanation: serializeJsonArray(row.rankingExplanation),
               team_id: row.teamId,
               version: 1,
             })),
@@ -891,10 +891,12 @@ export class OfficialResultCoordinator {
     for (const matchup of matchups) {
       const values: Record<string, unknown> = { updated_at: new Date() };
       if (matchup.home_source_type === 'pool_seed' && matchup.home_source_ref) {
-        values.home_team_id = qualifiedBySeed.get(matchup.home_source_ref) ?? null;
+        values.home_team_id =
+          qualifiedBySeed.get(matchup.home_source_ref) ?? null;
       }
       if (matchup.away_source_type === 'pool_seed' && matchup.away_source_ref) {
-        values.away_team_id = qualifiedBySeed.get(matchup.away_source_ref) ?? null;
+        values.away_team_id =
+          qualifiedBySeed.get(matchup.away_source_ref) ?? null;
       }
       await db
         .updateTable('competition.matchups')
@@ -905,6 +907,7 @@ export class OfficialResultCoordinator {
         .updateTable('competition.matchups')
         .set({ status: 'ready', updated_at: new Date() })
         .where('id', '=', matchup.id)
+        .where('status', '=', 'pending')
         .where('home_team_id', 'is not', null)
         .where('away_team_id', 'is not', null)
         .execute();

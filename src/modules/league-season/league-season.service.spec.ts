@@ -148,12 +148,16 @@ describe('LeagueSeasonService game rules persistence', () => {
     });
     expect(transactionExecute).toHaveBeenCalledTimes(1);
     expect(seasonInsert.values).toHaveBeenCalledWith({
-      default_crossover_template: input.competitionDefaults.crossoverTemplate,
+      default_crossover_template: JSON.stringify(
+        input.competitionDefaults.crossoverTemplate,
+      ),
       default_playoff_format: 'single_elimination',
       default_pool_count: 2,
       default_qualifiers_per_pool: 2,
       default_qualifying_format: 'single_round_robin',
-      default_tiebreakers: input.competitionDefaults.tiebreakers,
+      default_tiebreakers: JSON.stringify(
+        input.competitionDefaults.tiebreakers,
+      ),
       name: input.name,
       organization_id: 'org-1',
       public_enabled: false,

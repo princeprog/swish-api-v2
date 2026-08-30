@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { serializeJsonArray } from '../../common/database/json-value';
 import type { Json } from '../../database/db';
 import { DATABASE, type Database } from '../../database/database.tokens';
 import type { CompetitionPlanMatchup } from './competition-plan.builder';
@@ -89,23 +95,28 @@ export class CompetitionRepository {
     return { format, matchups, pools, standings, tieDecisions };
   }
 
-  async updateFormat(
-    formatId: string,
-    dto: UpdateCompetitionFormatDto,
-  ) {
+  async updateFormat(formatId: string, dto: UpdateCompetitionFormatDto) {
     return this.db.transaction().execute(async (trx) => {
       const updated = await trx
         .updateTable('competition.division_formats')
         .set({
-          crossover_template: dto.crossoverTemplate?.map((matchup) => ({
-            awaySeed: matchup.awaySeed,
-            homeSeed: matchup.homeSeed,
-          })),
+          crossover_template:
+            dto.crossoverTemplate === undefined
+              ? undefined
+              : serializeJsonArray(
+                  dto.crossoverTemplate.map((matchup) => ({
+                    awaySeed: matchup.awaySeed,
+                    homeSeed: matchup.homeSeed,
+                  })),
+                ),
           playoff_format: dto.playoffFormat,
           pool_count: dto.poolCount,
           qualifiers_per_pool: dto.qualifiersPerPool,
           qualifying_format: dto.qualifyingFormat,
-          tiebreakers: dto.tiebreakers,
+          tiebreakers:
+            dto.tiebreakers === undefined
+              ? undefined
+              : serializeJsonArray(dto.tiebreakers),
           updated_at: new Date(),
         })
         .where('id', '=', formatId)
@@ -311,16 +322,15 @@ export class CompetitionRepository {
         );
       }
 
-      const idsByKey = new Map(plan.map((matchup) => [matchup.key, randomUUID()]));
+      const idsByKey = new Map(
+        plan.map((matchup) => [matchup.key, randomUUID()]),
+      );
       const resolvedByKey = new Map(
         resolveGeneratedByes(plan).map((matchup) => [matchup.key, matchup]),
       );
-      const sourceRef = (
-        type: string,
-        ref: string | null,
-      ): string | null =>
+      const sourceRef = (type: string, ref: string | null): string | null =>
         ref && (type === 'matchup_winner' || type === 'matchup_loser')
-          ? idsByKey.get(ref) ?? ref
+          ? (idsByKey.get(ref) ?? ref)
           : ref;
 
       if (plan.length > 0) {
@@ -460,10 +470,10 @@ export class CompetitionRepository {
         .values({
           decided_by_member_id: access.membershipId,
           division_format_id: formatId,
-          ordered_team_ids: orderedTeamIds,
+          ordered_team_ids: serializeJsonArray(orderedTeamIds),
           pool_id: poolId,
           reason,
-          team_ids: teamIds,
+          team_ids: serializeJsonArray(teamIds),
           tie_key: tieKey,
         })
         .onConflict((conflict) =>
@@ -471,9 +481,9 @@ export class CompetitionRepository {
             .columns(['division_format_id', 'pool_id', 'tie_key'])
             .doUpdateSet({
               decided_by_member_id: access.membershipId,
-              ordered_team_ids: orderedTeamIds,
+              ordered_team_ids: serializeJsonArray(orderedTeamIds),
               reason,
-              team_ids: teamIds,
+              team_ids: serializeJsonArray(teamIds),
             }),
         )
         .returningAll()

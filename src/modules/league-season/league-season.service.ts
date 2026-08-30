@@ -9,6 +9,7 @@ import {
   normalizePagination,
 } from '../../common/pagination/pagination.types';
 import type { PaginationQueryDto } from '../../common/pagination/pagination.dto';
+import { serializeJsonArray } from '../../common/database/json-value';
 import { DATABASE, type Database } from '../../database/database.tokens';
 import { CreateLeagueSeasonDto } from './dto/create-league-season.dto';
 import { UpdateLeagueSeasonDto } from './dto/update-league-season.dto';
@@ -71,15 +72,17 @@ function toCompetitionValues(
   scheduleSlotDurationMinutes = 90,
 ) {
   return {
-    default_crossover_template: defaults.crossoverTemplate.map((matchup) => ({
-      awaySeed: matchup.awaySeed,
-      homeSeed: matchup.homeSeed,
-    })),
+    default_crossover_template: serializeJsonArray(
+      defaults.crossoverTemplate.map((matchup) => ({
+        awaySeed: matchup.awaySeed,
+        homeSeed: matchup.homeSeed,
+      })),
+    ),
     default_playoff_format: defaults.playoffFormat,
     default_pool_count: defaults.poolCount,
     default_qualifiers_per_pool: defaults.qualifiersPerPool,
     default_qualifying_format: defaults.qualifyingFormat,
-    default_tiebreakers: defaults.tiebreakers,
+    default_tiebreakers: serializeJsonArray(defaults.tiebreakers),
     schedule_slot_duration_minutes: scheduleSlotDurationMinutes,
   };
 }
@@ -192,7 +195,9 @@ export class LeagueSeasonService {
       const rules = rulesBySeasonId.get(season.id);
 
       if (!rules) {
-        throw new NotFoundException('Game rules were not found for this season');
+        throw new NotFoundException(
+          'Game rules were not found for this season',
+        );
       }
 
       return toLeagueSeasonResponse(season, rules);

@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { PaginationQueryDto } from '../../common/pagination/pagination.dto';
+import { serializeJsonArray } from '../../common/database/json-value';
 import {
   createPaginatedResponse,
   normalizePagination,
@@ -48,13 +49,17 @@ export class DivisionService {
       const format = await trx
         .insertInto('competition.division_formats')
         .values({
-          crossover_template: season.default_crossover_template,
+          crossover_template: serializeJsonArray(
+            season.default_crossover_template as unknown[],
+          ),
           division_id: division.id,
           playoff_format: season.default_playoff_format,
           pool_count: season.default_pool_count,
           qualifiers_per_pool: season.default_qualifiers_per_pool,
           qualifying_format: season.default_qualifying_format,
-          tiebreakers: season.default_tiebreakers,
+          tiebreakers: serializeJsonArray(
+            season.default_tiebreakers as unknown[],
+          ),
         })
         .returningAll()
         .executeTakeFirstOrThrow();
