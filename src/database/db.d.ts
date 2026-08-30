@@ -101,6 +101,7 @@ export interface AdminLeagueSeasonGameRules {
   league_season_id: string;
   overtime_duration_ms: Generated<number>;
   period_duration_ms: Generated<number>;
+  personal_foul_limit: Generated<number>;
   regulation_periods: Generated<number>;
   shot_clock_enabled: Generated<boolean>;
   shot_clock_full_ms: Generated<number>;
@@ -114,10 +115,17 @@ export interface AdminLeagueSeasonGameRules {
 
 export interface AdminLeagueSeasons {
   created_at: Generated<Timestamp>;
+  default_crossover_template: Generated<Json>;
+  default_playoff_format: Generated<string>;
+  default_pool_count: Generated<number>;
+  default_qualifiers_per_pool: Generated<number>;
+  default_qualifying_format: Generated<string>;
+  default_tiebreakers: Generated<Json>;
   id: Generated<string>;
   name: string;
   organization_id: string;
   public_enabled: Generated<boolean>;
+  schedule_slot_duration_minutes: Generated<number>;
   slug: string;
   status: Generated<string>;
   updated_at: Generated<Timestamp>;
@@ -293,6 +301,23 @@ export interface AuthUsers {
   updated_at: Generated<Timestamp>;
 }
 
+export interface CompetitionDivisionFormats {
+  created_at: Generated<Timestamp>;
+  crossover_template: Generated<Json>;
+  division_id: string;
+  generated_at: Timestamp | null;
+  id: Generated<string>;
+  locked_at: Timestamp | null;
+  playoff_format: Generated<string>;
+  pool_count: Generated<number>;
+  qualifiers_per_pool: Generated<number>;
+  qualifying_format: Generated<string>;
+  revision: Generated<number>;
+  status: Generated<string>;
+  tiebreakers: Generated<Json>;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface CompetitionFinalizedGameResults {
   away_score: number | null;
   away_team_id: string | null;
@@ -321,6 +346,23 @@ export interface CompetitionGames {
   status: Generated<string>;
   updated_at: Generated<Timestamp>;
   venue_id: string;
+}
+
+export interface CompetitionPools {
+  code: string;
+  created_at: Generated<Timestamp>;
+  division_format_id: string;
+  id: Generated<string>;
+  name: string;
+  sort_order: number;
+}
+
+export interface CompetitionPoolTeams {
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  pool_id: string;
+  seed: number | null;
+  team_id: string;
 }
 
 export interface ComplianceDivisionSettings {
@@ -578,8 +620,11 @@ export interface DB {
   "auth.password_credentials": AuthPasswordCredentials;
   "auth.refresh_tokens": AuthRefreshTokens;
   "auth.users": AuthUsers;
+  "competition.division_formats": CompetitionDivisionFormats;
   "competition.finalized_game_results": CompetitionFinalizedGameResults;
   "competition.games": CompetitionGames;
+  "competition.pool_teams": CompetitionPoolTeams;
+  "competition.pools": CompetitionPools;
   "compliance.division_settings": ComplianceDivisionSettings;
   "compliance.file_scan_jobs": ComplianceFileScanJobs;
   "compliance.requirements": ComplianceRequirements;
