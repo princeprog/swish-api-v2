@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Optional,
 } from '@nestjs/common';
 import { buildCompetitionPlan } from './competition-plan.builder';
 import { CompetitionRepository } from './competition.repository';
@@ -14,10 +15,16 @@ import type {
   QualifyingFormat,
   TiebreakerRule,
 } from '../league-season/dto/league-season-competition-defaults.dto';
+import type { OrganizationAccessContext } from '../../common/auth/roles';
+import { ScheduleService } from '../schedule/schedule.service';
+import type { ScheduleMatchupDto } from './dto/schedule-matchup.dto';
 
 @Injectable()
 export class CompetitionService {
-  constructor(private readonly repository: CompetitionRepository) {}
+  constructor(
+    private readonly repository: CompetitionRepository,
+    @Optional() private readonly scheduleService?: ScheduleService,
+  ) {}
 
   async getWorkspace(organizationId: string, divisionId: string) {
     const format = await this.repository.findFormatContext(
@@ -190,6 +197,49 @@ export class CompetitionService {
     }
 
     return this.repository.reset(format.id);
+  }
+
+  async scheduleMatchup(
+    organizationId: string,
+    divisionId: string,
+    matchupId: string,
+    access: OrganizationAccessContext,
+    dto: ScheduleMatchupDto,
+  ) {
+    const format = await this.repository.findFormatContext(
+      organizationId,
+      divisionId,
+    );
+    const matchup = await this.repository.findMatchup(format.id, matchupId);
+
+    if (!matchup.home_team_id || !matchup.away_team_id) {
+      throw new ConflictException(
+        'This matchup is waiting for both teams and cannot be scheduled yet.',
+      );
+    }
+    if (matchup.status !== 'ready') {
+      throw new ConflictException(
+        'This matchup has already been scheduled or completed.',
+      );
+    }
+    if (!this.scheduleService) {
+      throw new ConflictException('Scheduling is temporarily unavailable.');
+    }
+
+    const game = await this.scheduleService.create(organizationId, access, {
+      awayTeamId: matchup.away_team_id,
+      competitionKind: matchup.stage === 'playoff' ? 'playoff' : 'stage',
+      divisionId,
+      homeTeamId: matchup.home_team_id,
+      leagueSeasonId: format.league_season_id,
+      matchupId,
+      scorekeeperMemberId: dto.scorekeeperMemberId,
+      startsAt: dto.startsAt,
+      status: 'scheduled',
+      venueId: dto.venueId,
+    });
+    await this.repository.markMatchupScheduled(matchupId, game.id);
+    return game;
   }
 
   private assertDraft(status: string): void {

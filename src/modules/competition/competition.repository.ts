@@ -11,6 +11,7 @@ export type CompetitionFormatContext = {
   division_id: string;
   division_name: string;
   id: string;
+  league_season_id: string;
   playoff_format: string;
   pool_count: number;
   qualifiers_per_pool: number;
@@ -46,6 +47,7 @@ export class CompetitionRepository {
         'formats.division_id',
         'divisions.name as division_name',
         'formats.id',
+        'divisions.league_season_id',
         'formats.playoff_format',
         'formats.pool_count',
         'formats.qualifiers_per_pool',
@@ -259,6 +261,27 @@ export class CompetitionRepository {
       .orderBy('round_number asc')
       .orderBy('position asc')
       .execute();
+  }
+
+  async findMatchup(formatId: string, matchupId: string) {
+    const matchup = await this.db
+      .selectFrom('competition.matchups')
+      .selectAll()
+      .where('id', '=', matchupId)
+      .where('division_format_id', '=', formatId)
+      .executeTakeFirst();
+    if (!matchup) throw new NotFoundException('Matchup not found');
+    return matchup;
+  }
+
+  async markMatchupScheduled(matchupId: string, gameId: string): Promise<void> {
+    await this.db
+      .updateTable('competition.matchups')
+      .set({ status: 'scheduled', updated_at: new Date() })
+      .where('id', '=', matchupId)
+      .where('status', '=', 'ready')
+      .executeTakeFirstOrThrow();
+    void gameId;
   }
 
   async lockAndInsertMatchups(

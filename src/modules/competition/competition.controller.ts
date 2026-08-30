@@ -16,6 +16,9 @@ import { CompetitionService } from './competition.service';
 import { GenerateCompetitionDto } from './dto/generate-competition.dto';
 import { SetPoolAssignmentsDto } from './dto/set-pool-assignments.dto';
 import { UpdateCompetitionFormatDto } from './dto/update-competition-format.dto';
+import { ScheduleMatchupDto } from './dto/schedule-matchup.dto';
+import { OrganizationAccess } from '../../common/decorators/organization-access.decorator';
+import type { OrganizationAccessContext } from '../../common/auth/roles';
 
 @Controller(
   'organizations/:organizationId/divisions/:divisionId/competition',
@@ -87,5 +90,23 @@ export class CompetitionController {
     @Param('divisionId') divisionId: string,
   ) {
     return this.competitionService.reset(organizationId, divisionId);
+  }
+
+  @Post('matchups/:matchupId/schedule')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE)
+  scheduleMatchup(
+    @Param('organizationId') organizationId: string,
+    @Param('divisionId') divisionId: string,
+    @Param('matchupId') matchupId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+    @Body() dto: ScheduleMatchupDto,
+  ) {
+    return this.competitionService.scheduleMatchup(
+      organizationId,
+      divisionId,
+      matchupId,
+      access,
+      dto,
+    );
   }
 }

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
@@ -18,6 +19,7 @@ import type { UpdateScorekeeperAssignmentDto } from './dto/update-scorekeeper-as
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { NotificationWriter } from '../notification/notification.writer';
 import type { NotificationEventType } from '../notification/notification.events';
+import { findScheduleConflict } from './schedule-conflicts';
 
 type ScheduleGameRecord = {
   away_score: number | null;
@@ -69,6 +71,16 @@ export class ScheduleService {
       );
     }
 
+    if (createScheduleDto.status === 'scheduled') {
+      await this.assertNoScheduleConflict({
+        awayTeamId: createScheduleDto.awayTeamId,
+        homeTeamId: createScheduleDto.homeTeamId,
+        leagueSeasonId: createScheduleDto.leagueSeasonId,
+        startsAt: new Date(createScheduleDto.startsAt),
+        venueId: createScheduleDto.venueId,
+      });
+    }
+
     const inserted = await (this.db as any)
       .transaction()
       .execute(async (trx) => {
@@ -77,11 +89,13 @@ export class ScheduleService {
           .values({
             away_team_id: createScheduleDto.awayTeamId,
             away_score: createScheduleDto.awayScore,
+            competition_kind: createScheduleDto.competitionKind ?? 'stage',
             division_id: createScheduleDto.divisionId,
             finalized_at: this.resolveCreatedFinalizedAt(createScheduleDto),
             home_score: createScheduleDto.homeScore,
             home_team_id: createScheduleDto.homeTeamId,
             league_season_id: createScheduleDto.leagueSeasonId,
+            matchup_id: createScheduleDto.matchupId,
             published_at:
               createScheduleDto.status === 'scheduled' ? new Date() : null,
             starts_at: new Date(createScheduleDto.startsAt),
@@ -257,16 +271,33 @@ export class ScheduleService {
       venueId: nextVenueId,
     });
 
+    const nextStartsAt = updateScheduleDto.startsAt
+      ? new Date(updateScheduleDto.startsAt)
+      : existingGame.starts_at;
+    const nextStatus = updateScheduleDto.status ?? existingGame.status;
+    if (nextStatus === 'scheduled') {
+      await this.assertNoScheduleConflict({
+        awayTeamId: nextAwayTeamId,
+        excludedGameId: gameId,
+        homeTeamId: nextHomeTeamId,
+        leagueSeasonId: nextLeagueSeasonId,
+        startsAt: nextStartsAt,
+        venueId: nextVenueId,
+      });
+    }
+
     await this.db
       .updateTable('competition.games')
       .set({
         away_team_id: updateScheduleDto.awayTeamId,
         away_score: updateScheduleDto.awayScore,
+        competition_kind: updateScheduleDto.competitionKind,
         division_id: updateScheduleDto.divisionId,
         finalized_at: this.resolveFinalizedAt(existingGame, updateScheduleDto),
         home_score: updateScheduleDto.homeScore,
         home_team_id: updateScheduleDto.homeTeamId,
         league_season_id: updateScheduleDto.leagueSeasonId,
+        matchup_id: updateScheduleDto.matchupId,
         published_at: this.resolvePublishedAt(existingGame, updateScheduleDto),
         starts_at: updateScheduleDto.startsAt
           ? new Date(updateScheduleDto.startsAt)
@@ -651,6 +682,62 @@ export class ScheduleService {
     await this.assertTeamBelongsToDivision(
       params.awayTeamId,
       params.divisionId,
+    );
+  }
+
+  private async assertNoScheduleConflict(params: {
+    awayTeamId: string;
+    excludedGameId?: string;
+    homeTeamId: string;
+    leagueSeasonId: string;
+    startsAt: Date;
+    venueId: string;
+  }): Promise<void> {
+    const [season, games] = await Promise.all([
+      this.db
+        .selectFrom('admin.league_seasons')
+        .select('schedule_slot_duration_minutes')
+        .where('id', '=', params.leagueSeasonId)
+        .executeTakeFirstOrThrow(),
+      this.db
+        .selectFrom('competition.games')
+        .select([
+          'away_team_id',
+          'home_team_id',
+          'id',
+          'starts_at',
+          'venue_id',
+        ])
+        .where('league_season_id', '=', params.leagueSeasonId)
+        .where('status', 'in', ['scheduled', 'live', 'reopened'])
+        .execute(),
+    ]);
+    const conflict = findScheduleConflict(
+      {
+        awayTeamId: params.awayTeamId,
+        homeTeamId: params.homeTeamId,
+        startsAt: params.startsAt,
+        venueId: params.venueId,
+      },
+      season.schedule_slot_duration_minutes,
+      games.map((game) => ({
+        awayTeamId: game.away_team_id,
+        homeTeamId: game.home_team_id,
+        id: game.id,
+        startsAt: new Date(game.starts_at),
+        venueId: game.venue_id,
+      })),
+      params.excludedGameId,
+    );
+
+    if (!conflict) return;
+    if (conflict.kind === 'team') {
+      throw new ConflictException(
+        'One of these teams already has a game during the selected time slot.',
+      );
+    }
+    throw new ConflictException(
+      'This venue is already booked during the selected time slot.',
     );
   }
 

@@ -8,6 +8,7 @@ const format = {
   ],
   division_id: 'division-1',
   id: 'format-1',
+  league_season_id: 'season-1',
   playoff_format: 'single_elimination',
   pool_count: 2,
   qualifiers_per_pool: 2,
@@ -20,6 +21,13 @@ const format = {
 function repository(overrides: Record<string, unknown> = {}) {
   return {
     findFormatContext: jest.fn().mockResolvedValue(format),
+    findMatchup: jest.fn().mockResolvedValue({
+      away_team_id: 'team-b',
+      home_team_id: 'team-a',
+      id: 'matchup-1',
+      stage: 'qualifier',
+      status: 'ready',
+    }),
     getWorkspace: jest.fn().mockResolvedValue({ format, pools: [] }),
     listDivisionTeamIds: jest
       .fn()
@@ -33,6 +41,7 @@ function repository(overrides: Record<string, unknown> = {}) {
       .fn()
       .mockResolvedValue([{ id: 'generated-matchup' }]),
     reset: jest.fn().mockResolvedValue({ success: true }),
+    markMatchupScheduled: jest.fn().mockResolvedValue(undefined),
     setPoolAssignments: jest.fn().mockResolvedValue(undefined),
     updateFormat: jest.fn().mockResolvedValue(format),
     ...overrides,
@@ -105,5 +114,44 @@ describe('CompetitionService', () => {
       }),
     ).rejects.toBeInstanceOf(ConflictException);
     expect(repo.updateFormat).not.toHaveBeenCalled();
+  });
+
+  it('schedules a ready matchup and links the resulting game', async () => {
+    const repo = repository();
+    const scheduleService = {
+      create: jest.fn().mockResolvedValue({ id: 'game-1', status: 'scheduled' }),
+    };
+    const service = new CompetitionService(repo as never, scheduleService as never);
+    const access = {
+      membershipId: 'member-1',
+      organizationId: 'org-1',
+      permissions: [],
+      role: 'admin' as const,
+      userId: 'user-1',
+    };
+
+    await expect(
+      service.scheduleMatchup('org-1', 'division-1', 'matchup-1', access, {
+        startsAt: '2026-09-01T10:00:00.000Z',
+        venueId: 'c0a80121-0000-4000-8000-000000000001',
+      }),
+    ).resolves.toEqual({ id: 'game-1', status: 'scheduled' });
+    expect(scheduleService.create).toHaveBeenCalledWith(
+      'org-1',
+      access,
+      expect.objectContaining({
+        awayTeamId: 'team-b',
+        competitionKind: 'stage',
+        divisionId: 'division-1',
+        homeTeamId: 'team-a',
+        leagueSeasonId: 'season-1',
+        matchupId: 'matchup-1',
+        status: 'scheduled',
+      }),
+    );
+    expect(repo.markMatchupScheduled).toHaveBeenCalledWith(
+      'matchup-1',
+      'game-1',
+    );
   });
 });

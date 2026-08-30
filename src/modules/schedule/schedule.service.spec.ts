@@ -506,6 +506,9 @@ describe('ScheduleService scorekeeper assignments', () => {
       transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
     };
     const service = new ScheduleService(db as never);
+    const conflictCheck = jest
+      .spyOn(service as any, 'assertNoScheduleConflict')
+      .mockResolvedValue(undefined);
     jest.spyOn(service, 'findOne').mockResolvedValue({ id: 'game-1' });
 
     await service.create(
@@ -527,6 +530,13 @@ describe('ScheduleService scorekeeper assignments', () => {
     );
 
     expect(db.transaction).toHaveBeenCalled();
+    expect(conflictCheck).toHaveBeenCalledWith({
+      awayTeamId: 'team-b',
+      homeTeamId: 'team-a',
+      leagueSeasonId: 'season-1',
+      startsAt: new Date('2026-07-09T10:00:00.000Z'),
+      venueId: 'venue-1',
+    });
     expect(transactionExecute).toHaveBeenCalled();
     expect(insertInto).toHaveBeenCalledWith('competition.games');
     expect(insertInto).toHaveBeenCalledWith(

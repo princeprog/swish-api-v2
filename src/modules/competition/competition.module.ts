@@ -4,9 +4,10 @@ import { AuthModule } from '../auth/auth.module';
 import { CompetitionController } from './competition.controller';
 import { CompetitionRepository } from './competition.repository';
 import { CompetitionService } from './competition.service';
+import { ScheduleModule } from '../schedule/schedule.module';
 
 @Module({
-  imports: [DatabaseModule, AuthModule],
+  imports: [DatabaseModule, AuthModule, ScheduleModule],
   controllers: [CompetitionController],
   providers: [CompetitionRepository, CompetitionService],
   exports: [CompetitionService],

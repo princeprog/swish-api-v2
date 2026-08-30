@@ -27,6 +27,7 @@ describe('CompetitionController permissions', () => {
       'updateFormat',
       'setPoolAssignments',
       'generate',
+      'scheduleMatchup',
       'reset',
     ] as const) {
       expect(permissions(handler)).toEqual([

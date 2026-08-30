@@ -10,6 +10,14 @@ import {
 } from 'class-validator';
 
 export class CreateScheduleDto {
+  @IsOptional()
+  @IsUUID()
+  matchupId?: string;
+
+  @IsOptional()
+  @IsIn(['stage', 'playoff', 'exhibition'])
+  competitionKind?: 'stage' | 'playoff' | 'exhibition';
+
   @IsUUID()
   leagueSeasonId!: string;
 
