@@ -41,6 +41,7 @@ function repository(overrides: Record<string, unknown> = {}) {
       .fn()
       .mockResolvedValue([{ id: 'generated-matchup' }]),
     reset: jest.fn().mockResolvedValue({ success: true }),
+    recordTieDecision: jest.fn().mockResolvedValue({ id: 'decision-1' }),
     markMatchupScheduled: jest.fn().mockResolvedValue(undefined),
     setPoolAssignments: jest.fn().mockResolvedValue(undefined),
     updateFormat: jest.fn().mockResolvedValue(format),
@@ -152,6 +153,60 @@ describe('CompetitionService', () => {
     expect(repo.markMatchupScheduled).toHaveBeenCalledWith(
       'matchup-1',
       'game-1',
+    );
+  });
+
+  it('records an audited unresolved tie order and recalculates qualification', async () => {
+    const teamA = 'c0a80121-0000-4000-8000-000000000011';
+    const teamB = 'c0a80121-0000-4000-8000-000000000012';
+    const repo = repository({
+      findFormatContext: jest.fn().mockResolvedValue({
+        ...format,
+        status: 'locked',
+      }),
+      getWorkspace: jest.fn().mockResolvedValue({
+        format: { ...format, status: 'locked' },
+        pools: [{ id: 'c0a80121-0000-4000-8000-000000000001' }],
+        standings: [
+          { pool_id: 'c0a80121-0000-4000-8000-000000000001', rank: null, team_id: teamA },
+          { pool_id: 'c0a80121-0000-4000-8000-000000000001', rank: null, team_id: teamB },
+        ],
+      }),
+    });
+    const coordinator = { recalculateDivision: jest.fn().mockResolvedValue({ success: true }) };
+    const service = new CompetitionService(
+      repo as never,
+      undefined,
+      coordinator as never,
+    );
+    const access = {
+      membershipId: 'member-1',
+      organizationId: 'org-1',
+      permissions: [],
+      role: 'admin' as const,
+      userId: 'user-1',
+    };
+
+    await service.recordTieDecision('org-1', 'division-1', access, {
+      orderedTeamIds: [teamB, teamA],
+      poolId: 'c0a80121-0000-4000-8000-000000000001',
+      reason: 'The league committee confirmed the published order.',
+      teamIds: [teamA, teamB],
+    });
+
+    expect(repo.recordTieDecision).toHaveBeenCalledWith(
+      'format-1',
+      'c0a80121-0000-4000-8000-000000000001',
+      `${teamA}|${teamB}`,
+      [teamA, teamB],
+      [teamB, teamA],
+      'The league committee confirmed the published order.',
+      access,
+    );
+    expect(coordinator.recalculateDivision).toHaveBeenCalledWith(
+      'org-1',
+      'division-1',
+      access,
     );
   });
 });

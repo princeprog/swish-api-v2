@@ -5,6 +5,7 @@ import { DATABASE, type Database } from '../../database/database.tokens';
 import type { CompetitionPlanMatchup } from './competition-plan.builder';
 import type { PoolTeamAssignmentDto } from './dto/set-pool-assignments.dto';
 import type { UpdateCompetitionFormatDto } from './dto/update-competition-format.dto';
+import type { OrganizationAccessContext } from '../../common/auth/roles';
 
 export type CompetitionFormatContext = {
   crossover_template: Json;
@@ -431,6 +432,54 @@ export class CompetitionRepository {
         .executeTakeFirstOrThrow();
 
       return { success: true };
+    });
+  }
+
+  async recordTieDecision(
+    formatId: string,
+    poolId: string,
+    tieKey: string,
+    teamIds: string[],
+    orderedTeamIds: string[],
+    reason: string,
+    access: OrganizationAccessContext,
+  ) {
+    return this.db.transaction().execute(async (trx) => {
+      const decision = await trx
+        .insertInto('competition.tie_decisions')
+        .values({
+          decided_by_member_id: access.membershipId,
+          division_format_id: formatId,
+          ordered_team_ids: orderedTeamIds,
+          pool_id: poolId,
+          reason,
+          team_ids: teamIds,
+          tie_key: tieKey,
+        })
+        .onConflict((conflict) =>
+          conflict
+            .columns(['division_format_id', 'pool_id', 'tie_key'])
+            .doUpdateSet({
+              decided_by_member_id: access.membershipId,
+              ordered_team_ids: orderedTeamIds,
+              reason,
+              team_ids: teamIds,
+            }),
+        )
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await trx
+        .insertInto('access.audit_events')
+        .values({
+          action: 'standings.tie_decided',
+          actor_member_id: access.membershipId,
+          metadata: { orderedTeamIds, poolId, reason, teamIds, tieKey },
+          organization_id: access.organizationId,
+          target_id: formatId,
+          target_type: 'division_format',
+        })
+        .execute();
+      return decision;
     });
   }
 }

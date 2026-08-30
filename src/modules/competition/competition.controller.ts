@@ -19,6 +19,7 @@ import { UpdateCompetitionFormatDto } from './dto/update-competition-format.dto'
 import { ScheduleMatchupDto } from './dto/schedule-matchup.dto';
 import { OrganizationAccess } from '../../common/decorators/organization-access.decorator';
 import type { OrganizationAccessContext } from '../../common/auth/roles';
+import { RecordTieDecisionDto } from './dto/record-tie-decision.dto';
 
 @Controller(
   'organizations/:organizationId/divisions/:divisionId/competition',
@@ -105,6 +106,22 @@ export class CompetitionController {
       organizationId,
       divisionId,
       matchupId,
+      access,
+      dto,
+    );
+  }
+
+  @Post('tie-decisions')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE)
+  recordTieDecision(
+    @Param('organizationId') organizationId: string,
+    @Param('divisionId') divisionId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+    @Body() dto: RecordTieDecisionDto,
+  ) {
+    return this.competitionService.recordTieDecision(
+      organizationId,
+      divisionId,
       access,
       dto,
     );

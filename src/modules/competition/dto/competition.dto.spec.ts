@@ -3,6 +3,7 @@ import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { GenerateCompetitionDto } from './generate-competition.dto';
 import { SetPoolAssignmentsDto } from './set-pool-assignments.dto';
+import { RecordTieDecisionDto } from './record-tie-decision.dto';
 
 const poolA = 'c0a80121-0000-4000-8000-000000000001';
 const poolB = 'c0a80121-0000-4000-8000-000000000002';
@@ -42,5 +43,23 @@ describe('competition DTOs', () => {
 
     await expect(validate(valid)).resolves.toHaveLength(0);
     expect(await validate(duplicate)).not.toHaveLength(0);
+  });
+
+  it('requires a unique ordered list and a meaningful tie-decision reason', async () => {
+    const valid = plainToInstance(RecordTieDecisionDto, {
+      orderedTeamIds: [teamB, teamA],
+      poolId: poolA,
+      reason: 'The league committee confirmed the published order.',
+      teamIds: [teamA, teamB],
+    });
+    const invalid = plainToInstance(RecordTieDecisionDto, {
+      orderedTeamIds: [teamA, teamA],
+      poolId: poolA,
+      reason: 'short',
+      teamIds: [teamA, teamB],
+    });
+
+    await expect(validate(valid)).resolves.toHaveLength(0);
+    expect(await validate(invalid)).not.toHaveLength(0);
   });
 });

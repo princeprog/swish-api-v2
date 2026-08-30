@@ -18,12 +18,16 @@ import type {
 import type { OrganizationAccessContext } from '../../common/auth/roles';
 import { ScheduleService } from '../schedule/schedule.service';
 import type { ScheduleMatchupDto } from './dto/schedule-matchup.dto';
+import type { RecordTieDecisionDto } from './dto/record-tie-decision.dto';
+import { OfficialResultCoordinator } from '../official-result/official-result.service';
 
 @Injectable()
 export class CompetitionService {
   constructor(
     private readonly repository: CompetitionRepository,
     @Optional() private readonly scheduleService?: ScheduleService,
+    @Optional()
+    private readonly officialResultCoordinator?: OfficialResultCoordinator,
   ) {}
 
   async getWorkspace(organizationId: string, divisionId: string) {
@@ -240,6 +244,66 @@ export class CompetitionService {
     });
     await this.repository.markMatchupScheduled(matchupId, game.id);
     return game;
+  }
+
+  async recordTieDecision(
+    organizationId: string,
+    divisionId: string,
+    access: OrganizationAccessContext,
+    dto: RecordTieDecisionDto,
+  ) {
+    const format = await this.repository.findFormatContext(
+      organizationId,
+      divisionId,
+    );
+    if (format.status !== 'locked') {
+      throw new ConflictException(
+        'Tie decisions can only be recorded while the competition is locked and active.',
+      );
+    }
+    const workspace = await this.repository.getWorkspace(format);
+    const pool = workspace.pools.find((candidate) => candidate.id === dto.poolId);
+    if (!pool) {
+      throw new BadRequestException('The selected pool was not found.');
+    }
+    if (!this.hasSameMembers(dto.teamIds, dto.orderedTeamIds)) {
+      throw new BadRequestException(
+        'The confirmed order must include each tied team exactly once.',
+      );
+    }
+    const unresolvedTeamIds = workspace.standings
+      .filter((row) => row.pool_id === dto.poolId && row.rank === null)
+      .map((row) => row.team_id);
+    if (!this.hasSameMembers(dto.teamIds, unresolvedTeamIds)) {
+      throw new ConflictException(
+        'This tie has changed or has already been resolved. Refresh the standings before deciding.',
+      );
+    }
+
+    const tieKey = [...dto.teamIds].sort().join('|');
+    const decision = await this.repository.recordTieDecision(
+      format.id,
+      dto.poolId,
+      tieKey,
+      [...dto.teamIds].sort(),
+      dto.orderedTeamIds,
+      dto.reason.trim(),
+      access,
+    );
+    if (!this.officialResultCoordinator) {
+      throw new ConflictException(
+        'The standings service is temporarily unavailable. The decision was saved and can be recalculated after refresh.',
+      );
+    }
+    await this.officialResultCoordinator.recalculateDivision(
+      organizationId,
+      divisionId,
+      access,
+    );
+    return {
+      decision,
+      workspace: await this.repository.getWorkspace(format),
+    };
   }
 
   private assertDraft(status: string): void {

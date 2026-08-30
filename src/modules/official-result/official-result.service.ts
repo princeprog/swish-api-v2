@@ -59,6 +59,52 @@ export class OfficialResultCoordinator {
     );
   }
 
+  recalculateDivision(
+    organizationId: string,
+    divisionId: string,
+    access: OrganizationAccessContext,
+  ) {
+    return this.db.transaction().execute(async (trx) => {
+      const format = await trx
+        .selectFrom('competition.division_formats')
+        .selectAll()
+        .where('division_id', '=', divisionId)
+        .executeTakeFirstOrThrow();
+      const game = await trx
+        .selectFrom('competition.games')
+        .select([
+          'away_score',
+          'away_team_id',
+          'competition_kind',
+          'division_id',
+          'home_score',
+          'home_team_id',
+          'id',
+          'league_season_id',
+          'matchup_id',
+          'status',
+        ])
+        .where('division_id', '=', divisionId)
+        .where('status', '=', 'final')
+        .orderBy('finalized_at desc')
+        .executeTakeFirst();
+      if (!game) {
+        throw new ConflictException(
+          'Finalized pool games are required before standings can be recalculated.',
+        );
+      }
+      await this.rebuildPoolStandings(trx, format, game, {
+        access,
+        awayScore: game.away_score ?? 0,
+        gameId: game.id,
+        homeScore: game.home_score ?? 0,
+        organizationId,
+        source: 'manual',
+      });
+      return { success: true };
+    });
+  }
+
   async finalizeInTransaction(db: any, input: FinalizeOfficialResultInput) {
     try {
       assertOfficialResultScore(input.homeScore, input.awayScore);
