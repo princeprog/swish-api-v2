@@ -255,6 +255,15 @@ function createAcceptanceService(role = AUTH_ROLES.TEAM_MANAGER) {
 }
 
 describe('InvitationService team manager scope', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-08-10T00:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it('stores and returns selected team assignments when creating an invitation', async () => {
     const { assignmentInsertExecute, policy, service } = createInvitationService();
 
