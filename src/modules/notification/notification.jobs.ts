@@ -39,7 +39,10 @@ export class NotificationJobsService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit(): void {
-    if (process.env.NOTIFICATION_JOBS_ENABLED === 'false') {
+    if (
+      process.env.NODE_ENV === 'test' ||
+      process.env.NOTIFICATION_JOBS_ENABLED === 'false'
+    ) {
       return;
     }
 

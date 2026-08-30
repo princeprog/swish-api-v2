@@ -73,6 +73,10 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit() {
+    if (process.env.NODE_ENV === 'test') {
+      return;
+    }
+
     void this.releaseDueDeadlines();
     this.deadlineTimer = setInterval(() => {
       void this.releaseDueDeadlines();
