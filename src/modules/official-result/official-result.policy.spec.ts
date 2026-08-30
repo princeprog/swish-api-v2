@@ -1,6 +1,7 @@
 import {
   assertOfficialResultScore,
   assertStatisticsGate,
+  orderDownstreamMatchupsForReopen,
   planMatchupProgression,
 } from './official-result.policy';
 
@@ -91,5 +92,50 @@ describe('official result policy', () => {
       targetSlots: [],
       voidMatchupIds: ['reset-final'],
     });
+  });
+
+  it('orders dependent matchups from the deepest game back to the source', () => {
+    expect(
+      orderDownstreamMatchupsForReopen(
+        [
+          {
+            id: 'semifinal',
+            loserToMatchupId: null,
+            winnerToMatchupId: 'final',
+          },
+          {
+            id: 'final',
+            loserToMatchupId: 'reset-final',
+            winnerToMatchupId: 'reset-final',
+          },
+          {
+            id: 'reset-final',
+            loserToMatchupId: null,
+            winnerToMatchupId: null,
+          },
+        ],
+        'semifinal',
+      ),
+    ).toEqual(['reset-final', 'final']);
+  });
+
+  it('deduplicates converging winner and loser dependencies', () => {
+    expect(
+      orderDownstreamMatchupsForReopen(
+        [
+          {
+            id: 'grand-final',
+            loserToMatchupId: 'reset-final',
+            winnerToMatchupId: 'reset-final',
+          },
+          {
+            id: 'reset-final',
+            loserToMatchupId: null,
+            winnerToMatchupId: null,
+          },
+        ],
+        'grand-final',
+      ),
+    ).toEqual(['reset-final']);
   });
 });

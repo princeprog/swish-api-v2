@@ -30,6 +30,50 @@ export type MatchupProgressionPlan = {
   voidMatchupIds: string[];
 };
 
+export type ReopenDependencyMatchup = {
+  id: string;
+  loserToMatchupId: string | null;
+  winnerToMatchupId: string | null;
+};
+
+export function orderDownstreamMatchupsForReopen(
+  matchups: ReopenDependencyMatchup[],
+  sourceMatchupId: string,
+): string[] {
+  const byId = new Map(matchups.map((matchup) => [matchup.id, matchup]));
+  const depths = new Map<string, number>();
+
+  const visit = (matchupId: string, depth: number, path: Set<string>) => {
+    if (matchupId === sourceMatchupId || path.has(matchupId)) return;
+    depths.set(matchupId, Math.max(depths.get(matchupId) ?? 0, depth));
+    const matchup = byId.get(matchupId);
+    if (!matchup) return;
+    const nextPath = new Set(path).add(matchupId);
+    for (const targetId of [
+      matchup.winnerToMatchupId,
+      matchup.loserToMatchupId,
+    ]) {
+      if (targetId) visit(targetId, depth + 1, nextPath);
+    }
+  };
+
+  const source = byId.get(sourceMatchupId);
+  if (!source) return [];
+  for (const targetId of [
+    source.winnerToMatchupId,
+    source.loserToMatchupId,
+  ]) {
+    if (targetId) visit(targetId, 1, new Set([sourceMatchupId]));
+  }
+
+  return [...depths.entries()]
+    .sort(
+      ([leftId, leftDepth], [rightId, rightDepth]) =>
+        rightDepth - leftDepth || leftId.localeCompare(rightId),
+    )
+    .map(([matchupId]) => matchupId);
+}
+
 export function assertOfficialResultScore(
   homeScore: number,
   awayScore: number,

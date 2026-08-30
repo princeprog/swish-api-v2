@@ -19,6 +19,7 @@ import {
   assertOfficialResultScore,
   assertStatisticsGate,
   OfficialResultPolicyError,
+  orderDownstreamMatchupsForReopen,
   planMatchupProgression,
 } from './official-result.policy';
 
@@ -31,6 +32,13 @@ export type FinalizeOfficialResultInput = {
   homeScore: number;
   organizationId: string;
   source: OfficialResultSource;
+};
+
+export type ReopenOfficialResultInput = {
+  access: OrganizationAccessContext;
+  gameId: string;
+  organizationId: string;
+  reason: string;
 };
 
 type OfficialGame = {
@@ -57,6 +65,192 @@ export class OfficialResultCoordinator {
     return this.db.transaction().execute((trx) =>
       this.finalizeInTransaction(trx, input),
     );
+  }
+
+  reopen(input: ReopenOfficialResultInput) {
+    return this.db.transaction().execute((trx) =>
+      this.reopenInTransaction(trx, input),
+    );
+  }
+
+  async reopenInTransaction(db: any, input: ReopenOfficialResultInput) {
+    const game = await this.findGameForUpdate(db, input);
+    if (game.status !== 'final') {
+      throw new ConflictException(
+        'Only a finalized game can be reopened for correction.',
+      );
+    }
+
+    const now = new Date();
+    const unscheduledGameIds: string[] = [];
+    let format: any = null;
+
+    if (game.matchup_id) {
+      const sourceMatchup = await db
+        .selectFrom('competition.matchups')
+        .selectAll()
+        .where('id', '=', game.matchup_id)
+        .forUpdate()
+        .executeTakeFirst();
+      if (sourceMatchup) {
+        const matchups = await db
+          .selectFrom('competition.matchups')
+          .selectAll()
+          .where('division_format_id', '=', sourceMatchup.division_format_id)
+          .execute();
+        const downstreamMatchupIds =
+          sourceMatchup.stage === 'qualifier'
+            ? matchups
+                .filter((matchup: { stage: string }) => matchup.stage === 'playoff')
+                .sort(
+                  (
+                    left: { round_number: number },
+                    right: { round_number: number },
+                  ) => right.round_number - left.round_number,
+                )
+                .map((matchup: { id: string }) => matchup.id)
+            : orderDownstreamMatchupsForReopen(
+                matchups.map(
+                  (matchup: {
+                    id: string;
+                    loser_to_matchup_id: string | null;
+                    winner_to_matchup_id: string | null;
+                  }) => ({
+                    id: matchup.id,
+                    loserToMatchupId: matchup.loser_to_matchup_id,
+                    winnerToMatchupId: matchup.winner_to_matchup_id,
+                  }),
+                ),
+                sourceMatchup.id,
+              );
+
+        if (downstreamMatchupIds.length > 0) {
+          const downstreamGames = await db
+            .selectFrom('competition.games')
+            .select(['id', 'matchup_id', 'status'])
+            .where('matchup_id', 'in', downstreamMatchupIds)
+            .execute();
+          const order = new Map<string, number>(
+            downstreamMatchupIds.map((matchupId, index) => [matchupId, index]),
+          );
+          const started = downstreamGames
+            .filter((candidate: { status: string }) =>
+              ['live', 'final', 'reopened'].includes(candidate.status),
+            )
+            .sort(
+              (
+                left: { matchup_id: string },
+                right: { matchup_id: string },
+              ) =>
+                (order.get(left.matchup_id) ?? Number.MAX_SAFE_INTEGER) -
+                (order.get(right.matchup_id) ?? Number.MAX_SAFE_INTEGER),
+            );
+          if (started.length > 0) {
+            throw new ConflictException({
+              code: 'DEPENDENT_PLAYOFF_GAMES_STARTED',
+              downstreamGames: started.map(
+                (candidate: {
+                  id: string;
+                  matchup_id: string;
+                  status: string;
+                }) => ({
+                  gameId: candidate.id,
+                  matchupId: candidate.matchup_id,
+                  status: candidate.status,
+                }),
+              ),
+              message: `Reopen ${started.length === 1 ? 'the dependent playoff game' : 'the dependent playoff games'} in the listed reverse order before reopening this result.`,
+            });
+          }
+
+          const scheduledIds = downstreamGames
+            .filter((candidate: { status: string }) => candidate.status === 'scheduled')
+            .map((candidate: { id: string }) => candidate.id);
+          if (scheduledIds.length > 0) {
+            await db
+              .deleteFrom('competition.games')
+              .where('id', 'in', scheduledIds)
+              .execute();
+            unscheduledGameIds.push(...scheduledIds);
+          }
+        }
+
+        await this.resetMatchupsAfterReopen(
+          db,
+          sourceMatchup,
+          matchups,
+          downstreamMatchupIds,
+          now,
+        );
+        format = await db
+          .selectFrom('competition.division_formats')
+          .selectAll()
+          .where('id', '=', sourceMatchup.division_format_id)
+          .executeTakeFirst();
+        if (format?.status === 'completed') {
+          await db
+            .updateTable('competition.division_formats')
+            .set({ status: 'locked', updated_at: now })
+            .where('id', '=', format.id)
+            .execute();
+          format = { ...format, status: 'locked' };
+        }
+      }
+    }
+
+    await db
+      .updateTable('competition.games')
+      .set({ finalized_at: null, status: 'reopened', updated_at: now })
+      .where('id', '=', game.id)
+      .executeTakeFirstOrThrow();
+    await db
+      .updateTable('statistics.game_stat_sheets')
+      .set({
+        finalized_at: null,
+        reopened_at: now,
+        status: 'reopened',
+        updated_at: now,
+      })
+      .where('game_id', '=', game.id)
+      .execute();
+    await db
+      .updateTable('statistics.game_awards')
+      .set({
+        confirmation_reason: null,
+        confirmed_at: null,
+        confirmed_by_member_id: null,
+        selected_player_id: null,
+        updated_at: now,
+      })
+      .where('game_id', '=', game.id)
+      .execute();
+    await db
+      .insertInto('access.audit_events')
+      .values({
+        action: 'game.reopened',
+        actor_member_id: input.access.membershipId,
+        metadata: {
+          reason: input.reason,
+          unscheduledDownstreamGameIds: unscheduledGameIds,
+        },
+        organization_id: input.organizationId,
+        target_id: game.id,
+        target_type: 'game',
+      })
+      .execute();
+
+    if (game.competition_kind !== 'exhibition' && format) {
+      await this.rebuildPoolStandings(db, format, game, {
+        access: input.access,
+        awayScore: game.away_score ?? 0,
+        gameId: game.id,
+        homeScore: game.home_score ?? 0,
+        organizationId: input.organizationId,
+        source: 'scorekeeper',
+      });
+    }
+
+    return { gameId: game.id, unscheduledGameIds };
   }
 
   recalculateDivision(
@@ -185,7 +379,7 @@ export class OfficialResultCoordinator {
 
   private async findGameForUpdate(
     db: any,
-    input: FinalizeOfficialResultInput,
+    input: { gameId: string; organizationId: string },
   ): Promise<OfficialGame> {
     const game = await db
       .selectFrom('competition.games as games')
@@ -212,6 +406,54 @@ export class OfficialResultCoordinator {
       .executeTakeFirst();
     if (!game) throw new NotFoundException('Schedule game not found');
     return game;
+  }
+
+  private async resetMatchupsAfterReopen(
+    db: any,
+    sourceMatchup: any,
+    matchups: any[],
+    downstreamMatchupIds: string[],
+    now: Date,
+  ) {
+    const invalidatedIds = new Set([
+      sourceMatchup.id,
+      ...downstreamMatchupIds,
+    ]);
+    const reopeningQualifier = sourceMatchup.stage === 'qualifier';
+
+    for (const matchup of matchups.filter(
+      (candidate) =>
+        candidate.id === sourceMatchup.id || invalidatedIds.has(candidate.id),
+    )) {
+      let homeTeamId = matchup.home_team_id;
+      let awayTeamId = matchup.away_team_id;
+      if (matchup.id !== sourceMatchup.id) {
+        const clearHome =
+          (reopeningQualifier && matchup.home_source_type === 'pool_seed') ||
+          (['matchup_winner', 'matchup_loser'].includes(
+            matchup.home_source_type,
+          ) && invalidatedIds.has(matchup.home_source_ref));
+        const clearAway =
+          (reopeningQualifier && matchup.away_source_type === 'pool_seed') ||
+          (['matchup_winner', 'matchup_loser'].includes(
+            matchup.away_source_type,
+          ) && invalidatedIds.has(matchup.away_source_ref));
+        if (clearHome) homeTeamId = null;
+        if (clearAway) awayTeamId = null;
+      }
+      await db
+        .updateTable('competition.matchups')
+        .set({
+          away_team_id: awayTeamId,
+          home_team_id: homeTeamId,
+          loser_team_id: null,
+          status: homeTeamId && awayTeamId ? 'ready' : 'pending',
+          updated_at: now,
+          winner_team_id: null,
+        })
+        .where('id', '=', matchup.id)
+        .execute();
+    }
   }
 
   private assertSourceCanFinalize(

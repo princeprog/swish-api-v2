@@ -467,15 +467,15 @@ export class ScoringService {
           }
 
           if (input.command.type === 'game.reopen') {
-            await trx
-              .updateTable('competition.games')
-              .set({
-                finalized_at: null,
-                status: 'reopened',
-                updated_at: now,
-              })
-              .where('id', '=', gameId)
-              .execute();
+            if (!this.officialResultCoordinator) {
+              throw new Error('Official result coordinator is unavailable');
+            }
+            await this.officialResultCoordinator.reopenInTransaction(trx, {
+              access,
+              gameId,
+              organizationId,
+              reason: input.command.payload.reason,
+            });
             responseGame = { ...game, status: 'reopened' };
           }
 
