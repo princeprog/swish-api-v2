@@ -31,6 +31,11 @@ class ShortResetWithinFullClockConstraint
 export class LeagueSeasonGameRulesDto {
   @IsInt()
   @Min(1)
+  @Max(10)
+  personalFoulLimit!: number;
+
+  @IsInt()
+  @Min(1)
   @Max(8)
   regulationPeriods!: number;
 

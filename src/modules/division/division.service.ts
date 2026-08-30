@@ -18,7 +18,7 @@ export class DivisionService {
   constructor(@Inject(DATABASE) private readonly db: Database) {}
 
   async create(organizationId: string, createDivisionDto: CreateDivisionDto) {
-    await this.assertLeagueSeasonBelongsToOrganization(
+    const season = await this.assertLeagueSeasonBelongsToOrganization(
       organizationId,
       createDivisionDto.leagueSeasonId,
     );
@@ -27,24 +27,56 @@ export class DivisionService {
       createDivisionDto.slug,
     );
 
-    const division = await this.db
-      .insertInto('admin.divisions')
-      .values({
-        league_season_id: createDivisionDto.leagueSeasonId,
-        name: createDivisionDto.name,
-        slug: createDivisionDto.slug,
-        status: createDivisionDto.status ?? 'active',
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
+    return this.db.transaction().execute(async (trx) => {
+      const division = await trx
+        .insertInto('admin.divisions')
+        .values({
+          league_season_id: createDivisionDto.leagueSeasonId,
+          name: createDivisionDto.name,
+          slug: createDivisionDto.slug,
+          status: createDivisionDto.status ?? 'active',
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
 
-    await this.db
-      .insertInto('admin.division_roster_settings')
-      .values({ division_id: division.id })
-      .onConflict((oc) => oc.column('division_id').doNothing())
-      .execute();
+      await trx
+        .insertInto('admin.division_roster_settings')
+        .values({ division_id: division.id })
+        .onConflict((oc) => oc.column('division_id').doNothing())
+        .execute();
 
-    return division;
+      const format = await trx
+        .insertInto('competition.division_formats')
+        .values({
+          crossover_template: season.default_crossover_template,
+          division_id: division.id,
+          playoff_format: season.default_playoff_format,
+          pool_count: season.default_pool_count,
+          qualifiers_per_pool: season.default_qualifiers_per_pool,
+          qualifying_format: season.default_qualifying_format,
+          tiebreakers: season.default_tiebreakers,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      await trx
+        .insertInto('competition.pools')
+        .values(
+          Array.from({ length: season.default_pool_count }, (_, index) => {
+            const code = String.fromCharCode(65 + index);
+
+            return {
+              code,
+              division_format_id: format.id,
+              name: `Pool ${code}`,
+              sort_order: index + 1,
+            };
+          }),
+        )
+        .execute();
+
+      return division;
+    });
   }
 
   async findAll(organizationId: string, query: PaginationQueryDto) {
@@ -169,10 +201,18 @@ export class DivisionService {
   private async assertLeagueSeasonBelongsToOrganization(
     organizationId: string,
     leagueSeasonId: string,
-  ): Promise<void> {
+  ) {
     const leagueSeason = await this.db
       .selectFrom('admin.league_seasons')
-      .select(['id'])
+      .select([
+        'default_crossover_template',
+        'default_playoff_format',
+        'default_pool_count',
+        'default_qualifiers_per_pool',
+        'default_qualifying_format',
+        'default_tiebreakers',
+        'id',
+      ])
       .where('id', '=', leagueSeasonId)
       .where('organization_id', '=', organizationId)
       .executeTakeFirst();
@@ -182,6 +222,8 @@ export class DivisionService {
         'League season not found in this organization',
       );
     }
+
+    return leagueSeason;
   }
 
   private async ensureSlugAvailable(

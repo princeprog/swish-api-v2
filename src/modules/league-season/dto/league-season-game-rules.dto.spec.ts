@@ -7,6 +7,7 @@ import { UpdateLeagueSeasonDto } from './update-league-season.dto';
 const validRules = {
   overtimeDurationMs: 300000,
   periodDurationMs: 600000,
+  personalFoulLimit: 5,
   regulationPeriods: 4,
   shotClockEnabled: true,
   shotClockFullMs: 24000,
@@ -19,6 +20,14 @@ const validRules = {
 
 function createPayload(gameRules: Record<string, unknown> | undefined) {
   return {
+    competitionDefaults: {
+      crossoverTemplate: [],
+      playoffFormat: 'none',
+      poolCount: 1,
+      qualifiersPerPool: 1,
+      qualifyingFormat: 'none',
+      tiebreakers: ['win_percentage', 'manual_decision'],
+    },
     gameRules,
     name: '2026 Summer League',
     organizationId: 'c0a80121-0000-4000-8000-000000000001',

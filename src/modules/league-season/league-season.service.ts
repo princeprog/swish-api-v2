@@ -13,13 +13,21 @@ import { DATABASE, type Database } from '../../database/database.tokens';
 import { CreateLeagueSeasonDto } from './dto/create-league-season.dto';
 import { UpdateLeagueSeasonDto } from './dto/update-league-season.dto';
 import type { LeagueSeasonGameRulesDto } from './dto/league-season-game-rules.dto';
+import type { LeagueSeasonCompetitionDefaultsDto } from './dto/league-season-competition-defaults.dto';
 
 type LeagueSeasonRecord = {
   created_at: Date;
+  default_crossover_template: unknown;
+  default_playoff_format: string;
+  default_pool_count: number;
+  default_qualifiers_per_pool: number;
+  default_qualifying_format: string;
+  default_tiebreakers: unknown;
   id: string;
   name: string;
   organization_id: string;
   public_enabled: boolean;
+  schedule_slot_duration_minutes: number;
   slug: string;
   status: string;
   updated_at: Date;
@@ -30,6 +38,7 @@ type LeagueSeasonGameRulesRecord = {
   league_season_id: string;
   overtime_duration_ms: number;
   period_duration_ms: number;
+  personal_foul_limit: number;
   regulation_periods: number;
   shot_clock_enabled: boolean;
   shot_clock_full_ms: number;
@@ -45,6 +54,7 @@ function toGameRulesValues(gameRules: LeagueSeasonGameRulesDto) {
   return {
     overtime_duration_ms: gameRules.overtimeDurationMs,
     period_duration_ms: gameRules.periodDurationMs,
+    personal_foul_limit: gameRules.personalFoulLimit,
     regulation_periods: gameRules.regulationPeriods,
     shot_clock_enabled: gameRules.shotClockEnabled,
     shot_clock_full_ms: gameRules.shotClockFullMs,
@@ -56,10 +66,37 @@ function toGameRulesValues(gameRules: LeagueSeasonGameRulesDto) {
   };
 }
 
+function toCompetitionValues(
+  defaults: LeagueSeasonCompetitionDefaultsDto,
+  scheduleSlotDurationMinutes = 90,
+) {
+  return {
+    default_crossover_template: defaults.crossoverTemplate.map((matchup) => ({
+      awaySeed: matchup.awaySeed,
+      homeSeed: matchup.homeSeed,
+    })),
+    default_playoff_format: defaults.playoffFormat,
+    default_pool_count: defaults.poolCount,
+    default_qualifiers_per_pool: defaults.qualifiersPerPool,
+    default_qualifying_format: defaults.qualifyingFormat,
+    default_tiebreakers: defaults.tiebreakers,
+    schedule_slot_duration_minutes: scheduleSlotDurationMinutes,
+  };
+}
+
 function toLeagueSeasonResponse(
   season: LeagueSeasonRecord,
   gameRules: LeagueSeasonGameRulesRecord,
 ) {
+  const {
+    default_crossover_template,
+    default_playoff_format,
+    default_pool_count,
+    default_qualifiers_per_pool,
+    default_qualifying_format,
+    default_tiebreakers,
+    ...seasonDetails
+  } = season;
   const {
     created_at: _createdAt,
     league_season_id: _leagueSeasonId,
@@ -67,7 +104,18 @@ function toLeagueSeasonResponse(
     ...rules
   } = gameRules;
 
-  return { ...season, game_rules: rules };
+  return {
+    ...seasonDetails,
+    competition_defaults: {
+      crossover_template: default_crossover_template,
+      playoff_format: default_playoff_format,
+      pool_count: default_pool_count,
+      qualifiers_per_pool: default_qualifiers_per_pool,
+      qualifying_format: default_qualifying_format,
+      tiebreakers: default_tiebreakers,
+    },
+    game_rules: rules,
+  };
 }
 
 @Injectable()
@@ -85,6 +133,10 @@ export class LeagueSeasonService {
       const season = await trx
         .insertInto('admin.league_seasons')
         .values({
+          ...toCompetitionValues(
+            createLeagueSeasonDto.competitionDefaults,
+            createLeagueSeasonDto.scheduleSlotDurationMinutes,
+          ),
           name: createLeagueSeasonDto.name,
           organization_id: organizationId,
           public_enabled: createLeagueSeasonDto.publicEnabled ?? false,
@@ -199,6 +251,16 @@ export class LeagueSeasonService {
       const updatedSeason = await trx
         .updateTable('admin.league_seasons')
         .set({
+          ...(updateLeagueSeasonDto.competitionDefaults
+            ? toCompetitionValues(
+                updateLeagueSeasonDto.competitionDefaults,
+                updateLeagueSeasonDto.scheduleSlotDurationMinutes ??
+                  leagueSeason.schedule_slot_duration_minutes,
+              )
+            : {
+                schedule_slot_duration_minutes:
+                  updateLeagueSeasonDto.scheduleSlotDurationMinutes,
+              }),
           name: updateLeagueSeasonDto.name,
           public_enabled: updateLeagueSeasonDto.publicEnabled,
           slug: updateLeagueSeasonDto.slug,
