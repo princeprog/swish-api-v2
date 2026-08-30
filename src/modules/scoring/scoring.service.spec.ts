@@ -1,4 +1,5 @@
 import { ScoringService } from './scoring.service';
+import { ORGANIZATION_PERMISSIONS } from '../../common/auth/roles';
 
 const game = {
   away_score: null,
@@ -156,5 +157,56 @@ describe('ScoringService parked compliance', () => {
 
     expect(complianceService.checkGameStartClearance).not.toHaveBeenCalled();
     expect(transactionExecute).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ScoringService official result authorization', () => {
+  it('rejects an assigned scorekeeper from reopening an official result', async () => {
+    const transactionExecute = jest.fn();
+    const coordinator = {
+      reopenInTransaction: jest.fn(),
+    };
+    const service = new ScoringService(
+      {
+        transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
+      } as never,
+      undefined,
+      coordinator as never,
+    );
+    jest
+      .spyOn(service as never, 'findGameForScoring' as never)
+      .mockResolvedValue({ ...game, status: 'final' } as never);
+    jest
+      .spyOn(service as never, 'assertControlSession' as never)
+      .mockResolvedValue({} as never);
+
+    await expect(
+      service.executeCommand(
+        'org-1',
+        'game-1',
+        {
+          membershipId: 'member-1',
+          organizationId: 'org-1',
+          permissions: [ORGANIZATION_PERMISSIONS.GAME_SCORE_ASSIGNED],
+          role: 'scorekeeper',
+          userId: 'user-1',
+        },
+        {
+          command: {
+            idempotencyKey: 'reopen-1',
+            payload: { reason: 'Correction needed' },
+            type: 'game.reopen',
+          },
+          controlToken: 'control-token',
+          expectedVersion: 0,
+          occurredAt: new Date(),
+        },
+      ),
+    ).rejects.toThrow(
+      'Only authorized league administrators can reopen an official result',
+    );
+
+    expect(transactionExecute).not.toHaveBeenCalled();
+    expect(coordinator.reopenInTransaction).not.toHaveBeenCalled();
   });
 });

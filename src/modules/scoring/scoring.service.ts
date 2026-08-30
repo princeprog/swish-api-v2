@@ -361,6 +361,15 @@ export class ScoringService {
     const game = await this.findGameForScoring(organizationId, gameId, access);
     await this.assertControlSession(gameId, access, input.controlToken, false);
 
+    if (
+      input.command.type === 'game.reopen' &&
+      !access.permissions.includes(ORGANIZATION_PERMISSIONS.GAME_SCORE_OVERRIDE)
+    ) {
+      throw new ForbiddenException(
+        'Only authorized league administrators can reopen an official result',
+      );
+    }
+
     try {
       const result = await (this.db as any)
         .transaction()
