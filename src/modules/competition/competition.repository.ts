@@ -288,13 +288,31 @@ export class CompetitionRepository {
   }
 
   async markMatchupScheduled(matchupId: string, gameId: string): Promise<void> {
-    await this.db
+    const game = await this.db
+      .selectFrom('competition.games')
+      .select(['id', 'matchup_id'])
+      .where('id', '=', gameId)
+      .where('matchup_id', '=', matchupId)
+      .executeTakeFirst();
+
+    if (!game) {
+      throw new ConflictException(
+        'The scheduled game does not belong to this generated matchup.',
+      );
+    }
+
+    const updated = await this.db
       .updateTable('competition.matchups')
       .set({ status: 'scheduled', updated_at: new Date() })
       .where('id', '=', matchupId)
       .where('status', '=', 'ready')
-      .executeTakeFirstOrThrow();
-    void gameId;
+      .executeTakeFirst();
+
+    if (!updated || Number(updated.numUpdatedRows ?? 0) !== 1) {
+      throw new ConflictException(
+        'This generated matchup has already been scheduled. Refresh and try again.',
+      );
+    }
   }
 
   async lockAndInsertMatchups(

@@ -75,10 +75,87 @@ export class ScheduleService {
     access: OrganizationAccessContext,
     input: CompetitionScheduleInput,
   ) {
+    await this.assertCompetitionGameIdentity(organizationId, input);
     return this.createGame(organizationId, access, input, {
       competitionKind: input.competitionKind,
       matchupId: input.matchupId,
     });
+  }
+
+  /**
+   * Competition games are materialized from a generated matchup. Treat the
+   * matchup graph as the source of truth and reject forged or stale requests
+   * before any game, assignment, or audit row is written.
+   */
+  private async assertCompetitionGameIdentity(
+    organizationId: string,
+    input: CompetitionScheduleInput,
+  ): Promise<void> {
+    const matchup = await (this.db as any)
+      .selectFrom('competition.matchups as matchups')
+      .innerJoin(
+        'competition.division_formats as formats',
+        'formats.id',
+        'matchups.division_format_id',
+      )
+      .innerJoin(
+        'admin.divisions as divisions',
+        'divisions.id',
+        'formats.division_id',
+      )
+      .innerJoin(
+        'admin.league_seasons as seasons',
+        'seasons.id',
+        'divisions.league_season_id',
+      )
+      .select([
+        'matchups.away_team_id',
+        'matchups.division_format_id',
+        'matchups.format_revision as matchup_format_revision',
+        'matchups.home_team_id',
+        'matchups.id',
+        'matchups.stage',
+        'matchups.status as matchup_status',
+        'formats.division_id',
+        'formats.revision as format_revision',
+        'formats.status as format_status',
+        'divisions.league_season_id',
+        'seasons.organization_id',
+      ])
+      .where('matchups.id', '=', input.matchupId)
+      .executeTakeFirst();
+
+    const expectedKind = matchup?.stage === 'playoff' ? 'playoff' : 'stage';
+    const hasExactIdentity =
+      matchup &&
+      matchup.organization_id === organizationId &&
+      matchup.league_season_id === input.leagueSeasonId &&
+      matchup.division_id === input.divisionId &&
+      matchup.home_team_id === input.homeTeamId &&
+      matchup.away_team_id === input.awayTeamId &&
+      matchup.stage &&
+      expectedKind === input.competitionKind &&
+      matchup.matchup_format_revision === matchup.format_revision &&
+      matchup.format_status === 'locked' &&
+      matchup.matchup_status === 'ready';
+
+    if (!hasExactIdentity) {
+      throw new ConflictException(
+        'This generated matchup is no longer available for the selected teams and competition.',
+      );
+    }
+
+    const existingGame = await (this.db as any)
+      .selectFrom('competition.games')
+      .select('id')
+      .where('matchup_id', '=', input.matchupId)
+      .executeTakeFirst();
+
+    if (existingGame) {
+      throw new ConflictException(
+        'This generated matchup already has a scheduled game.',
+      );
+    }
   }
 
   private async createGame(
