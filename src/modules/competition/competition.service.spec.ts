@@ -120,7 +120,7 @@ describe('CompetitionService', () => {
   it('schedules a ready matchup and links the resulting game', async () => {
     const repo = repository();
     const scheduleService = {
-      create: jest.fn().mockResolvedValue({ id: 'game-1', status: 'scheduled' }),
+      createCompetitionGame: jest.fn().mockResolvedValue({ id: 'game-1', status: 'scheduled' }),
     };
     const service = new CompetitionService(repo as never, scheduleService as never);
     const access = {
@@ -138,7 +138,7 @@ describe('CompetitionService', () => {
         venueId: 'c0a80121-0000-4000-8000-000000000001',
       }),
     ).resolves.toEqual({ id: 'game-1', status: 'scheduled' });
-    expect(scheduleService.create).toHaveBeenCalledWith(
+    expect(scheduleService.createCompetitionGame).toHaveBeenCalledWith(
       'org-1',
       access,
       expect.objectContaining({

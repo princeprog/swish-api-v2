@@ -230,7 +230,7 @@ export class CompetitionService {
       throw new ConflictException('Scheduling is temporarily unavailable.');
     }
 
-    const game = await this.scheduleService.create(organizationId, access, {
+    const game = await this.scheduleService.createCompetitionGame(organizationId, access, {
       awayTeamId: matchup.away_team_id,
       competitionKind: matchup.stage === 'playoff' ? 'playoff' : 'stage',
       divisionId,

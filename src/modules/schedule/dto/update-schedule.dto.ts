@@ -1,4 +1,20 @@
-import { PartialType } from '@nestjs/mapped-types';
-import { CreateScheduleDto } from './create-schedule.dto';
+import {
+  IsDateString,
+  IsIn,
+  IsOptional,
+  IsUUID,
+} from 'class-validator';
 
-export class UpdateScheduleDto extends PartialType(CreateScheduleDto) {}
+export class UpdateScheduleDto {
+  @IsOptional()
+  @IsDateString()
+  startsAt?: string;
+
+  @IsOptional()
+  @IsUUID()
+  venueId?: string;
+
+  @IsOptional()
+  @IsIn(['draft', 'scheduled', 'postponed', 'cancelled'])
+  status?: 'draft' | 'scheduled' | 'postponed' | 'cancelled';
+}

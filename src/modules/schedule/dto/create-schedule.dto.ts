@@ -1,8 +1,6 @@
 import {
   IsDateString,
   IsIn,
-  IsInt,
-  Min,
   IsOptional,
   IsString,
   IsUUID,
@@ -10,14 +8,6 @@ import {
 } from 'class-validator';
 
 export class CreateScheduleDto {
-  @IsOptional()
-  @IsUUID()
-  matchupId?: string;
-
-  @IsOptional()
-  @IsIn(['stage', 'playoff', 'exhibition'])
-  competitionKind?: 'stage' | 'playoff' | 'exhibition';
-
   @IsUUID()
   leagueSeasonId!: string;
 
@@ -37,27 +27,9 @@ export class CreateScheduleDto {
   startsAt!: string;
 
   @IsOptional()
-  @IsInt()
-  @Min(0)
-  homeScore?: number;
-
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  awayScore?: number;
-
-  @IsOptional()
   @IsString()
-  @IsIn([
-    'draft',
-    'scheduled',
-    'live',
-    'final',
-    'reopened',
-    'postponed',
-    'cancelled',
-  ])
-  status?: string;
+  @IsIn(['draft', 'scheduled'])
+  status?: 'draft' | 'scheduled';
 
   @ValidateIf((_, value) => value !== null && value !== undefined)
   @IsUUID()

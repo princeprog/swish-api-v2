@@ -1,4 +1,8 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   AUTH_ROLES,
   ORGANIZATION_PERMISSIONS,
@@ -15,6 +19,8 @@ function createDbMock() {
     away_score: null,
     home_score: null,
     home_team_id: 'team-a',
+    competition_kind: 'exhibition',
+    matchup_id: null,
     id: 'game-1',
     league_season_id: 'season-1',
     published_at: null,
@@ -106,6 +112,117 @@ function createExpressionBuilderMock() {
 }
 
 describe('ScheduleService final score updates', () => {
+  const gameRecord = (overrides: Record<string, unknown> = {}) => ({
+    away_score: null,
+    away_team_id: 'team-b',
+    created_at: new Date('2026-07-09T00:00:00.000Z'),
+    division_id: 'division-1',
+    finalized_at: null,
+    home_score: null,
+    home_team_id: 'team-a',
+    id: 'game-1',
+    league_season_id: 'season-1',
+    matchup_id: null,
+    published_at: null,
+    starts_at: new Date('2026-07-09T10:00:00.000Z'),
+    status: 'scheduled',
+    updated_at: new Date('2026-07-09T00:00:00.000Z'),
+    venue_id: 'venue-1',
+    ...overrides,
+  });
+
+  it.each([
+    ['live', { status: 'live' }],
+    ['reopened', { status: 'reopened' }],
+    ['scored', { home_score: 12 }],
+    ['finalized', { finalized_at: new Date('2026-07-09T12:00:00.000Z') }],
+    ['generated', { matchup_id: 'matchup-1' }],
+  ])('rejects generic edits to %s games before any update', async (_, overrides) => {
+    const { db, executeTakeFirst, updateExecuteTakeFirstOrThrow } = createDbMock();
+    executeTakeFirst.mockResolvedValueOnce(gameRecord(overrides));
+    const service = new ScheduleService(db as never);
+
+    await expect(
+      service.update('org-1', 'game-1', { startsAt: '2026-07-10T10:00:00.000Z' }),
+    ).rejects.toThrow('Use the competition or scoring workflow to change this game.');
+    expect(updateExecuteTakeFirstOrThrow).not.toHaveBeenCalled();
+  });
+
+  it('updates an unscored, unlinked exhibition game before game action starts', async () => {
+    const { db, executeTakeFirst, updateExecuteTakeFirstOrThrow } = createDbMock();
+    executeTakeFirst.mockResolvedValueOnce(gameRecord({ competition_kind: 'exhibition' }));
+    const service = new ScheduleService(db as never);
+
+    await service.update('org-1', 'game-1', {
+      startsAt: '2026-07-10T10:00:00.000Z',
+      status: 'postponed',
+    });
+    expect(updateExecuteTakeFirstOrThrow).toHaveBeenCalled();
+  });
+
+  it.each(['live', 'reopened'])(
+    'rejects incoming %s status before any update',
+    async (status) => {
+      const { db, updateExecuteTakeFirstOrThrow } = createDbMock();
+      const service = new ScheduleService(db as never);
+
+      await expect(
+        service.update('org-1', 'game-1', { status: status as any }),
+      ).rejects.toThrow('Only draft, scheduled, postponed, or cancelled games can be changed here.');
+      expect(updateExecuteTakeFirstOrThrow).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects official statuses on generic game creation', async () => {
+    const { db } = createDbMock();
+    const service = new ScheduleService(db as never);
+
+    await expect(
+      service.create('org-1', createOrganizationAccessContext(), {
+        awayTeamId: 'team-b',
+        divisionId: 'division-1',
+        homeTeamId: 'team-a',
+        leagueSeasonId: 'season-1',
+        startsAt: '2026-07-10T10:00:00.000Z',
+        status: 'final' as any,
+        venueId: 'venue-1',
+      }),
+    ).rejects.toThrow('New games can only be drafts or scheduled games.');
+  });
+
+  it('does not allow generic updates to write official-result fields', async () => {
+    const { db, updateSet } = createDbMock();
+    const service = new ScheduleService(db as never);
+
+    await service.update('org-1', 'game-1', {
+      startsAt: '2026-07-10T10:00:00.000Z',
+      status: 'draft',
+      ...( {
+        homeScore: 82,
+        awayScore: 79,
+        matchupId: 'matchup-1',
+        competitionKind: 'playoff',
+        leagueSeasonId: 'season-2',
+        divisionId: 'division-2',
+        homeTeamId: 'team-c',
+        awayTeamId: 'team-d',
+      } as any),
+    } as any);
+
+    const updateValues = updateSet.mock.calls[0][0];
+    for (const field of [
+      'away_score',
+      'competition_kind',
+      'division_id',
+      'home_score',
+      'home_team_id',
+      'league_season_id',
+      'matchup_id',
+    ]) {
+      expect(updateValues).not.toHaveProperty(field);
+    }
+  });
+
   it('rejects final status without both scores', async () => {
     const { db } = createDbMock();
     const service = new ScheduleService(db as never);
@@ -113,7 +230,7 @@ describe('ScheduleService final score updates', () => {
     await expect(
       service.update('org-1', 'game-1', {
         homeScore: 82,
-        status: 'final',
+        status: 'final' as any,
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
@@ -126,7 +243,7 @@ describe('ScheduleService final score updates', () => {
       service.update('org-1', 'game-1', {
         awayScore: 79,
         homeScore: 82,
-        status: 'final',
+        status: 'final' as any,
       }),
     ).rejects.toThrow(
       'Use Finalize game to record an official result and update standings.',
@@ -143,9 +260,9 @@ describe('ScheduleService final score updates', () => {
       service.update('org-1', 'game-1', {
         awayScore: 79,
         homeScore: 82,
-        status: 'final',
+        status: 'final' as any,
       }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 });
 
@@ -175,7 +292,9 @@ describe('ScheduleService finalized game protection', () => {
       service.update('org-1', 'game-1', {
         startsAt: '2026-07-10T10:00:00.000Z',
       }),
-    ).rejects.toThrow('This game is final and can no longer be edited.');
+    ).rejects.toThrow(
+      'Use the competition or scoring workflow to change this game.',
+    );
     expect(updateExecuteTakeFirstOrThrow).not.toHaveBeenCalled();
   });
 

@@ -38,6 +38,13 @@ type ScheduleGameRecord = {
   status: string;
   updated_at: Date;
   venue_id: string;
+  matchup_id: string | null;
+  competition_kind: string;
+};
+
+type CompetitionScheduleInput = CreateScheduleDto & {
+  matchupId: string;
+  competitionKind: 'stage' | 'playoff';
 };
 
 @Injectable()
@@ -53,6 +60,32 @@ export class ScheduleService {
     organizationId: string,
     access: OrganizationAccessContext,
     createScheduleDto: CreateScheduleDto,
+  ) {
+    if (createScheduleDto.status && !['draft', 'scheduled'].includes(createScheduleDto.status)) {
+      throw new BadRequestException('New games can only be drafts or scheduled games.');
+    }
+    return this.createGame(organizationId, access, createScheduleDto, {
+      competitionKind: 'exhibition',
+      matchupId: null,
+    });
+  }
+
+  async createCompetitionGame(
+    organizationId: string,
+    access: OrganizationAccessContext,
+    input: CompetitionScheduleInput,
+  ) {
+    return this.createGame(organizationId, access, input, {
+      competitionKind: input.competitionKind,
+      matchupId: input.matchupId,
+    });
+  }
+
+  private async createGame(
+    organizationId: string,
+    access: OrganizationAccessContext,
+    createScheduleDto: CreateScheduleDto,
+    competition: { competitionKind: 'stage' | 'playoff' | 'exhibition'; matchupId: string | null },
   ) {
     this.assertDistinctTeams(
       createScheduleDto.homeTeamId,
@@ -98,14 +131,14 @@ export class ScheduleService {
           .insertInto('competition.games')
           .values({
             away_team_id: createScheduleDto.awayTeamId,
-            away_score: createScheduleDto.awayScore,
-            competition_kind: createScheduleDto.competitionKind ?? 'stage',
+            away_score: null,
+            competition_kind: competition.competitionKind,
             division_id: createScheduleDto.divisionId,
-            finalized_at: this.resolveCreatedFinalizedAt(createScheduleDto),
-            home_score: createScheduleDto.homeScore,
+            finalized_at: null,
+            home_score: null,
             home_team_id: createScheduleDto.homeTeamId,
             league_season_id: createScheduleDto.leagueSeasonId,
-            matchup_id: createScheduleDto.matchupId,
+            matchup_id: competition.matchupId,
             published_at:
               createScheduleDto.status === 'scheduled' ? new Date() : null,
             starts_at: new Date(createScheduleDto.startsAt),
@@ -290,33 +323,30 @@ export class ScheduleService {
     updateScheduleDto: UpdateScheduleDto,
   ) {
     const existingGame = await this.findGameRecord(organizationId, gameId);
+    const incomingStatus = (updateScheduleDto as { status?: string }).status;
+    if (
+      incomingStatus !== undefined &&
+      !['draft', 'scheduled', 'postponed', 'cancelled'].includes(incomingStatus) &&
+      incomingStatus !== 'final'
+    ) {
+      throw new BadRequestException(
+        'Only draft, scheduled, postponed, or cancelled games can be changed here.',
+      );
+    }
+    await this.assertGenericUpdateIsAllowed(existingGame, gameId);
     this.assertGameIsNotFinal(existingGame.status);
-    if (updateScheduleDto.status === 'final') {
+    if ((updateScheduleDto as { status?: string }).status === 'final') {
       throw new BadRequestException(
         'Use Finalize game to record an official result and update standings.',
       );
     }
 
-    const nextLeagueSeasonId =
-      updateScheduleDto.leagueSeasonId ?? existingGame.league_season_id;
-    const nextDivisionId =
-      updateScheduleDto.divisionId ?? existingGame.division_id;
-    const nextVenueId = updateScheduleDto.venueId ?? existingGame.venue_id;
-    const nextHomeTeamId =
-      updateScheduleDto.homeTeamId ?? existingGame.home_team_id;
-    const nextAwayTeamId =
-      updateScheduleDto.awayTeamId ?? existingGame.away_team_id;
-
-    this.assertDistinctTeams(nextHomeTeamId, nextAwayTeamId);
-    this.assertFinalScoreState(existingGame, updateScheduleDto);
-    await this.assertScoringDomainDoesNotOwnResult(gameId, updateScheduleDto);
-
     await this.assertScheduleRelations(organizationId, {
-      awayTeamId: nextAwayTeamId,
-      divisionId: nextDivisionId,
-      homeTeamId: nextHomeTeamId,
-      leagueSeasonId: nextLeagueSeasonId,
-      venueId: nextVenueId,
+      awayTeamId: existingGame.away_team_id,
+      divisionId: existingGame.division_id,
+      homeTeamId: existingGame.home_team_id,
+      leagueSeasonId: existingGame.league_season_id,
+      venueId: updateScheduleDto.venueId ?? existingGame.venue_id,
     });
 
     const nextStartsAt = updateScheduleDto.startsAt
@@ -325,27 +355,18 @@ export class ScheduleService {
     const nextStatus = updateScheduleDto.status ?? existingGame.status;
     if (nextStatus === 'scheduled') {
       await this.assertNoScheduleConflict({
-        awayTeamId: nextAwayTeamId,
+        awayTeamId: existingGame.away_team_id,
         excludedGameId: gameId,
-        homeTeamId: nextHomeTeamId,
-        leagueSeasonId: nextLeagueSeasonId,
+        homeTeamId: existingGame.home_team_id,
+        leagueSeasonId: existingGame.league_season_id,
         startsAt: nextStartsAt,
-        venueId: nextVenueId,
+        venueId: updateScheduleDto.venueId ?? existingGame.venue_id,
       });
     }
 
     await this.db
       .updateTable('competition.games')
       .set({
-        away_team_id: updateScheduleDto.awayTeamId,
-        away_score: updateScheduleDto.awayScore,
-        competition_kind: updateScheduleDto.competitionKind,
-        division_id: updateScheduleDto.divisionId,
-        finalized_at: this.resolveFinalizedAt(existingGame, updateScheduleDto),
-        home_score: updateScheduleDto.homeScore,
-        home_team_id: updateScheduleDto.homeTeamId,
-        league_season_id: updateScheduleDto.leagueSeasonId,
-        matchup_id: updateScheduleDto.matchupId,
         published_at: this.resolvePublishedAt(existingGame, updateScheduleDto),
         starts_at: updateScheduleDto.startsAt
           ? new Date(updateScheduleDto.startsAt)
@@ -373,11 +394,7 @@ export class ScheduleService {
         'schedule.game_published',
       );
     } else if (
-      updateScheduleDto.startsAt ||
-      updateScheduleDto.venueId ||
-      updateScheduleDto.homeTeamId ||
-      updateScheduleDto.awayTeamId ||
-      updateScheduleDto.divisionId
+      updateScheduleDto.startsAt || updateScheduleDto.venueId
     ) {
       await this.notifyGameRecipients(
         organizationId,
@@ -903,6 +920,8 @@ export class ScheduleService {
         'games.home_team_id',
         'games.id',
         'games.league_season_id',
+        'games.matchup_id',
+        'games.competition_kind',
         'games.published_at',
         'games.starts_at',
         'games.status',
@@ -1041,6 +1060,35 @@ export class ScheduleService {
       .execute();
   }
 
+  private async assertGenericUpdateIsAllowed(
+    game: ScheduleGameRecord,
+    gameId: string,
+  ): Promise<void> {
+    if (
+      ['live', 'final', 'reopened'].includes(game.status) ||
+      game.away_score !== null ||
+      game.home_score !== null ||
+      game.finalized_at !== null ||
+      game.matchup_id !== null ||
+      game.competition_kind !== 'exhibition'
+    ) {
+      throw new ConflictException(
+        'Use the competition or scoring workflow to change this game.',
+      );
+    }
+
+    const scoringState = await this.db
+      .selectFrom('scoring.game_states')
+      .select(['game_id'])
+      .where('game_id', '=', gameId)
+      .executeTakeFirst();
+    if (scoringState) {
+      throw new ConflictException(
+        'Use the competition or scoring workflow to change this game.',
+      );
+    }
+  }
+
   private async assertStatisticianCanBeAssigned(
     organizationId: string,
     statisticianMemberId: string,
@@ -1160,32 +1208,6 @@ export class ScheduleService {
     return undefined;
   }
 
-  private async assertScoringDomainDoesNotOwnResult(
-    gameId: string,
-    updateScheduleDto: UpdateScheduleDto,
-  ): Promise<void> {
-    const touchesScoringState =
-      updateScheduleDto.awayScore !== undefined ||
-      updateScheduleDto.homeScore !== undefined ||
-      ['final', 'live', 'reopened'].includes(updateScheduleDto.status ?? '');
-
-    if (!touchesScoringState) {
-      return;
-    }
-
-    const scoringState = await this.db
-      .selectFrom('scoring.game_states')
-      .select(['game_id'])
-      .where('game_id', '=', gameId)
-      .executeTakeFirst();
-
-    if (scoringState) {
-      throw new BadRequestException(
-        'Scoring state exists; use scoring endpoints for live and official result changes',
-      );
-    }
-  }
-
   private resolveQuery(
     input: OrganizationAccessContext | ScheduleListQueryDto,
     query: ScheduleListQueryDto,
@@ -1220,62 +1242,4 @@ export class ScheduleService {
     return existingGame.published_at;
   }
 
-  private resolveCreatedFinalizedAt(
-    createScheduleDto: CreateScheduleDto,
-  ): Date | null {
-    if (createScheduleDto.status !== 'final') {
-      return null;
-    }
-
-    if (
-      createScheduleDto.homeScore === undefined ||
-      createScheduleDto.awayScore === undefined
-    ) {
-      throw new BadRequestException('Final games require home and away scores');
-    }
-
-    return new Date();
-  }
-
-  private assertFinalScoreState(
-    existingGame: ScheduleGameRecord,
-    updateScheduleDto: UpdateScheduleDto,
-  ): void {
-    const nextStatus = updateScheduleDto.status ?? existingGame.status;
-
-    if (nextStatus !== 'final') {
-      return;
-    }
-
-    const homeScore = updateScheduleDto.homeScore ?? existingGame.home_score;
-    const awayScore = updateScheduleDto.awayScore ?? existingGame.away_score;
-
-    if (
-      homeScore === null ||
-      homeScore === undefined ||
-      awayScore === null ||
-      awayScore === undefined
-    ) {
-      throw new BadRequestException('Final games require home and away scores');
-    }
-  }
-
-  private resolveFinalizedAt(
-    existingGame: ScheduleGameRecord,
-    updateScheduleDto: UpdateScheduleDto,
-  ): Date | null | undefined {
-    if (!updateScheduleDto.status) {
-      return undefined;
-    }
-
-    if (updateScheduleDto.status === 'final') {
-      return existingGame.finalized_at ?? new Date();
-    }
-
-    if (existingGame.status === 'final') {
-      return null;
-    }
-
-    return existingGame.finalized_at;
-  }
 }
