@@ -43,6 +43,13 @@ export interface AccessGameScorekeeperAssignments {
   organization_member_id: string;
 }
 
+export interface AccessGameStatisticianAssignments {
+  created_at: Generated<Timestamp>;
+  game_id: string;
+  id: Generated<string>;
+  organization_member_id: string;
+}
+
 export interface AccessInvitationTeamAssignments {
   created_at: Generated<Timestamp>;
   id: Generated<string>;
@@ -627,6 +634,33 @@ export interface ScoringGameEvents {
   type: string;
 }
 
+export interface ScoringGamePeriodScores {
+  away_score: Generated<number>;
+  game_id: string;
+  home_score: Generated<number>;
+  id: Generated<string>;
+  overtime_number: Generated<number>;
+  period_number: number;
+}
+
+export interface ScoringGameRosterPlayers {
+  game_roster_snapshot_id: string;
+  id: Generated<string>;
+  jersey_number: string;
+  name: string;
+  position: string | null;
+  sort_order: number;
+  source_player_id: string | null;
+}
+
+export interface ScoringGameRosterSnapshots {
+  game_id: string;
+  id: Generated<string>;
+  published_at: Generated<Timestamp>;
+  source_roster_version_id: string | null;
+  team_id: string;
+}
+
 export interface ScoringGameStates {
   away_score: Generated<number>;
   away_team_fouls: Generated<number>;
@@ -661,9 +695,94 @@ export interface ScoringGameStates {
   version: Generated<number>;
 }
 
+export interface ScoringPlayerFoulTotals {
+  fouled_out: Generated<boolean>;
+  game_id: string;
+  game_roster_player_id: string;
+  id: Generated<string>;
+  personal_fouls: Generated<number>;
+  team_id: string;
+}
+
+export interface StatisticsGameAwards {
+  confirmation_reason: string | null;
+  confirmed_at: Timestamp | null;
+  confirmed_by_member_id: string | null;
+  created_at: Generated<Timestamp>;
+  game_id: string;
+  id: Generated<string>;
+  selected_player_id: string | null;
+  suggested_player_id: string | null;
+  suggested_score: number | null;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface StatisticsGameStatSheets {
+  away_player_points: Generated<number>;
+  created_at: Generated<Timestamp>;
+  finalized_at: Timestamp | null;
+  game_id: string;
+  home_player_points: Generated<number>;
+  id: Generated<string>;
+  override_by_member_id: string | null;
+  override_reason: string | null;
+  reconciled_at: Timestamp | null;
+  reopened_at: Timestamp | null;
+  status: Generated<string>;
+  submitted_at: Timestamp | null;
+  updated_at: Generated<Timestamp>;
+  version: Generated<number>;
+}
+
+export interface StatisticsPlayerBoxScores {
+  assists: Generated<number>;
+  game_id: string;
+  game_roster_player_id: string;
+  id: Generated<string>;
+  points: Generated<number>;
+  rebounds: Generated<number>;
+  steals: Generated<number>;
+  team_id: string;
+  turnovers: Generated<number>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface StatisticsStatControlSessions {
+  claimed_at: Generated<Timestamp>;
+  control_token_hash: string;
+  created_at: Generated<Timestamp>;
+  device_label: string | null;
+  expires_at: Timestamp;
+  game_id: string;
+  id: Generated<string>;
+  last_heartbeat_at: Generated<Timestamp>;
+  organization_member_id: string;
+  release_reason: string | null;
+  released_at: Timestamp | null;
+  taken_over_by_session_id: string | null;
+  takeover_reason: string | null;
+}
+
+export interface StatisticsStatEvents {
+  actor_member_id: string | null;
+  created_at: Generated<Timestamp>;
+  game_id: string;
+  game_roster_player_id: string;
+  id: Generated<string>;
+  idempotency_key: string;
+  occurred_at_client: Timestamp | null;
+  reverses_event_id: string | null;
+  sequence: number;
+  stat_sheet_id: string;
+  team_id: string;
+  type: string;
+  value: Generated<number>;
+}
+
 export interface DB {
   "access.audit_events": AccessAuditEvents;
   "access.game_scorekeeper_assignments": AccessGameScorekeeperAssignments;
+  "access.game_statistician_assignments": AccessGameStatisticianAssignments;
   "access.invitation_team_assignments": AccessInvitationTeamAssignments;
   "access.organization_invitations": AccessOrganizationInvitations;
   "access.team_manager_assignments": AccessTeamManagerAssignments;
@@ -706,5 +825,14 @@ export interface DB {
   "public_portal.organizations": PublicPortalOrganizations;
   "scoring.game_control_sessions": ScoringGameControlSessions;
   "scoring.game_events": ScoringGameEvents;
+  "scoring.game_period_scores": ScoringGamePeriodScores;
+  "scoring.game_roster_players": ScoringGameRosterPlayers;
+  "scoring.game_roster_snapshots": ScoringGameRosterSnapshots;
   "scoring.game_states": ScoringGameStates;
+  "scoring.player_foul_totals": ScoringPlayerFoulTotals;
+  "statistics.game_awards": StatisticsGameAwards;
+  "statistics.game_stat_sheets": StatisticsGameStatSheets;
+  "statistics.player_box_scores": StatisticsPlayerBoxScores;
+  "statistics.stat_control_sessions": StatisticsStatControlSessions;
+  "statistics.stat_events": StatisticsStatEvents;
 }
