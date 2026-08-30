@@ -624,3 +624,34 @@ describe('ScheduleService scorekeeper assignments', () => {
     );
   });
 });
+
+describe('ScheduleService statistician assignments', () => {
+  it('lists active statisticians separately from scorekeepers', async () => {
+    const execute = jest.fn().mockResolvedValue([
+      {
+        email: 'stats@example.com',
+        id: 'member-statistician-1',
+        name: 'Pat Statistician',
+      },
+    ]);
+    const selectChain = {
+      execute,
+      innerJoin: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const service = new ScheduleService({
+      selectFrom: jest.fn().mockReturnValue(selectChain),
+    } as never);
+
+    await expect(service.findEligibleStatisticians('org-1')).resolves.toHaveLength(
+      1,
+    );
+    expect(selectChain.where).toHaveBeenCalledWith(
+      'members.role',
+      '=',
+      AUTH_ROLES.STATISTICIAN,
+    );
+  });
+});

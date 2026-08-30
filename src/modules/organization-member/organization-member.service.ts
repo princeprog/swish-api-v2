@@ -402,6 +402,13 @@ export class OrganizationMemberService {
         .where('organization_member_id', '=', memberId)
         .execute();
     }
+
+    if (role !== AUTH_ROLES.STATISTICIAN) {
+      await trx
+        .deleteFrom('access.game_statistician_assignments')
+        .where('organization_member_id', '=', memberId)
+        .execute();
+    }
   }
 
   private async clearAllAssignmentsInTransaction(trx: any, memberId: string) {
@@ -412,6 +419,11 @@ export class OrganizationMemberService {
 
     await trx
       .deleteFrom('access.game_scorekeeper_assignments')
+      .where('organization_member_id', '=', memberId)
+      .execute();
+
+    await trx
+      .deleteFrom('access.game_statistician_assignments')
       .where('organization_member_id', '=', memberId)
       .execute();
   }

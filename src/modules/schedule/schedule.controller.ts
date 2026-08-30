@@ -24,6 +24,7 @@ import { ScheduleListQueryDto } from './dto/schedule-list-query.dto';
 import { UpdateScorekeeperAssignmentDto } from './dto/update-scorekeeper-assignment.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { ScheduleService } from './schedule.service';
+import { UpdateStatisticianAssignmentDto } from './dto/update-statistician-assignment.dto';
 
 @Controller('organizations/:organizationId/games')
 @UseGuards(JwtAuthGuard, OrganizationPermissionsGuard)
@@ -48,6 +49,12 @@ export class ScheduleController {
   @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE)
   findEligibleScorekeepers(@Param('organizationId') organizationId: string) {
     return this.scheduleService.findEligibleScorekeepers(organizationId);
+  }
+
+  @Get('statisticians')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE)
+  findEligibleStatisticians(@Param('organizationId') organizationId: string) {
+    return this.scheduleService.findEligibleStatisticians(organizationId);
   }
 
   @Get()
@@ -113,6 +120,22 @@ export class ScheduleController {
       gameId,
       access,
       updateScorekeeperAssignmentDto,
+    );
+  }
+
+  @Put(':gameId/statistician')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE)
+  updateStatisticianAssignment(
+    @Param('organizationId') organizationId: string,
+    @Param('gameId') gameId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+    @Body() dto: UpdateStatisticianAssignmentDto,
+  ) {
+    return this.scheduleService.updateStatisticianAssignment(
+      organizationId,
+      gameId,
+      access,
+      dto,
     );
   }
 

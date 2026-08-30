@@ -63,4 +63,18 @@ describe('organization role permissions', () => {
       ORGANIZATION_PERMISSIONS.GAME_SCORE_ASSIGNED,
     ]);
   });
+
+  it('maps statistician to assigned game statistics only', () => {
+    const permissions = getPermissionsForOrganizationRole(
+      AUTH_ROLES.STATISTICIAN,
+    );
+
+    expect(permissions).toEqual([
+      ORGANIZATION_PERMISSIONS.GAMES_READ_ASSIGNED,
+      ORGANIZATION_PERMISSIONS.GAME_STATS_ASSIGNED,
+    ]);
+    expect(permissions).not.toContain(
+      ORGANIZATION_PERMISSIONS.GAME_SCORE_ASSIGNED,
+    );
+  });
 });

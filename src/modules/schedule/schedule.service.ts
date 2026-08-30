@@ -20,6 +20,7 @@ import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { NotificationWriter } from '../notification/notification.writer';
 import type { NotificationEventType } from '../notification/notification.events';
 import { findScheduleConflict } from './schedule-conflicts';
+import type { UpdateStatisticianAssignmentDto } from './dto/update-statistician-assignment.dto';
 
 type ScheduleGameRecord = {
   away_score: number | null;
@@ -155,6 +156,19 @@ export class ScheduleService {
       .select(['members.id', 'users.name', 'users.email'])
       .where('members.organization_id', '=', organizationId)
       .where('members.role', '=', AUTH_ROLES.SCOREKEEPER)
+      .where('members.status', '=', 'active')
+      .orderBy('users.name asc')
+      .orderBy('users.email asc')
+      .execute();
+  }
+
+  findEligibleStatisticians(organizationId: string) {
+    return this.db
+      .selectFrom('admin.organization_members as members')
+      .innerJoin('auth.users as users', 'users.id', 'members.user_id')
+      .select(['members.id', 'users.name', 'users.email'])
+      .where('members.organization_id', '=', organizationId)
+      .where('members.role', '=', AUTH_ROLES.STATISTICIAN)
       .where('members.status', '=', 'active')
       .orderBy('users.name asc')
       .orderBy('users.email asc')
@@ -481,6 +495,59 @@ export class ScheduleService {
         'schedule.scorekeeper_assigned',
       );
     }
+
+    return this.findOne(organizationId, gameId);
+  }
+
+  async updateStatisticianAssignment(
+    organizationId: string,
+    gameId: string,
+    access: OrganizationAccessContext,
+    dto: UpdateStatisticianAssignmentDto,
+  ) {
+    const existingGame = await this.findGameRecord(organizationId, gameId);
+    this.assertScorekeeperAssignmentIsOpen(existingGame.status);
+    const statisticianMemberId = dto.statisticianMemberId;
+
+    if (statisticianMemberId) {
+      await this.assertStatisticianCanBeAssigned(
+        organizationId,
+        statisticianMemberId,
+      );
+    }
+
+    const previous = await this.db
+      .selectFrom('access.game_statistician_assignments')
+      .select('organization_member_id')
+      .where('game_id', '=', gameId)
+      .executeTakeFirst();
+
+    await (this.db as any).transaction().execute(async (trx) => {
+      await trx
+        .deleteFrom('access.game_statistician_assignments')
+        .where('game_id', '=', gameId)
+        .execute();
+      if (statisticianMemberId) {
+        await trx
+          .insertInto('access.game_statistician_assignments')
+          .values({
+            game_id: gameId,
+            organization_member_id: statisticianMemberId,
+          })
+          .execute();
+      }
+      await this.writeAuditInTransaction(
+        trx,
+        access,
+        'game.statistician_assignment.updated',
+        gameId,
+        {
+          previousStatisticianMemberId:
+            previous?.organization_member_id ?? null,
+          statisticianMemberId: statisticianMemberId ?? null,
+        },
+      );
+    });
 
     return this.findOne(organizationId, gameId);
   }
@@ -966,6 +1033,26 @@ export class ScheduleService {
       .execute();
   }
 
+  private async assertStatisticianCanBeAssigned(
+    organizationId: string,
+    statisticianMemberId: string,
+  ): Promise<void> {
+    const statistician = await this.db
+      .selectFrom('admin.organization_members')
+      .select('id')
+      .where('id', '=', statisticianMemberId)
+      .where('organization_id', '=', organizationId)
+      .where('role', '=', AUTH_ROLES.STATISTICIAN)
+      .where('status', '=', 'active')
+      .executeTakeFirst();
+
+    if (!statistician) {
+      throw new BadRequestException(
+        'Choose an active statistician from this organization.',
+      );
+    }
+  }
+
   private async writeAuditInTransaction(
     trx: any,
     access: OrganizationAccessContext,
@@ -1034,10 +1121,16 @@ export class ScheduleService {
       );
     }
 
+    const assignmentTable = access.permissions.includes(
+      ORGANIZATION_PERMISSIONS.GAME_STATS_ASSIGNED,
+    )
+      ? 'access.game_statistician_assignments as assigned_games'
+      : 'access.game_scorekeeper_assignments as assigned_games';
+
     return query.where((eb) =>
       eb.exists(
         eb
-          .selectFrom('access.game_scorekeeper_assignments as assigned_games')
+          .selectFrom(assignmentTable)
           .select('assigned_games.id')
           .where(
             'assigned_games.organization_member_id',

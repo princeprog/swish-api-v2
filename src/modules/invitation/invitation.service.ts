@@ -498,6 +498,10 @@ export class InvitationService {
         .deleteFrom('access.game_scorekeeper_assignments')
         .where('organization_member_id', '=', member.id)
         .execute();
+      await trx
+        .deleteFrom('access.game_statistician_assignments')
+        .where('organization_member_id', '=', member.id)
+        .execute();
 
       if (
         invitation.role === AUTH_ROLES.TEAM_MANAGER &&

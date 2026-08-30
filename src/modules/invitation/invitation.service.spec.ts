@@ -389,6 +389,7 @@ describe('InvitationService team manager scope', () => {
     expect(deletedTables).toEqual([
       'access.team_manager_assignments',
       'access.game_scorekeeper_assignments',
+      'access.game_statistician_assignments',
     ]);
     expect(insertedTeamAssignments).toEqual([]);
   });
