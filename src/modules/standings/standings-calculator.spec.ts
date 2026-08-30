@@ -1,4 +1,7 @@
-import { calculateStandings } from './standings-calculator';
+import {
+  calculateRankedStandings,
+  calculateStandings,
+} from './standings-calculator';
 import type { FinalizedGameResult, StandingsTeam } from './standings.types';
 
 describe('calculateStandings', () => {
@@ -196,5 +199,100 @@ describe('calculateStandings', () => {
         }),
       ]),
     );
+  });
+
+  it('uses a head-to-head mini-table before overall point differential', () => {
+    const results: FinalizedGameResult[] = [
+      {
+        away_score: 80,
+        away_team_id: 'team-b',
+        division_id: 'division-a',
+        home_score: 81,
+        home_team_id: 'team-a',
+        id: 'game-1',
+        starts_at: new Date('2026-07-01T10:00:00.000Z'),
+      },
+      {
+        away_score: 60,
+        away_team_id: 'external-team',
+        division_id: 'division-a',
+        home_score: 100,
+        home_team_id: 'team-b',
+        id: 'game-2',
+        starts_at: new Date('2026-07-02T10:00:00.000Z'),
+      },
+      {
+        away_score: 70,
+        away_team_id: 'team-a',
+        division_id: 'division-a',
+        home_score: 110,
+        home_team_id: 'external-team',
+        id: 'game-3',
+        starts_at: new Date('2026-07-03T10:00:00.000Z'),
+      },
+    ];
+
+    const ranked = calculateRankedStandings(teams, results, [
+      'win_percentage',
+      'head_to_head',
+      'point_differential',
+      'points_for',
+      'manual_decision',
+    ]);
+
+    expect(ranked.rows.map((row) => row.teamId)).toEqual([
+      'team-a',
+      'team-b',
+      'team-c',
+    ]);
+    expect(ranked.rows[0].rankingExplanation).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ rule: 'head_to_head', value: 1 }),
+      ]),
+    );
+  });
+
+  it('reports an unresolved tie until an audited manual order is supplied', () => {
+    const tiedTeams = teams.slice(0, 2);
+    const result: FinalizedGameResult[] = [
+      {
+        away_score: 70,
+        away_team_id: 'team-b',
+        division_id: 'division-a',
+        home_score: 70,
+        home_team_id: 'team-a',
+        id: 'game-1',
+        starts_at: new Date('2026-07-01T10:00:00.000Z'),
+      },
+    ];
+
+    const unresolved = calculateRankedStandings(tiedTeams, result, [
+      'win_percentage',
+      'point_differential',
+      'points_for',
+      'manual_decision',
+    ]);
+    const tieKey = 'team-a|team-b';
+    expect(unresolved.unresolvedTies).toEqual([
+      { teamIds: ['team-a', 'team-b'], tieKey },
+    ]);
+    expect(unresolved.rows.every((row) => row.rank === null)).toBe(true);
+
+    const decided = calculateRankedStandings(
+      tiedTeams,
+      result,
+      [
+        'win_percentage',
+        'point_differential',
+        'points_for',
+        'manual_decision',
+      ],
+      [{ orderedTeamIds: ['team-b', 'team-a'], teamIds: ['team-a', 'team-b'] }],
+    );
+    expect(decided.unresolvedTies).toEqual([]);
+    expect(decided.rows.map((row) => [row.teamId, row.rank])).toEqual([
+      ['team-b', 1],
+      ['team-a', 2],
+    ]);
   });
 });
