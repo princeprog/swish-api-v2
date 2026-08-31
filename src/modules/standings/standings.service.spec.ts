@@ -11,83 +11,79 @@ function queryBuilder(result: unknown) {
 }
 
 describe('StandingsService', () => {
-  it('queries teams and finalized results for one organization season', async () => {
-    const teamQuery = queryBuilder([
+  it('reads the authoritative standings projections for one organization season', async () => {
+    const standingsQuery = queryBuilder([
       {
-        color: null,
         division_id: 'division-1',
         division_name: '18 under',
-        id: 'team-a',
-        name: 'Bugho Slashers',
+        games_played: 1,
+        losses: 0,
+        point_differential: 12,
+        points_against: 70,
+        points_for: 82,
+        pool_code: 'A',
+        pool_name: 'Pool A',
+        qualification_status: 'pending',
+        rank: 1,
+        ranking_explanation: [],
+        team_color: null,
+        team_id: 'team-a',
+        team_name: 'Bugho Slashers',
+        unresolved_tie_key: null,
+        win_percentage: '1.000000',
+        wins: 1,
       },
       {
-        color: null,
         division_id: 'division-1',
         division_name: '18 under',
-        id: 'team-b',
-        name: 'Cebu',
+        games_played: 1,
+        losses: 1,
+        point_differential: -12,
+        points_against: 82,
+        points_for: 70,
+        pool_code: 'A',
+        pool_name: 'Pool A',
+        qualification_status: 'pending',
+        rank: 2,
+        ranking_explanation: [],
+        team_color: null,
+        team_id: 'team-b',
+        team_name: 'Cebu',
+        unresolved_tie_key: null,
+        win_percentage: '0.000000',
+        wins: 0,
       },
     ]);
-    const resultQuery = queryBuilder([
-      {
-        away_score: 70,
-        away_team_id: 'team-b',
-        division_id: 'division-1',
-        home_score: 82,
-        home_team_id: 'team-a',
-        id: 'game-1',
-        starts_at: new Date('2026-07-09T10:00:00.000Z'),
-      },
-    ]);
-    const db = {
-      selectFrom: jest
-        .fn()
-        .mockReturnValueOnce(teamQuery)
-        .mockReturnValueOnce(resultQuery),
-    };
+    const db = { selectFrom: jest.fn().mockReturnValue(standingsQuery) };
     const service = new StandingsService(db as never);
 
     const standings = await service.findAll('org-1', {
       leagueSeasonId: 'season-1',
     });
 
-    expect(db.selectFrom).toHaveBeenCalledWith('admin.teams as teams');
     expect(db.selectFrom).toHaveBeenCalledWith(
-      'competition.finalized_game_results as results',
+      'competition.standings_projections as standings',
     );
-    expect(teamQuery.where).toHaveBeenCalledWith(
-      'league_seasons.organization_id',
+    expect(standingsQuery.where).toHaveBeenCalledWith(
+      'seasons.organization_id',
       '=',
       'org-1',
     );
-    expect(teamQuery.where).toHaveBeenCalledWith(
-      'divisions.league_season_id',
+    expect(standingsQuery.where).toHaveBeenCalledWith(
+      'seasons.id',
       '=',
       'season-1',
-    );
-    expect(resultQuery.where).toHaveBeenCalledWith(
-      'results.organization_id',
-      '=',
-      'org-1',
-    );
-    expect(resultQuery.where).toHaveBeenCalledWith(
-      'results.league_season_id',
-      '=',
-      'season-1',
-    );
-    expect(resultQuery.select).toHaveBeenCalledWith(
-      expect.arrayContaining(['results.starts_at']),
     );
     expect(standings.rows).toEqual([
       expect.objectContaining({
         losses: 0,
-        recentResults: ['W'],
+        rank: 1,
         teamId: 'team-a',
         wins: 1,
       }),
       expect.objectContaining({
         losses: 1,
-        recentResults: ['L'],
+        rank: 2,
         teamId: 'team-b',
         wins: 0,
       }),
