@@ -244,8 +244,25 @@ export class CompetitionRepository {
   async setPoolAssignments(
     allPoolIds: string[],
     assignments: PoolTeamAssignmentDto[],
+    formatId?: string,
   ): Promise<void> {
     await this.db.transaction().execute(async (trx) => {
+      if (formatId) {
+        const format = await trx
+          .selectFrom('competition.division_formats')
+          .select(['id', 'status'])
+          .where('id', '=', formatId)
+          .forUpdate()
+          .executeTakeFirst();
+        if (!format) {
+          throw new NotFoundException('Competition format not found');
+        }
+        if (format.status !== 'draft') {
+          throw new ConflictException(
+            'The competition format is locked. Reset it before changing pool assignments.',
+          );
+        }
+      }
       await trx
         .deleteFrom('competition.pool_teams')
         .where('pool_id', 'in', allPoolIds)
@@ -515,6 +532,18 @@ export class CompetitionRepository {
 
   async reset(formatId: string) {
     return this.db.transaction().execute(async (trx) => {
+      const currentFormat = await trx
+        .selectFrom('competition.division_formats')
+        .select(['id', 'revision', 'status'])
+        .where('id', '=', formatId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!currentFormat) {
+        throw new NotFoundException('Competition format not found');
+      }
+      if (currentFormat.status === 'completed') {
+        throw new ConflictException('A completed competition cannot be reset.');
+      }
       const linkedGame = await trx
         .selectFrom('competition.games as games')
         .innerJoin(
@@ -541,15 +570,11 @@ export class CompetitionRepository {
         .where('division_format_id', '=', formatId)
         .execute();
       await trx
-        .deleteFrom('competition.matchups')
+        .updateTable('competition.matchups')
+        .set({ status: 'void', updated_at: new Date() })
         .where('division_format_id', '=', formatId)
+        .where('format_revision', '=', currentFormat.revision)
         .execute();
-      const currentFormat = await trx
-        .selectFrom('competition.division_formats')
-        .select('revision')
-        .where('id', '=', formatId)
-        .forUpdate()
-        .executeTakeFirstOrThrow();
       await trx
         .updateTable('competition.division_formats')
         .set({

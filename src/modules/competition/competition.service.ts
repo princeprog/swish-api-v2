@@ -105,6 +105,7 @@ export class CompetitionService {
     await this.repository.setPoolAssignments(
       pools.map((pool) => pool.id),
       dto.pools,
+      format.id,
     );
     return this.getWorkspace(organizationId, divisionId);
   }

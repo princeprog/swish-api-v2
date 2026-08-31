@@ -5,11 +5,90 @@ function chain(result: unknown) {
   return {
     executeTakeFirst: jest.fn().mockResolvedValue(result),
     executeTakeFirstOrThrow: jest.fn().mockResolvedValue(result),
+    execute: jest.fn().mockResolvedValue([]),
+    forUpdate: jest.fn().mockReturnThis(),
+    innerJoin: jest.fn().mockReturnThis(),
+    orderBy: jest.fn().mockReturnThis(),
     select: jest.fn().mockReturnThis(),
+    selectAll: jest.fn().mockReturnThis(),
     set: jest.fn().mockReturnThis(),
     where: jest.fn().mockReturnThis(),
   };
 }
+
+describe('CompetitionRepository format mutation serialization', () => {
+  it('locks the format before replacing pool assignments', async () => {
+    const formatQuery = chain({ id: 'format-1', status: 'draft' });
+    const deletion = chain(undefined);
+    const insertion = chain(undefined);
+    const transactionExecute = jest.fn(async (callback) =>
+      callback({
+        deleteFrom: jest.fn().mockReturnValue(deletion),
+        insertInto: jest.fn().mockReturnValue({
+          execute: insertion.execute,
+          values: jest.fn().mockReturnThis(),
+        }),
+        selectFrom: jest.fn().mockReturnValue(formatQuery),
+      }),
+    );
+    const db = {
+      transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
+    };
+    const repository = new CompetitionRepository(db as never);
+
+    await repository.setPoolAssignments(
+      ['pool-1'],
+      [{ poolId: 'pool-1', teamIds: ['team-1'] }],
+      'format-1',
+    );
+
+    expect(formatQuery.forUpdate).toHaveBeenCalledTimes(1);
+    expect(deletion.execute).toHaveBeenCalledTimes(1);
+    expect(insertion.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('voids the current generated graph instead of deleting its matchups on reset', async () => {
+    const formatQuery = chain({ id: 'format-1', revision: 3, status: 'locked' });
+    const gamesQuery = chain(undefined);
+    const matchupsUpdate = chain({ numUpdatedRows: 2n });
+    const mutation = chain(undefined);
+    const deletedTables: string[] = [];
+    const transactionExecute = jest.fn(async (callback) =>
+      callback({
+        deleteFrom: jest.fn((table: string) => {
+          deletedTables.push(table);
+          return mutation;
+        }),
+        selectFrom: jest.fn((table: string) =>
+          table === 'competition.division_formats'
+            ? formatQuery
+            : gamesQuery,
+        ),
+        updateTable: jest.fn((table: string) =>
+          table === 'competition.matchups' ? matchupsUpdate : mutation,
+        ),
+      }),
+    );
+    const db = {
+      transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
+    };
+    const repository = new CompetitionRepository(db as never);
+
+    await expect(repository.reset('format-1')).resolves.toEqual({
+      success: true,
+    });
+
+    expect(formatQuery.forUpdate).toHaveBeenCalledTimes(1);
+    expect(matchupsUpdate.set).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'void' }),
+    );
+    expect(deletedTables).toEqual([
+      'competition.standings_projections',
+      'competition.tie_decisions',
+    ]);
+    expect(deletedTables).not.toContain('competition.matchups');
+  });
+});
 
 describe('CompetitionRepository generated matchup scheduling', () => {
   it('requires the game to link to the matchup before transitioning it', async () => {
