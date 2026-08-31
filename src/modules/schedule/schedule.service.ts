@@ -402,25 +402,41 @@ export class ScheduleService {
     createScheduleDto: CreateScheduleDto,
     inserted: { id: string },
   ) {
-    const game = await this.findOne(organizationId, inserted.id);
+    const game = await this.findGameAfterCommit(organizationId, inserted.id);
+    const notifications: Promise<unknown>[] = [];
     if (createScheduleDto.status === 'scheduled') {
-      await this.notifyGameRecipients(
-        organizationId,
-        inserted.id,
-        access,
-        'schedule.game_published',
+      notifications.push(
+        this.notifyGameRecipients(
+          organizationId,
+          inserted.id,
+          access,
+          'schedule.game_published',
+        ),
       );
     }
     if (createScheduleDto.scorekeeperMemberId) {
-      await this.notifyScorekeeperAssignment(
-        organizationId,
-        inserted.id,
-        access,
-        createScheduleDto.scorekeeperMemberId,
-        'schedule.scorekeeper_assigned',
+      notifications.push(
+        this.notifyScorekeeperAssignmentBestEffort(
+          organizationId,
+          inserted.id,
+          access,
+          createScheduleDto.scorekeeperMemberId,
+          'schedule.scorekeeper_assigned',
+        ),
       );
     }
+    await Promise.allSettled(notifications);
     return game;
+  }
+
+  private async findGameAfterCommit(organizationId: string, gameId: string) {
+    try {
+      return await this.findOne(organizationId, gameId);
+    } catch {
+      // The scheduling transaction has already committed. Return its durable
+      // identifier if read enrichment is temporarily unavailable.
+      return { id: gameId };
+    }
   }
 
   findEligibleScorekeepers(organizationId: string) {
@@ -538,8 +554,9 @@ export class ScheduleService {
     const initialGame = hasTransaction
       ? undefined
       : await this.findGameRecord(organizationId, gameId);
-    const leagueSeasonId = initialGame?.league_season_id
-      ?? await this.findGameSeasonId(organizationId, gameId);
+    const leagueSeasonId =
+      initialGame?.league_season_id ??
+      (await this.findGameSeasonId(organizationId, gameId));
     const incomingStatus = (updateScheduleDto as { status?: string }).status;
     if (
       incomingStatus !== undefined &&
@@ -596,8 +613,7 @@ export class ScheduleService {
             excludedGameId: gameId,
             homeTeamId: existingGame.home_team_id,
             leagueSeasonId: existingGame.league_season_id,
-            scorekeeperMemberId:
-              assignments.scorekeeperMemberId,
+            scorekeeperMemberId: assignments.scorekeeperMemberId,
             startsAt: nextStartsAt,
             statisticianMemberId: assignments.statisticianMemberId,
             venueId: updateScheduleDto.venueId ?? existingGame.venue_id,
@@ -727,10 +743,12 @@ export class ScheduleService {
       ? undefined
       : await this.findGameRecord(organizationId, gameId);
     if (initialGame) this.assertScorekeeperAssignmentIsOpen(initialGame.status);
-    const leagueSeasonId = initialGame?.league_season_id
-      ?? await this.findGameSeasonId(organizationId, gameId);
+    const leagueSeasonId =
+      initialGame?.league_season_id ??
+      (await this.findGameSeasonId(organizationId, gameId));
     let existingGame: ScheduleGameRecord | undefined;
     let previousAssignment: { organization_member_id: string } | undefined;
+    let scorekeeperAssignmentChanged = false;
     const assign = async (trx: any) => {
       const season = await this.lockSeasonForScheduling(
         trx,
@@ -765,28 +783,37 @@ export class ScheduleService {
           );
         }
       }
-      previousAssignment = await trx
+      let previousAssignmentQuery = trx
         .selectFrom('access.game_scorekeeper_assignments')
         .select(['organization_member_id'])
-        .where('game_id', '=', gameId)
-        .executeTakeFirst();
-      await this.replaceScorekeeperAssignmentInTransaction(
-        trx,
-        gameId,
-        nextScorekeeperMemberId,
-      );
+        .where('game_id', '=', gameId);
+      if (typeof previousAssignmentQuery.forUpdate === 'function') {
+        previousAssignmentQuery = previousAssignmentQuery.forUpdate();
+      }
+      previousAssignment = await previousAssignmentQuery.executeTakeFirst();
+      const previousScorekeeperMemberId =
+        previousAssignment?.organization_member_id ?? null;
+      const nextAssignmentMemberId = nextScorekeeperMemberId ?? null;
+      scorekeeperAssignmentChanged =
+        previousScorekeeperMemberId !== nextAssignmentMemberId;
+      if (scorekeeperAssignmentChanged) {
+        await this.replaceScorekeeperAssignmentInTransaction(
+          trx,
+          gameId,
+          nextScorekeeperMemberId,
+        );
 
-      await this.writeAuditInTransaction(
-        trx,
-        access,
-        'game.scorekeeper_assignment.updated',
-        gameId,
-        {
-          previousScorekeeperMemberId:
-            previousAssignment?.organization_member_id ?? null,
-          scorekeeperMemberId: nextScorekeeperMemberId ?? null,
-        },
-      );
+        await this.writeAuditInTransaction(
+          trx,
+          access,
+          'game.scorekeeper_assignment.updated',
+          gameId,
+          {
+            previousScorekeeperMemberId,
+            scorekeeperMemberId: nextAssignmentMemberId,
+          },
+        );
+      }
     };
     if (hasTransaction) {
       await (this.db as any).transaction().execute(assign);
@@ -794,8 +821,11 @@ export class ScheduleService {
       await assign(this.db);
     }
 
-    if (previousAssignment?.organization_member_id) {
-      await this.notifyScorekeeperAssignment(
+    if (
+      scorekeeperAssignmentChanged &&
+      previousAssignment?.organization_member_id
+    ) {
+      await this.notifyScorekeeperAssignmentBestEffort(
         organizationId,
         gameId,
         access,
@@ -803,8 +833,8 @@ export class ScheduleService {
         'schedule.scorekeeper_unassigned',
       );
     }
-    if (nextScorekeeperMemberId) {
-      await this.notifyScorekeeperAssignment(
+    if (scorekeeperAssignmentChanged && nextScorekeeperMemberId) {
+      await this.notifyScorekeeperAssignmentBestEffort(
         organizationId,
         gameId,
         access,
@@ -813,7 +843,7 @@ export class ScheduleService {
       );
     }
 
-    return this.findOne(organizationId, gameId);
+    return this.findGameAfterCommit(organizationId, gameId);
   }
 
   async updateStatisticianAssignment(
@@ -828,8 +858,9 @@ export class ScheduleService {
       ? undefined
       : await this.findGameRecord(organizationId, gameId);
     if (initialGame) this.assertScorekeeperAssignmentIsOpen(initialGame.status);
-    const leagueSeasonId = initialGame?.league_season_id
-      ?? await this.findGameSeasonId(organizationId, gameId);
+    const leagueSeasonId =
+      initialGame?.league_season_id ??
+      (await this.findGameSeasonId(organizationId, gameId));
     let existingGame: ScheduleGameRecord | undefined;
     let previous: { organization_member_id: string } | undefined;
     const assign = async (trx: any) => {
@@ -866,35 +897,42 @@ export class ScheduleService {
           );
         }
       }
-      previous = await trx
+      let previousAssignmentQuery = trx
         .selectFrom('access.game_statistician_assignments')
         .select('organization_member_id')
-        .where('game_id', '=', gameId)
-        .executeTakeFirst();
-      await trx
-        .deleteFrom('access.game_statistician_assignments')
-        .where('game_id', '=', gameId)
-        .execute();
-      if (statisticianMemberId) {
-        await trx
-          .insertInto('access.game_statistician_assignments')
-          .values({
-            game_id: gameId,
-            organization_member_id: statisticianMemberId,
-          })
-          .execute();
+        .where('game_id', '=', gameId);
+      if (typeof previousAssignmentQuery.forUpdate === 'function') {
+        previousAssignmentQuery = previousAssignmentQuery.forUpdate();
       }
-      await this.writeAuditInTransaction(
-        trx,
-        access,
-        'game.statistician_assignment.updated',
-        gameId,
-        {
-          previousStatisticianMemberId:
-            previous?.organization_member_id ?? null,
-          statisticianMemberId: statisticianMemberId ?? null,
-        },
-      );
+      previous = await previousAssignmentQuery.executeTakeFirst();
+      const previousStatisticianMemberId =
+        previous?.organization_member_id ?? null;
+      const nextStatisticianMemberId = statisticianMemberId ?? null;
+      if (previousStatisticianMemberId !== nextStatisticianMemberId) {
+        await trx
+          .deleteFrom('access.game_statistician_assignments')
+          .where('game_id', '=', gameId)
+          .execute();
+        if (statisticianMemberId) {
+          await trx
+            .insertInto('access.game_statistician_assignments')
+            .values({
+              game_id: gameId,
+              organization_member_id: statisticianMemberId,
+            })
+            .execute();
+        }
+        await this.writeAuditInTransaction(
+          trx,
+          access,
+          'game.statistician_assignment.updated',
+          gameId,
+          {
+            previousStatisticianMemberId,
+            statisticianMemberId: nextStatisticianMemberId,
+          },
+        );
+      }
     };
     if (hasTransaction) {
       await (this.db as any).transaction().execute(assign);
@@ -902,7 +940,7 @@ export class ScheduleService {
       await assign(this.db);
     }
 
-    return this.findOne(organizationId, gameId);
+    return this.findGameAfterCommit(organizationId, gameId);
   }
 
   private assertDistinctTeams(homeTeamId: string, awayTeamId: string): void {
@@ -1071,6 +1109,35 @@ export class ScheduleService {
       resourceId: gameId,
       resourceType: 'game',
     });
+  }
+
+  /**
+   * Assignment writes are official scheduling changes. Notification delivery
+   * is secondary and must never turn a committed assignment into a reported
+   * failure when the notification provider or enrichment query is unavailable.
+   */
+  private async notifyScorekeeperAssignmentBestEffort(
+    organizationId: string,
+    gameId: string,
+    access: OrganizationAccessContext,
+    memberId: string,
+    eventType: Extract<
+      NotificationEventType,
+      'schedule.scorekeeper_assigned' | 'schedule.scorekeeper_unassigned'
+    >,
+  ): Promise<void> {
+    try {
+      await this.notifyScorekeeperAssignment(
+        organizationId,
+        gameId,
+        access,
+        memberId,
+        eventType,
+      );
+    } catch {
+      // The assignment is already committed. A later notification retry can
+      // recover delivery without asking the administrator to repeat the write.
+    }
   }
 
   private async assertScheduleRelations(
@@ -1431,14 +1498,15 @@ export class ScheduleService {
     organizationId: string,
     scorekeeperMemberId: string,
   ): Promise<void> {
-    const scorekeeper = await db
+    let query = db
       .selectFrom('admin.organization_members')
       .select(['id'])
       .where('id', '=', scorekeeperMemberId)
       .where('organization_id', '=', organizationId)
       .where('role', '=', AUTH_ROLES.SCOREKEEPER)
-      .where('status', '=', 'active')
-      .executeTakeFirst();
+      .where('status', '=', 'active');
+    if (typeof query.forUpdate === 'function') query = query.forUpdate();
+    const scorekeeper = await query.executeTakeFirst();
 
     if (!scorekeeper) {
       throw new BadRequestException(
@@ -1505,14 +1573,15 @@ export class ScheduleService {
     statisticianMemberId: string,
     db: Database | any = this.db,
   ): Promise<void> {
-    const statistician = await db
+    let query = db
       .selectFrom('admin.organization_members')
       .select('id')
       .where('id', '=', statisticianMemberId)
       .where('organization_id', '=', organizationId)
       .where('role', '=', AUTH_ROLES.STATISTICIAN)
-      .where('status', '=', 'active')
-      .executeTakeFirst();
+      .where('status', '=', 'active');
+    if (typeof query.forUpdate === 'function') query = query.forUpdate();
+    const statistician = await query.executeTakeFirst();
 
     if (!statistician) {
       throw new BadRequestException(

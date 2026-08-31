@@ -641,14 +641,20 @@ describe('ScheduleService schedule mutex', () => {
       updated_at: new Date(),
       venue_id: 'venue-1',
     };
-    jest.spyOn(service as any, 'findGameSeasonId').mockResolvedValue('season-1');
+    jest
+      .spyOn(service as any, 'findGameSeasonId')
+      .mockResolvedValue('season-1');
     jest.spyOn(service as any, 'findGameRecord').mockResolvedValue(game);
     jest.spyOn(service as any, 'findGameAssignments').mockResolvedValue({
       scorekeeperMemberId: 'member-scorekeeper-1',
       statisticianMemberId: 'member-statistician-1',
     });
-    jest.spyOn(service as any, 'assertGenericUpdateIsAllowed').mockResolvedValue(undefined);
-    jest.spyOn(service as any, 'assertScheduleRelations').mockResolvedValue(undefined);
+    jest
+      .spyOn(service as any, 'assertGenericUpdateIsAllowed')
+      .mockResolvedValue(undefined);
+    jest
+      .spyOn(service as any, 'assertScheduleRelations')
+      .mockResolvedValue(undefined);
     const conflictCheck = jest
       .spyOn(service as any, 'assertNoScheduleConflict')
       .mockResolvedValue(undefined);
@@ -706,14 +712,18 @@ describe('ScheduleService schedule mutex', () => {
       updated_at: new Date(),
       venue_id: 'venue-1',
     };
-    jest.spyOn(service as any, 'findGameSeasonId').mockResolvedValue('season-1');
+    jest
+      .spyOn(service as any, 'findGameSeasonId')
+      .mockResolvedValue('season-1');
     jest.spyOn(service as any, 'findGameRecord').mockResolvedValue(lockedGame);
 
     await expect(
       service.update('org-1', 'game-1', {
         startsAt: '2026-09-01T11:00:00.000Z',
       }),
-    ).rejects.toThrow('Use the competition or scoring workflow to change this game.');
+    ).rejects.toThrow(
+      'Use the competition or scoring workflow to change this game.',
+    );
   });
 
   it('uses the post-lock game state for assignment guards', async () => {
@@ -733,7 +743,9 @@ describe('ScheduleService schedule mutex', () => {
       }),
     };
     const service = new ScheduleService(db as never);
-    jest.spyOn(service as any, 'findGameSeasonId').mockResolvedValue('season-1');
+    jest
+      .spyOn(service as any, 'findGameSeasonId')
+      .mockResolvedValue('season-1');
     jest.spyOn(service as any, 'findGameRecord').mockResolvedValue({
       away_team_id: 'team-b',
       division_id: 'division-1',
@@ -777,7 +789,9 @@ describe('ScheduleService schedule mutex', () => {
       }),
     };
     const service = new ScheduleService(db as never);
-    jest.spyOn(service as any, 'findGameSeasonId').mockResolvedValue('season-1');
+    jest
+      .spyOn(service as any, 'findGameSeasonId')
+      .mockResolvedValue('season-1');
     jest.spyOn(service as any, 'findGameRecord').mockResolvedValue({
       away_team_id: 'team-b',
       division_id: 'division-1',
@@ -806,6 +820,247 @@ describe('ScheduleService schedule mutex', () => {
 });
 
 describe('ScheduleService scorekeeper assignments', () => {
+  it('keeps an idempotent scorekeeper assignment without replacing or notifying', async () => {
+    const assignmentQuery = {
+      executeTakeFirst: jest.fn().mockResolvedValue({
+        organization_member_id: 'member-scorekeeper-1',
+      }),
+      forUpdate: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const transactionContext = {
+      selectFrom: jest.fn().mockReturnValue(assignmentQuery),
+    };
+    const db = {
+      transaction: jest.fn().mockReturnValue({
+        execute: jest.fn((callback) => callback(transactionContext)),
+      }),
+    };
+    const service = new ScheduleService(db as never);
+    jest
+      .spyOn(service as any, 'findGameSeasonId')
+      .mockResolvedValue('season-1');
+    jest.spyOn(service as any, 'lockSeasonForScheduling').mockResolvedValue({
+      schedule_slot_duration_minutes: 90,
+    });
+    jest.spyOn(service as any, 'lockGameForScheduling').mockResolvedValue({
+      id: 'game-1',
+    });
+    jest.spyOn(service as any, 'findGameRecord').mockResolvedValue({
+      away_team_id: 'team-b',
+      division_id: 'division-1',
+      home_team_id: 'team-a',
+      id: 'game-1',
+      league_season_id: 'season-1',
+      starts_at: new Date('2026-09-01T10:00:00.000Z'),
+      status: 'scheduled',
+      venue_id: 'venue-1',
+    });
+    const eligibility = jest
+      .spyOn(service as any, 'assertScorekeeperCanBeAssigned')
+      .mockResolvedValue(undefined);
+    const conflict = jest
+      .spyOn(service as any, 'assertNoScheduleConflict')
+      .mockResolvedValue(undefined);
+    const replace = jest
+      .spyOn(service as any, 'replaceScorekeeperAssignmentInTransaction')
+      .mockResolvedValue(undefined);
+    const audit = jest
+      .spyOn(service as any, 'writeAuditInTransaction')
+      .mockResolvedValue(undefined);
+    const notify = jest
+      .spyOn(service as any, 'notifyScorekeeperAssignment')
+      .mockResolvedValue(undefined);
+    jest.spyOn(service, 'findOne').mockResolvedValue({ id: 'game-1' });
+
+    await service.updateScorekeeperAssignment(
+      'org-1',
+      'game-1',
+      createOrganizationAccessContext({
+        permissions: [ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE],
+        role: AUTH_ROLES.ADMIN,
+      }),
+      { scorekeeperMemberId: 'member-scorekeeper-1' },
+    );
+
+    expect(eligibility).toHaveBeenCalledWith(
+      transactionContext,
+      'org-1',
+      'member-scorekeeper-1',
+    );
+    expect(conflict).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scorekeeperMemberId: 'member-scorekeeper-1',
+      }),
+      transactionContext,
+      90,
+    );
+    expect(assignmentQuery.forUpdate).toHaveBeenCalledTimes(1);
+    expect(replace).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('rolls back a scorekeeper assignment when the audit write fails', async () => {
+    const assignmentQuery = {
+      executeTakeFirst: jest.fn().mockResolvedValue(undefined),
+      forUpdate: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const transactionContext = {
+      selectFrom: jest.fn().mockReturnValue(assignmentQuery),
+    };
+    const transactionExecute = jest.fn(async (callback) =>
+      callback(transactionContext),
+    );
+    const db = {
+      transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
+    };
+    const service = new ScheduleService(db as never);
+    jest
+      .spyOn(service as any, 'findGameSeasonId')
+      .mockResolvedValue('season-1');
+    jest.spyOn(service as any, 'lockSeasonForScheduling').mockResolvedValue({
+      schedule_slot_duration_minutes: 90,
+    });
+    jest.spyOn(service as any, 'lockGameForScheduling').mockResolvedValue({
+      id: 'game-1',
+    });
+    jest.spyOn(service as any, 'findGameRecord').mockResolvedValue({
+      away_team_id: 'team-b',
+      division_id: 'division-1',
+      home_team_id: 'team-a',
+      id: 'game-1',
+      league_season_id: 'season-1',
+      starts_at: new Date('2026-09-01T10:00:00.000Z'),
+      status: 'scheduled',
+      venue_id: 'venue-1',
+    });
+    jest
+      .spyOn(service as any, 'assertScorekeeperCanBeAssigned')
+      .mockResolvedValue(undefined);
+    jest
+      .spyOn(service as any, 'assertNoScheduleConflict')
+      .mockResolvedValue(undefined);
+    jest
+      .spyOn(service as any, 'replaceScorekeeperAssignmentInTransaction')
+      .mockResolvedValue(undefined);
+    jest
+      .spyOn(service as any, 'writeAuditInTransaction')
+      .mockRejectedValue(new Error('audit unavailable'));
+    const notify = jest
+      .spyOn(service as any, 'notifyScorekeeperAssignment')
+      .mockResolvedValue(undefined);
+
+    await expect(
+      service.updateScorekeeperAssignment(
+        'org-1',
+        'game-1',
+        createOrganizationAccessContext({
+          permissions: [ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE],
+          role: AUTH_ROLES.ADMIN,
+        }),
+        { scorekeeperMemberId: 'member-scorekeeper-1' },
+      ),
+    ).rejects.toThrow('audit unavailable');
+
+    expect(transactionExecute).toHaveBeenCalledTimes(1);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('does not report an assignment failure when post-commit notification delivery fails', async () => {
+    const assignmentQuery = {
+      executeTakeFirst: jest.fn().mockResolvedValue(undefined),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const transactionContext = {
+      selectFrom: jest.fn().mockReturnValue(assignmentQuery),
+    };
+    const db = {
+      transaction: jest.fn().mockReturnValue({
+        execute: jest.fn((callback) => callback(transactionContext)),
+      }),
+    };
+    const service = new ScheduleService(db as never);
+    jest
+      .spyOn(service as any, 'findGameSeasonId')
+      .mockResolvedValue('season-1');
+    jest.spyOn(service as any, 'lockSeasonForScheduling').mockResolvedValue({
+      schedule_slot_duration_minutes: 90,
+    });
+    jest.spyOn(service as any, 'lockGameForScheduling').mockResolvedValue({
+      id: 'game-1',
+    });
+    jest.spyOn(service as any, 'findGameRecord').mockResolvedValue({
+      away_team_id: 'team-b',
+      division_id: 'division-1',
+      home_team_id: 'team-a',
+      id: 'game-1',
+      league_season_id: 'season-1',
+      starts_at: new Date('2026-09-01T10:00:00.000Z'),
+      status: 'scheduled',
+      venue_id: 'venue-1',
+    });
+    jest
+      .spyOn(service as any, 'assertScorekeeperCanBeAssigned')
+      .mockResolvedValue(undefined);
+    jest
+      .spyOn(service as any, 'assertNoScheduleConflict')
+      .mockResolvedValue(undefined);
+    jest
+      .spyOn(service as any, 'replaceScorekeeperAssignmentInTransaction')
+      .mockResolvedValue(undefined);
+    jest
+      .spyOn(service as any, 'writeAuditInTransaction')
+      .mockResolvedValue(undefined);
+    jest
+      .spyOn(service as any, 'notifyScorekeeperAssignment')
+      .mockRejectedValue(new Error('notification provider unavailable'));
+    jest.spyOn(service, 'findOne').mockRejectedValue(new Error('read unavailable'));
+
+    await expect(
+      service.updateScorekeeperAssignment(
+        'org-1',
+        'game-1',
+        createOrganizationAccessContext({
+          permissions: [ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE],
+          role: AUTH_ROLES.ADMIN,
+        }),
+        { scorekeeperMemberId: 'member-scorekeeper-1' },
+      ),
+    ).resolves.toEqual({ id: 'game-1' });
+  });
+
+  it('returns a committed game when create-assignment enrichment or notifications fail', async () => {
+    const service = new ScheduleService({} as never);
+    const inserted = { id: 'game-1' };
+    jest.spyOn(service, 'findOne').mockRejectedValue(new Error('read unavailable'));
+    jest
+      .spyOn(service as any, 'notifyGameRecipients')
+      .mockRejectedValue(new Error('notification provider unavailable'));
+    jest
+      .spyOn(service as any, 'notifyScorekeeperAssignment')
+      .mockRejectedValue(new Error('notification provider unavailable'));
+
+    await expect(
+      (service as any).finishCreatedGame(
+        'org-1',
+        createOrganizationAccessContext({
+          permissions: [ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE],
+          role: AUTH_ROLES.ADMIN,
+        }),
+        {
+          scorekeeperMemberId: 'member-scorekeeper-1',
+          status: 'scheduled',
+        },
+        inserted,
+      ),
+    ).resolves.toEqual(inserted);
+  });
+
   it('creates a game and scorekeeper assignment in one transaction', async () => {
     const insertInto = jest
       .fn()
@@ -975,6 +1230,83 @@ describe('ScheduleService scorekeeper assignments', () => {
 });
 
 describe('ScheduleService statistician assignments', () => {
+  it('keeps an idempotent statistician assignment without replacing or auditing', async () => {
+    const assignmentQuery = {
+      executeTakeFirst: jest.fn().mockResolvedValue({
+        organization_member_id: 'member-statistician-1',
+      }),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const transactionContext = {
+      selectFrom: jest.fn().mockReturnValue(assignmentQuery),
+    };
+    const db = {
+      transaction: jest.fn().mockReturnValue({
+        execute: jest.fn((callback) => callback(transactionContext)),
+      }),
+    };
+    const service = new ScheduleService(db as never);
+    jest
+      .spyOn(service as any, 'findGameSeasonId')
+      .mockResolvedValue('season-1');
+    jest.spyOn(service as any, 'lockSeasonForScheduling').mockResolvedValue({
+      schedule_slot_duration_minutes: 90,
+    });
+    jest.spyOn(service as any, 'lockGameForScheduling').mockResolvedValue({
+      id: 'game-1',
+    });
+    jest.spyOn(service as any, 'findGameRecord').mockResolvedValue({
+      away_team_id: 'team-b',
+      division_id: 'division-1',
+      home_team_id: 'team-a',
+      id: 'game-1',
+      league_season_id: 'season-1',
+      starts_at: new Date('2026-09-01T10:00:00.000Z'),
+      status: 'scheduled',
+      venue_id: 'venue-1',
+    });
+    const eligibility = jest
+      .spyOn(service as any, 'assertStatisticianCanBeAssigned')
+      .mockResolvedValue(undefined);
+    const conflict = jest
+      .spyOn(service as any, 'assertNoScheduleConflict')
+      .mockResolvedValue(undefined);
+    const deleteFrom = jest.fn();
+    const insertInto = jest.fn();
+    Object.assign(transactionContext, { deleteFrom, insertInto });
+    const audit = jest
+      .spyOn(service as any, 'writeAuditInTransaction')
+      .mockResolvedValue(undefined);
+    jest.spyOn(service, 'findOne').mockResolvedValue({ id: 'game-1' });
+
+    await service.updateStatisticianAssignment(
+      'org-1',
+      'game-1',
+      createOrganizationAccessContext({
+        permissions: [ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE],
+        role: AUTH_ROLES.ADMIN,
+      }),
+      { statisticianMemberId: 'member-statistician-1' },
+    );
+
+    expect(eligibility).toHaveBeenCalledWith(
+      'org-1',
+      'member-statistician-1',
+      transactionContext,
+    );
+    expect(conflict).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statisticianMemberId: 'member-statistician-1',
+      }),
+      transactionContext,
+      90,
+    );
+    expect(deleteFrom).not.toHaveBeenCalled();
+    expect(insertInto).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
+  });
+
   it('lists active statisticians separately from scorekeepers', async () => {
     const execute = jest.fn().mockResolvedValue([
       {
