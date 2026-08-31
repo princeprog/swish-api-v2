@@ -772,6 +772,17 @@ export class ScheduleService {
         .forUpdate()
         .executeTakeFirst();
       if (!game) throw new NotFoundException('Schedule game not found');
+      await this.assertScheduleRelations(
+        organizationId,
+        {
+          awayTeamId: game.away_team_id,
+          divisionId: game.division_id,
+          homeTeamId: game.home_team_id,
+          leagueSeasonId: game.league_season_id,
+          venueId: game.venue_id,
+        },
+        trx,
+      );
       if (!game.archived_at) return game;
       if (game.matchup_id) {
         const activeGame = await trx

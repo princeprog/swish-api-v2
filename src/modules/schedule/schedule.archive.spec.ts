@@ -1,4 +1,4 @@
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import {
   AUTH_ROLES,
   ORGANIZATION_PERMISSIONS,
@@ -136,5 +136,52 @@ describe('ScheduleService archival', () => {
       'is',
       null,
     );
+  });
+
+  it('does not restore a game when its division, venue, or teams are archived', async () => {
+    const archivedGame = {
+      archived_at: new Date('2026-08-31T00:00:00.000Z'),
+      away_score: null,
+      away_team_id: 'away-team-1',
+      division_id: 'division-1',
+      finalized_at: null,
+      home_score: null,
+      home_team_id: 'home-team-1',
+      id: 'game-1',
+      league_season_id: 'season-1',
+      matchup_id: null,
+      status: 'scheduled',
+      venue_id: 'venue-1',
+    };
+    const queryFor = (result: unknown) => query(result);
+    const gameQuery = queryFor(archivedGame);
+    const seasonQuery = queryFor({ id: 'season-1' });
+    const divisionQuery = queryFor(undefined);
+    const venueQuery = queryFor({ id: 'venue-1' });
+    const teamQuery = queryFor({ id: 'team-1' });
+    const trx = {
+      insertInto: jest.fn(),
+      selectFrom: jest.fn((table: string) => {
+        if (table === 'competition.games') return gameQuery;
+        if (table === 'admin.league_seasons') return seasonQuery;
+        if (table === 'admin.divisions') return divisionQuery;
+        if (table === 'admin.venues') return venueQuery;
+        return teamQuery;
+      }),
+      updateTable: jest.fn(),
+    };
+    const db = {
+      transaction: jest.fn().mockReturnValue({
+        execute: jest.fn((callback: (value: unknown) => unknown) =>
+          callback(trx),
+        ),
+      }),
+    };
+    const service = new ScheduleService(db as never);
+
+    await expect(
+      service.restore('org-1', 'game-1', access()),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(trx.updateTable).not.toHaveBeenCalled();
   });
 });
