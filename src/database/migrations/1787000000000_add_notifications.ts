@@ -114,14 +114,12 @@ export async function up(db: Kysely<any>): Promise<void> {
 }
 
 export async function down(db: Kysely<any>): Promise<void> {
-  await db.schema
-    .dropIndex('notification_retention_index')
-    .ifExists()
-    .execute();
-  await db.schema
-    .dropIndex('notification_organization_created_index')
-    .ifExists()
-    .execute();
+  await sql`
+    drop index if exists notification.notification_retention_index
+  `.execute(db);
+  await sql`
+    drop index if exists notification.notification_organization_created_index
+  `.execute(db);
   await sql`
     drop index if exists notification.notification_unread_recipient_index
   `.execute(db);
@@ -131,14 +129,12 @@ export async function down(db: Kysely<any>): Promise<void> {
   await sql`
     drop index if exists notification.notification_unread_email_index
   `.execute(db);
-  await db.schema
-    .dropIndex('notification_recipient_email_created_index')
-    .ifExists()
-    .execute();
-  await db.schema
-    .dropIndex('notification_recipient_user_created_index')
-    .ifExists()
-    .execute();
+  await sql`
+    drop index if exists notification.notification_recipient_email_created_index
+  `.execute(db);
+  await sql`
+    drop index if exists notification.notification_recipient_user_created_index
+  `.execute(db);
   await db.schema
     .dropTable('notification.notifications')
     .ifExists()

@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely'
+import { sql, type Kysely } from 'kysely'
 
 export async function up(db: Kysely<any>): Promise<void> {
 	await db.schema
@@ -47,13 +47,13 @@ export async function up(db: Kysely<any>): Promise<void> {
 }
 
 export async function down(db: Kysely<any>): Promise<void> {
-	await db.schema
-		.dropIndex('invitation_team_assignments_team_id_index')
-		.execute()
+	await sql`
+		drop index if exists access.invitation_team_assignments_team_id_index
+	`.execute(db)
 
-	await db.schema
-		.dropIndex('invitation_team_assignments_invitation_id_index')
-		.execute()
+	await sql`
+		drop index if exists access.invitation_team_assignments_invitation_id_index
+	`.execute(db)
 
 	await db.schema
 		.dropTable('access.invitation_team_assignments')

@@ -16,10 +16,9 @@ export async function up(db: Kysely<any>): Promise<void> {
 			)
 	`.execute(db)
 
-	await db.schema
-		.dropIndex('game_scorekeeper_assignments_game_id_index')
-		.ifExists()
-		.execute()
+	await sql`
+		drop index if exists access.game_scorekeeper_assignments_game_id_index
+	`.execute(db)
 
 	await db.schema
 		.createIndex('game_scorekeeper_assignments_game_id_unique')
@@ -39,10 +38,9 @@ export async function down(db: Kysely<any>): Promise<void> {
 
 	await createScheduleGamesView(db, false)
 
-	await db.schema
-		.dropIndex('game_scorekeeper_assignments_game_id_unique')
-		.ifExists()
-		.execute()
+	await sql`
+		drop index if exists access.game_scorekeeper_assignments_game_id_unique
+	`.execute(db)
 
 	await db.schema
 		.createIndex('game_scorekeeper_assignments_game_id_index')

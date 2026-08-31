@@ -30,10 +30,9 @@ export async function down(db: Kysely<any>): Promise<void> {
 		alter table compliance.submission_files
 		drop constraint if exists compliance_submission_files_owner_check
 	`.execute(db)
-	await db.schema
-		.dropIndex('compliance_submission_files_submission_id_index')
-		.ifExists()
-		.execute()
+	await sql`
+		drop index if exists compliance.compliance_submission_files_submission_id_index
+	`.execute(db)
 	await db.schema
 		.alterTable('compliance.submission_files')
 		.dropColumn('submission_id')

@@ -56,9 +56,9 @@ export async function down(db: Kysely<any>): Promise<void> {
 		.dropConstraint('team_manager_assignments_member_season_unique')
 		.execute()
 
-	await db.schema
-		.dropIndex('team_manager_assignments_league_season_id_index')
-		.execute()
+	await sql`
+		drop index if exists access.team_manager_assignments_league_season_id_index
+	`.execute(db)
 
 	await db.schema
 		.alterTable('access.team_manager_assignments')

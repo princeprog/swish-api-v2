@@ -30,7 +30,7 @@ describe('one primary scorekeeper migration', () => {
       'scorekeeper_users.name as scorekeeper_name',
     );
     expect(migrationSource).toContain(
-      "dropIndex('game_scorekeeper_assignments_game_id_unique')",
+      'drop index if exists access.game_scorekeeper_assignments_game_id_unique',
     );
     expect(migrationSource).toContain(
       "createIndex('game_scorekeeper_assignments_game_id_index')",
