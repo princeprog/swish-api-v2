@@ -742,29 +742,105 @@ export class StatisticsService {
     reason: string,
   ) {
     this.assertOverrideAccess(access);
+    const normalizedReason = reason?.trim() ?? '';
+    if (normalizedReason.length < 10) {
+      throw new BadRequestException(
+        'Explain the scoring discrepancy before approving it.',
+      );
+    }
     const game = await this.assertGameAccess(organizationId, gameId, access);
-    await this.ensureStatSheet(game);
-    const now = new Date();
-    await this.db
-      .updateTable('statistics.game_stat_sheets')
-      .set({
-        override_by_member_id: access.membershipId,
-        override_reason: reason,
-        status: 'submitted',
-        submitted_at: now,
-        updated_at: now,
-      })
-      .where('game_id', '=', gameId)
-      .executeTakeFirstOrThrow();
-    await this.writeAudit(
-      access,
-      gameId,
-      'statistics.reconciliation.overridden',
-      {
-        reason,
-      },
-    );
-    return { status: 'submitted', overridden: true };
+    if (game.status === 'final') {
+      throw new ConflictException(
+        'Finalized games require an audited game reopen before statistics can be corrected.',
+      );
+    }
+
+    return this.db.transaction().execute(async (trx) => {
+      const lockedGame = await this.lockGameForStatistics(
+        trx,
+        organizationId,
+        gameId,
+        game,
+      );
+      await this.lockExistingScoringState(trx, lockedGame.id);
+      await this.assertGameRosterSnapshots(lockedGame, trx);
+      await this.ensureStatSheet(lockedGame, trx);
+      const sheet = await trx
+        .selectFrom('statistics.game_stat_sheets')
+        .selectAll()
+        .where('game_id', '=', gameId)
+        .forUpdate()
+        .executeTakeFirstOrThrow();
+      if (!['draft', 'reopened'].includes(sheet.status)) {
+        throw new ConflictException(
+          'This stat sheet has already been submitted. Resume it before approving another discrepancy.',
+        );
+      }
+
+      const score = await this.findLiveOfficialScore(gameId, trx);
+      if (!score || score.away_score === null || score.home_score === null) {
+        throw new ConflictException(
+          'The scorekeeper must record a team score before a discrepancy can be approved.',
+        );
+      }
+      this.assertSubmissionReady(score);
+
+      const boxScoreRows = await trx
+        .selectFrom('statistics.player_box_scores')
+        .selectAll()
+        .where('game_id', '=', gameId)
+        .execute();
+      const boxScores: PlayerBoxScore[] = boxScoreRows.map((row) => ({
+        assists: row.assists,
+        playerId: row.game_roster_player_id,
+        points: row.points,
+        rebounds: row.rebounds,
+        steals: row.steals,
+        teamId: row.team_id,
+        turnovers: row.turnovers,
+      }));
+      const reconciliation = reconcilePlayerPoints(boxScores, {
+        awayScore: score.away_score,
+        awayTeamId: lockedGame.away_team_id,
+        homeScore: score.home_score,
+        homeTeamId: lockedGame.home_team_id,
+      });
+      if (reconciliation.reconciled) {
+        throw new ConflictException(
+          'The player statistics already match the official score. Submit the stat sheet normally.',
+        );
+      }
+
+      const now = new Date();
+      const updateResult = await trx
+        .updateTable('statistics.game_stat_sheets')
+        .set({
+          override_by_member_id: access.membershipId,
+          override_reason: normalizedReason,
+          status: 'submitted',
+          submitted_at: now,
+          updated_at: now,
+          version: sheet.version + 1,
+        })
+        .where('id', '=', sheet.id)
+        .where('status', 'in', ['draft', 'reopened'])
+        .execute();
+      this.assertSingleRowUpdated(
+        updateResult,
+        'The stat sheet changed before the discrepancy could be approved. Review it and try again.',
+      );
+      await this.writeAudit(
+        access,
+        gameId,
+        'statistics.reconciliation.overridden',
+        {
+          reason: normalizedReason,
+          reconciled: false,
+        },
+        trx,
+      );
+      return { status: 'submitted' as const, overridden: true };
+    });
   }
 
   async reopen(

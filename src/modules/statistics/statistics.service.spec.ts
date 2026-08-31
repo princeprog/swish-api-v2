@@ -218,6 +218,208 @@ describe('StatisticsService submission', () => {
     );
   });
 
+  it('rejects an admin discrepancy approval while the game clock is active', async () => {
+    const sheetQuery = {
+      executeTakeFirstOrThrow: jest.fn().mockResolvedValue({
+        id: 'sheet-1',
+        status: 'draft',
+      }),
+      executeTakeFirst: jest.fn().mockResolvedValue({
+        id: 'sheet-1',
+        status: 'draft',
+      }),
+      forUpdate: jest.fn().mockReturnThis(),
+      selectAll: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const transactionExecute = jest.fn(async (callback) =>
+      callback({
+        selectFrom: jest.fn().mockReturnValue(sheetQuery),
+        updateTable: jest.fn(),
+      }),
+    );
+    const service = new StatisticsService(
+      {
+        transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
+      } as never,
+      {} as never,
+    );
+    const game = {
+      away_score: 70,
+      away_team_id: 'away-team',
+      home_score: 80,
+      home_team_id: 'home-team',
+      id: 'game-1',
+      organization_id: 'org-1',
+      status: 'live',
+    };
+    jest.spyOn(service as any, 'assertGameAccess').mockResolvedValue(game);
+    jest
+      .spyOn(service as any, 'lockGameForStatistics')
+      .mockResolvedValue(game);
+    jest
+      .spyOn(service as any, 'lockExistingScoringState')
+      .mockResolvedValue(undefined);
+    jest
+      .spyOn(service as any, 'assertGameRosterSnapshots')
+      .mockResolvedValue(undefined);
+    jest.spyOn(service as any, 'ensureStatSheet').mockResolvedValue(undefined);
+    jest.spyOn(service as any, 'findLiveOfficialScore').mockResolvedValue({
+      awayScore: 70,
+      away_score: 70,
+      homeScore: 80,
+      home_score: 80,
+      phase: 'live',
+      current_period_number: 4,
+      regulation_periods: 4,
+      game_clock_remaining_ms: 30_000,
+      game_clock_running: true,
+      shot_clock_running: true,
+    });
+
+    await expect(
+      service.overrideReconciliation(
+        'org-1',
+        'game-1',
+        {
+          membershipId: 'member-1',
+          organizationId: 'org-1',
+          permissions: ['game.stats.override'],
+          role: 'admin',
+          userId: 'user-1',
+        },
+        'Documented scoring discrepancy.',
+      ),
+    ).rejects.toThrow(
+      'The game must be complete and both clocks stopped before the stat sheet can be submitted.',
+    );
+  });
+
+  it('records a completed discrepancy approval and its audit event atomically', async () => {
+    const sheet = { id: 'sheet-1', status: 'draft', version: 3 };
+    const sheetQuery = {
+      executeTakeFirstOrThrow: jest.fn().mockResolvedValue(sheet),
+      forUpdate: jest.fn().mockReturnThis(),
+      selectAll: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const boxScoreQuery = {
+      execute: jest.fn().mockResolvedValue([
+        {
+          assists: 0,
+          game_roster_player_id: 'home-player',
+          points: 79,
+          rebounds: 0,
+          steals: 0,
+          team_id: 'home-team',
+          turnovers: 0,
+        },
+        {
+          assists: 0,
+          game_roster_player_id: 'away-player',
+          points: 70,
+          rebounds: 0,
+          steals: 0,
+          team_id: 'away-team',
+          turnovers: 0,
+        },
+      ]),
+      selectAll: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const updateSet = jest.fn().mockReturnThis();
+    const updateQuery = {
+      execute: jest.fn().mockResolvedValue({ numUpdatedRows: 1n }),
+      set: updateSet,
+      where: jest.fn().mockReturnThis(),
+    };
+    const auditValues = jest.fn().mockReturnThis();
+    const transactionExecute = jest.fn(async (callback) =>
+      callback({
+        insertInto: jest.fn().mockReturnValue({
+          execute: jest.fn().mockResolvedValue(undefined),
+          values: auditValues,
+        }),
+        selectFrom: jest.fn((table: string) =>
+          table === 'statistics.game_stat_sheets'
+            ? sheetQuery
+            : boxScoreQuery,
+        ),
+        updateTable: jest.fn().mockReturnValue(updateQuery),
+      }),
+    );
+    const service = new StatisticsService(
+      {
+        transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
+      } as never,
+      {} as never,
+    );
+    const game = {
+      away_score: 70,
+      away_team_id: 'away-team',
+      home_score: 80,
+      home_team_id: 'home-team',
+      id: 'game-1',
+      organization_id: 'org-1',
+      status: 'live',
+    };
+    jest.spyOn(service as any, 'assertGameAccess').mockResolvedValue(game);
+    jest
+      .spyOn(service as any, 'lockGameForStatistics')
+      .mockResolvedValue(game);
+    jest
+      .spyOn(service as any, 'lockExistingScoringState')
+      .mockResolvedValue(undefined);
+    jest
+      .spyOn(service as any, 'assertGameRosterSnapshots')
+      .mockResolvedValue(undefined);
+    jest.spyOn(service as any, 'ensureStatSheet').mockResolvedValue(undefined);
+    jest.spyOn(service as any, 'findLiveOfficialScore').mockResolvedValue({
+      awayScore: 70,
+      away_score: 70,
+      homeScore: 80,
+      home_score: 80,
+      phase: 'period_break',
+      current_period_number: 4,
+      regulation_periods: 4,
+      game_clock_remaining_ms: 0,
+      game_clock_running: false,
+      shot_clock_running: false,
+    });
+
+    await expect(
+      service.overrideReconciliation(
+        'org-1',
+        'game-1',
+        {
+          membershipId: 'member-1',
+          organizationId: 'org-1',
+          permissions: ['game.stats.override'],
+          role: 'admin',
+          userId: 'user-1',
+        },
+        'Home score includes an unattributed team basket.',
+      ),
+    ).resolves.toEqual({ overridden: true, status: 'submitted' });
+    expect(updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        override_by_member_id: 'member-1',
+        override_reason: 'Home score includes an unattributed team basket.',
+        status: 'submitted',
+        version: 4,
+      }),
+    );
+    expect(auditValues).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'statistics.reconciliation.overridden',
+        metadata: {
+          reason: 'Home score includes an unattributed team basket.',
+          reconciled: false,
+        },
+      }),
+    );
+  });
+
   it('rejects a reconciled sheet while the game is still in an active period', async () => {
     const sheetQuery = {
       executeTakeFirstOrThrow: jest.fn().mockResolvedValue({
