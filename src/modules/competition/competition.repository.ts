@@ -67,6 +67,8 @@ export class CompetitionRepository {
       ])
       .where('formats.division_id', '=', divisionId)
       .where('seasons.organization_id', '=', organizationId)
+      .where('divisions.archived_at', 'is', null)
+      .where('seasons.archived_at', 'is', null)
       .executeTakeFirst();
 
     if (!format) throw new NotFoundException('Competition format not found');
@@ -206,6 +208,7 @@ export class CompetitionRepository {
         'teams.name as team_name',
       ])
       .where('pools.division_format_id', '=', formatId)
+      .where('teams.archived_at', 'is', null)
       .orderBy('pools.sort_order asc')
       .orderBy('pool_teams.seed asc')
       .execute();
@@ -250,6 +253,7 @@ export class CompetitionRepository {
       .select('id')
       .where('division_id', '=', divisionId)
       .where('status', '=', 'active')
+      .where('archived_at', 'is', null)
       .orderBy('created_at asc')
       .execute()
       .then((rows) => rows.map((row) => row.id));
@@ -339,6 +343,8 @@ export class CompetitionRepository {
       .select(['seasons.id', 'seasons.schedule_slot_duration_minutes'])
       .where('seasons.organization_id', '=', organizationId)
       .where('divisions.id', '=', divisionId)
+      .where('seasons.archived_at', 'is', null)
+      .where('divisions.archived_at', 'is', null)
       .forUpdate()
       .executeTakeFirst();
     if (!season) throw new NotFoundException('Competition format not found');
@@ -379,6 +385,8 @@ export class CompetitionRepository {
       ])
       .where('formats.division_id', '=', divisionId)
       .where('seasons.organization_id', '=', organizationId)
+      .where('seasons.archived_at', 'is', null)
+      .where('divisions.archived_at', 'is', null)
       .forUpdate()
       .executeTakeFirst();
 
@@ -417,6 +425,7 @@ export class CompetitionRepository {
       .select(['id', 'matchup_id'])
       .where('id', '=', gameId)
       .where('matchup_id', '=', matchupId)
+      .where('archived_at', 'is', null)
       .executeTakeFirst();
 
     if (!game) {
@@ -567,6 +576,7 @@ export class CompetitionRepository {
         )
         .select('games.id')
         .where('matchups.division_format_id', '=', formatId)
+        .where('games.archived_at', 'is', null)
         .executeTakeFirst();
 
       if (linkedGame) {

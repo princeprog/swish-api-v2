@@ -148,7 +148,7 @@ export class OfficialResultCoordinator {
         if (downstreamMatchupIds.length > 0) {
           const downstreamGames = await db
             .selectFrom('competition.games')
-            .select(['id', 'matchup_id', 'status'])
+            .select(['archived_at', 'id', 'matchup_id', 'status'])
             .where('matchup_id', 'in', downstreamMatchupIds)
             .execute();
           const order = new Map<string, number>(
@@ -183,8 +183,8 @@ export class OfficialResultCoordinator {
 
           const scheduledIds = downstreamGames
             .filter(
-              (candidate: { status: string }) =>
-                candidate.status === 'scheduled',
+              (candidate: { archived_at: Date | null; status: string }) =>
+                candidate.status === 'scheduled' && !candidate.archived_at,
             )
             .map((candidate: { id: string }) => candidate.id);
           if (scheduledIds.length > 0) {
@@ -303,6 +303,7 @@ export class OfficialResultCoordinator {
           'status',
         ])
         .where('division_id', '=', divisionId)
+        .where('archived_at', 'is', null)
         .where('status', '=', 'final')
         .orderBy('finalized_at desc')
         .executeTakeFirst();
@@ -399,8 +400,9 @@ export class OfficialResultCoordinator {
       (row: { unresolved_tie_key: string | null }) =>
         row.unresolved_tie_key === null,
     );
-    const unresolvedTeamIds = (keyedRows.length > 0 ? keyedRows : legacyRows)
-      .map((row: { team_id: string }) => row.team_id);
+    const unresolvedTeamIds = (
+      keyedRows.length > 0 ? keyedRows : legacyRows
+    ).map((row: { team_id: string }) => row.team_id);
     if (!this.hasSameMembers(input.teamIds, unresolvedTeamIds)) {
       throw new ConflictException(
         'This tie has changed or has already been resolved. Refresh the standings before deciding.',
@@ -593,6 +595,7 @@ export class OfficialResultCoordinator {
       ])
       .where('games.id', '=', input.gameId)
       .where('seasons.organization_id', '=', input.organizationId)
+      .where('games.archived_at', 'is', null)
       .forUpdate()
       .executeTakeFirst();
     if (!game) throw new NotFoundException('Schedule game not found');

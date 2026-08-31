@@ -153,11 +153,7 @@ export class StatisticsService {
           game,
         );
         await this.lockExistingScoringState(trx, lockedGame.id);
-        const active = await this.findActiveControl(
-          lockedGame.id,
-          trx,
-          true,
-        );
+        const active = await this.findActiveControl(lockedGame.id, trx, true);
 
         if (active && new Date(active.expires_at) > now) {
           throw new ConflictException(
@@ -264,11 +260,7 @@ export class StatisticsService {
           game,
         );
         await this.lockExistingScoringState(trx, lockedGame.id);
-        const active = await this.findActiveControl(
-          lockedGame.id,
-          trx,
-          true,
-        );
+        const active = await this.findActiveControl(lockedGame.id, trx, true);
         if (active && new Date(active.expires_at) > now) {
           throw new ConflictException(
             'Statistics control is still active on another device. Try again when it is available.',
@@ -516,14 +508,14 @@ export class StatisticsService {
       await trx
         .updateTable('statistics.game_stat_sheets')
         .set({
-            away_player_points: this.teamPoints(
-              result.boxScores,
-              lockedGame.away_team_id,
-            ),
-            home_player_points: this.teamPoints(
-              result.boxScores,
-              lockedGame.home_team_id,
-            ),
+          away_player_points: this.teamPoints(
+            result.boxScores,
+            lockedGame.away_team_id,
+          ),
+          home_player_points: this.teamPoints(
+            result.boxScores,
+            lockedGame.home_team_id,
+          ),
           updated_at: new Date(),
           version: result.version,
         })
@@ -557,13 +549,7 @@ export class StatisticsService {
         .where('game_id', '=', gameId)
         .forUpdate()
         .executeTakeFirstOrThrow();
-      await this.assertControl(
-        lockedGame.id,
-        access,
-        controlToken,
-        trx,
-        true,
-      );
+      await this.assertControl(lockedGame.id, access, controlToken, trx, true);
       if (!['draft', 'reopened'].includes(sheet.status)) {
         throw new ConflictException(
           'This stat sheet has already been submitted. Reopen it before submitting another version.',
@@ -1074,7 +1060,9 @@ export class StatisticsService {
       .select('team_id')
       .where('game_id', '=', game.id)
       .execute();
-    const snapshotTeams = new Set(snapshots.map((snapshot) => snapshot.team_id));
+    const snapshotTeams = new Set(
+      snapshots.map((snapshot) => snapshot.team_id),
+    );
     if (
       snapshotTeams.size !== 2 ||
       ![game.home_team_id, game.away_team_id].every((teamId) =>
