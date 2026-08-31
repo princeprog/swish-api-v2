@@ -984,6 +984,9 @@ describe('ScoringService historical scoring corrections', () => {
     jest
       .spyOn(service as never, 'rebuildDetailProjections' as never)
       .mockResolvedValue(undefined as never);
+    const invalidateSubmittedStatSheet = jest
+      .spyOn(service as never, 'invalidateSubmittedStatSheet' as never)
+      .mockResolvedValue(undefined as never);
     jest
       .spyOn(service as never, 'getControlStatus' as never)
       .mockResolvedValue({ status: 'claimed' } as never);
@@ -1020,6 +1023,12 @@ describe('ScoringService historical scoring corrections', () => {
     );
     expect(result.state.latestReversibleEvent).toEqual(
       expect.objectContaining({ id: nextEventId }),
+    );
+    expect(invalidateSubmittedStatSheet).toHaveBeenCalledWith(
+      expect.anything(),
+      'game-1',
+      expect.anything(),
+      expect.any(Date),
     );
   });
 });
