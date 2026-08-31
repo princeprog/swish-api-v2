@@ -324,6 +324,31 @@ describe('ScoringService official lifecycle serialization', () => {
       'is',
       null,
     );
+    expect(query.where).toHaveBeenCalledWith(
+      'seasons.archived_at',
+      'is',
+      null,
+    );
+    expect(query.where).toHaveBeenCalledWith(
+      'divisions.archived_at',
+      'is',
+      null,
+    );
+    expect(query.where).toHaveBeenCalledWith(
+      'home_teams.archived_at',
+      'is',
+      null,
+    );
+    expect(query.where).toHaveBeenCalledWith(
+      'away_teams.archived_at',
+      'is',
+      null,
+    );
+    expect(query.where).toHaveBeenCalledWith(
+      'venues.archived_at',
+      'is',
+      null,
+    );
     expect(calls).not.toContain('scoring.game_states');
   });
 
