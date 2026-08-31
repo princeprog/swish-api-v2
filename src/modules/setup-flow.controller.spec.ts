@@ -64,7 +64,7 @@ describe('Admin setup flow controllers', () => {
       slug: 'season-1',
       status: 'draft',
       updated_at: new Date('2026-06-17T00:00:00.000Z'),
-    });
+    } as never);
     divisionService.create.mockResolvedValue({
       created_at: new Date('2026-06-17T00:00:00.000Z'),
       id: 'division-1',
@@ -109,7 +109,7 @@ describe('Admin setup flow controllers', () => {
         name: 'Season 1',
         organizationId: 'org-1',
         slug: 'season-1',
-      }),
+      } as never),
     ).resolves.toEqual(
       expect.objectContaining({
         id: 'league-1',
@@ -141,7 +141,7 @@ describe('Admin setup flow controllers', () => {
     );
 
     await expect(
-      playerController.create('org-1', {
+      playerController.create('org-1', {} as never, {
         jerseyNumber: '23',
         name: 'Jordan Cruz',
         position: 'point_guard',

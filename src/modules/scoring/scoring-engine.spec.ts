@@ -2,6 +2,7 @@ import {
   applyScoringCommand,
   createInitialScoringState,
   ScoringActionError,
+  type ScoringState,
 } from './scoring-engine';
 
 const game = {
@@ -25,7 +26,10 @@ const customRules = {
 
 describe('scoring engine', () => {
   it('initializes a game from its season rule snapshot', () => {
-    const state = createInitialScoringState({ ...game, gameRules: customRules });
+    const state = createInitialScoringState({
+      ...game,
+      gameRules: customRules,
+    });
 
     expect(state).toEqual(
       expect.objectContaining({
@@ -457,7 +461,7 @@ describe('scoring engine', () => {
   });
 
   it('applies FIBA timeout allowances by half and overtime without carryover', () => {
-    let state = {
+    let state: ScoringState = {
       ...createInitialScoringState(game),
       phase: 'paused' as const,
     };
@@ -735,7 +739,10 @@ describe('scoring engine', () => {
     [
       'game_clock.adjust',
       {
-        payload: { reason: 'Correcting the displayed clock', remainingMs: 300000 },
+        payload: {
+          reason: 'Correcting the displayed clock',
+          remainingMs: 300000,
+        },
         type: 'game_clock.adjust',
       },
     ],

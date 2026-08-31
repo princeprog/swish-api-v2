@@ -1,4 +1,7 @@
-import { OfficialResultCoordinator } from './official-result.service';
+import {
+  OfficialResultCoordinator,
+  type FinalizeOfficialResultInput,
+} from './official-result.service';
 
 function mutationQuery() {
   return {
@@ -11,7 +14,7 @@ function mutationQuery() {
 }
 
 describe('OfficialResultCoordinator', () => {
-  const input = {
+  const input: FinalizeOfficialResultInput = {
     access: {
       membershipId: 'member-1',
       organizationId: 'org-1',
@@ -219,14 +222,18 @@ describe('OfficialResultCoordinator', () => {
         };
         if (table === 'competition.matchups') {
           matchupQueryCount += 1;
-          if (matchupQueryCount === 1) query.executeTakeFirst.mockResolvedValue(source);
+          if (matchupQueryCount === 1)
+            query.executeTakeFirst.mockResolvedValue(source);
           else query.execute.mockResolvedValue([source, dependent]);
         } else if (table === 'competition.games') {
           query.execute.mockResolvedValue([
             { id: 'game-2', matchup_id: 'matchup-2', status: 'scheduled' },
           ]);
         } else {
-          query.executeTakeFirst.mockResolvedValue({ id: 'format-1', status: 'locked' });
+          query.executeTakeFirst.mockResolvedValue({
+            id: 'format-1',
+            status: 'locked',
+          });
         }
         return query;
       }),

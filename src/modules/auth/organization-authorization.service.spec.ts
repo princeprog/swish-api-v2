@@ -71,7 +71,7 @@ describe('OrganizationAuthorizationService', () => {
     const { authRepository, service } = createService();
 
     authRepository.findActiveOrganizationMembership.mockResolvedValue(
-      membership(AUTH_ROLES.SCORER),
+      membership(AUTH_ROLES.SCOREKEEPER),
     );
 
     await expect(
@@ -89,16 +89,20 @@ describe('OrganizationAuthorizationService', () => {
       true,
     );
     expect(
-      service.hasRequiredRole(AUTH_ROLES.SCORER, [AUTH_ROLES.SCORER]),
+      service.hasRequiredRole(AUTH_ROLES.SCOREKEEPER, [AUTH_ROLES.SCOREKEEPER]),
     ).toBe(true);
-    expect(service.hasRequiredRole(AUTH_ROLES.COACH, [AUTH_ROLES.COACH])).toBe(
-      true,
-    );
     expect(
-      service.hasRequiredRole(AUTH_ROLES.PLAYER, [AUTH_ROLES.PLAYER]),
+      service.hasRequiredRole(AUTH_ROLES.TEAM_MANAGER, [
+        AUTH_ROLES.TEAM_MANAGER,
+      ]),
     ).toBe(true);
-    expect(service.hasRequiredRole(AUTH_ROLES.PLAYER, [AUTH_ROLES.ADMIN])).toBe(
-      false,
-    );
+    expect(
+      service.hasRequiredRole(AUTH_ROLES.STATISTICIAN, [
+        AUTH_ROLES.STATISTICIAN,
+      ]),
+    ).toBe(true);
+    expect(
+      service.hasRequiredRole(AUTH_ROLES.STATISTICIAN, [AUTH_ROLES.ADMIN]),
+    ).toBe(false);
   });
 });

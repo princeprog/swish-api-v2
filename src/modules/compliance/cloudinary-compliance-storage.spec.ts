@@ -25,7 +25,10 @@ describe('CloudinaryComplianceStorage', () => {
       createPendingFile: jest.fn().mockResolvedValue({}),
     };
     const client = fakeClient();
-    const storage = new CloudinaryComplianceStorage(repository, client);
+    const storage = new CloudinaryComplianceStorage(
+      repository as never,
+      client,
+    );
 
     const result = await storage.prepareUpload({
       byteSize: 1024,
@@ -74,7 +77,10 @@ describe('CloudinaryComplianceStorage', () => {
       resource_type: 'raw',
       type: 'authenticated',
     });
-    const storage = new CloudinaryComplianceStorage(repository, client);
+    const storage = new CloudinaryComplianceStorage(
+      repository as never,
+      client,
+    );
 
     await expect(
       storage.completeUpload({
@@ -96,7 +102,10 @@ describe('CloudinaryComplianceStorage', () => {
     const repository = {
       listFiles: jest.fn().mockResolvedValue([]),
     };
-    const storage = new CloudinaryComplianceStorage(repository, fakeClient());
+    const storage = new CloudinaryComplianceStorage(
+      repository as never,
+      fakeClient(),
+    );
 
     await expect(
       storage.assertFileReferences(
@@ -122,7 +131,10 @@ describe('CloudinaryComplianceStorage', () => {
     client.utils.private_download_url = jest
       .fn()
       .mockReturnValue('https://download.example/file');
-    const storage = new CloudinaryComplianceStorage(repository, client);
+    const storage = new CloudinaryComplianceStorage(
+      repository as never,
+      client,
+    );
 
     await expect(
       storage.createDownloadUrl('file-1', {

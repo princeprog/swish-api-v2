@@ -1,5 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
-import { AUTH_ROLES, type OrganizationAccessContext } from '../../common/auth/roles';
+import {
+  AUTH_ROLES,
+  type AuthRole,
+  type OrganizationAccessContext,
+} from '../../common/auth/roles';
 import { InvitationService } from './invitation.service';
 
 const access: OrganizationAccessContext = {
@@ -53,7 +57,9 @@ function createQuery({
 }
 
 function createInvitationService() {
-  const organizationQuery = createQuery({ first: { name: 'League One', slug: 'league-one' } });
+  const organizationQuery = createQuery({
+    first: { name: 'League One', slug: 'league-one' },
+  });
   const duplicateQuery = createQuery();
   const auditExecute = jest.fn().mockResolvedValue([]);
   const invitationInsertExecute = jest.fn().mockResolvedValue(invitation);
@@ -103,7 +109,9 @@ function createInvitationService() {
   };
   const mailer = { sendInvitation: jest.fn().mockResolvedValue(undefined) };
   const tokenService = {
-    createTokenPair: jest.fn().mockReturnValue({ token: 'plain-token', tokenHash: 'hash' }),
+    createTokenPair: jest
+      .fn()
+      .mockReturnValue({ token: 'plain-token', tokenHash: 'hash' }),
     hashToken: jest.fn().mockReturnValue('stored-hash'),
     normalizeEmail: jest.fn((email: string) => email.trim().toLowerCase()),
   };
@@ -125,7 +133,7 @@ function createInvitationService() {
   };
 }
 
-function createAcceptanceService(role = AUTH_ROLES.TEAM_MANAGER) {
+function createAcceptanceService(role: AuthRole = AUTH_ROLES.TEAM_MANAGER) {
   const invitationByToken = createQuery({
     first: {
       accepted_at: null,
@@ -218,7 +226,9 @@ function createAcceptanceService(role = AUTH_ROLES.TEAM_MANAGER) {
       }
 
       if (table === 'admin.organizations as organizations') {
-        return createQuery({ first: { name: 'League One', slug: 'league-one' } });
+        return createQuery({
+          first: { name: 'League One', slug: 'league-one' },
+        });
       }
 
       if (table === 'access.invitation_team_assignments as assignments') {
@@ -265,7 +275,8 @@ describe('InvitationService team manager scope', () => {
   });
 
   it('stores and returns selected team assignments when creating an invitation', async () => {
-    const { assignmentInsertExecute, policy, service } = createInvitationService();
+    const { assignmentInsertExecute, policy, service } =
+      createInvitationService();
 
     await expect(
       service.create('org-1', access, {
@@ -281,9 +292,11 @@ describe('InvitationService team manager scope', () => {
       ],
     });
 
-    expect(policy.resolve).toHaveBeenCalledWith('org-1', AUTH_ROLES.TEAM_MANAGER, [
-      'team-1',
-    ]);
+    expect(policy.resolve).toHaveBeenCalledWith(
+      'org-1',
+      AUTH_ROLES.TEAM_MANAGER,
+      ['team-1'],
+    );
     expect(assignmentInsertExecute).toHaveBeenCalled();
   });
 
@@ -298,7 +311,11 @@ describe('InvitationService team manager scope', () => {
       }),
     ).resolves.toMatchObject({ teamAssignments: [] });
 
-    expect(policy.resolve).toHaveBeenCalledWith('org-1', AUTH_ROLES.TEAM_MANAGER, []);
+    expect(policy.resolve).toHaveBeenCalledWith(
+      'org-1',
+      AUTH_ROLES.TEAM_MANAGER,
+      [],
+    );
   });
 
   it('rejects editing an expired pending invitation', async () => {

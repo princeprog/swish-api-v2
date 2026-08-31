@@ -424,7 +424,9 @@ describe('Basketball League OS MVP database pilot', () => {
         role: AUTH_ROLES.ADMIN,
         userId: userIds.admin,
       };
-      const notificationWriter = { create: jest.fn().mockResolvedValue([]) };
+      const notificationWriter = {
+        create: jest.fn<() => Promise<unknown[]>>().mockResolvedValue([]),
+      };
       const coordinator = new OfficialResultCoordinator(
         trx as any,
         notificationWriter as any,
@@ -974,8 +976,8 @@ describe('Basketball League OS MVP database pilot', () => {
       );
       const games = matchups.map((matchup: any, index: number) => {
         const homeWins =
-          teamOrder.get(matchup.home_team_id) <
-          teamOrder.get(matchup.away_team_id);
+          (teamOrder.get(matchup.home_team_id) ?? Number.MAX_SAFE_INTEGER) <
+          (teamOrder.get(matchup.away_team_id) ?? Number.MAX_SAFE_INTEGER);
         return {
           away_score: homeWins ? 70 : 80,
           away_team_id: matchup.away_team_id,
@@ -1008,7 +1010,9 @@ describe('Basketball League OS MVP database pilot', () => {
       };
       const coordinator = new OfficialResultCoordinator(
         trx as any,
-        { create: jest.fn().mockResolvedValue([]) } as any,
+        {
+          create: jest.fn<() => Promise<unknown[]>>().mockResolvedValue([]),
+        } as any,
       );
       const startedAt = performance.now();
       await (coordinator as any).rebuildPoolStandings(

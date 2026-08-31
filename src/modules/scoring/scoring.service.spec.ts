@@ -239,24 +239,29 @@ describe('ScoringService command boundary', () => {
     ['expectedVersion', { expectedVersion: -1 }],
     ['occurredAt', { occurredAt: new Date('invalid') }],
     ['controlToken', { controlToken: '   ' }],
-  ])('rejects an invalid %s before reading the game', async (field, override) => {
-    const service = new (ScoringService as any)({
-      transaction: jest.fn(),
-      selectFrom: jest.fn(),
-    });
-    const findGame = jest.spyOn(service, 'findGameForScoring').mockResolvedValue(game as never);
+  ])(
+    'rejects an invalid %s before reading the game',
+    async (field, override) => {
+      const service = new (ScoringService as any)({
+        transaction: jest.fn(),
+        selectFrom: jest.fn(),
+      });
+      const findGame = jest
+        .spyOn(service, 'findGameForScoring')
+        .mockResolvedValue(game as never);
 
-    await expect(
-      service.executeCommand('org-1', 'game-1', {} as never, {
-        command: { idempotencyKey: 'command-1', type: 'game.start' },
-        expectedVersion: 0,
-        occurredAt: new Date(),
-        ...override,
-      }),
-    ).rejects.toThrow(BadRequestException);
+      await expect(
+        service.executeCommand('org-1', 'game-1', {} as never, {
+          command: { idempotencyKey: 'command-1', type: 'game.start' },
+          expectedVersion: 0,
+          occurredAt: new Date(),
+          ...override,
+        }),
+      ).rejects.toThrow(BadRequestException);
 
-    expect(findGame).not.toHaveBeenCalled();
-  });
+      expect(findGame).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([undefined, {}])(
     'rejects an empty game configuration before reading the game (%s)',
@@ -271,7 +276,11 @@ describe('ScoringService command boundary', () => {
 
       await expect(
         service.executeCommand('org-1', 'game-1', {} as never, {
-          command: { idempotencyKey: 'configure-1', type: 'game.configure', payload },
+          command: {
+            idempotencyKey: 'configure-1',
+            type: 'game.configure',
+            payload,
+          },
           expectedVersion: 0,
           occurredAt: new Date(),
         }),
@@ -371,16 +380,18 @@ describe('ScoringService official lifecycle serialization', () => {
     jest
       .spyOn(service as never, 'ensureScoringState' as never)
       .mockResolvedValue({ version: 0 } as never);
-    const assertControlSession = jest
-      .spyOn(service as never, 'assertControlSession' as never)
-      .mockImplementation(async (...args: any[]) => {
-        if (args.length === 6) {
-          throw new ConflictException(
-            'This scoring device no longer controls the game',
-          );
-        }
-        return {};
-      });
+    const assertControlSession = jest.spyOn(
+      service as never,
+      'assertControlSession' as never,
+    ) as unknown as jest.Mock;
+    assertControlSession.mockImplementation(async (...args: any[]) => {
+      if (args.length === 6) {
+        throw new ConflictException(
+          'This scoring device no longer controls the game',
+        );
+      }
+      return {} as never;
+    });
     const insertEvent = jest.spyOn(service as never, 'insertEvent' as never);
 
     await expect(
@@ -718,7 +729,10 @@ describe('ScoringService historical scoring corrections', () => {
       },
       {
         idempotencyKey: 'reverse-old',
-        payload: { eventId: 'event-old', reason: 'Correcting the first basket' },
+        payload: {
+          eventId: 'event-old',
+          reason: 'Correcting the first basket',
+        },
         type: 'event.reverse',
       },
     );
@@ -885,10 +899,10 @@ describe('ScoringService historical scoring corrections', () => {
       } as never);
     const updateProjection = jest
       .spyOn(service as never, 'updateProjection' as never)
-      .mockResolvedValue(undefined);
+      .mockResolvedValue(undefined as never);
     jest
       .spyOn(service as never, 'rebuildDetailProjections' as never)
-      .mockResolvedValue(undefined);
+      .mockResolvedValue(undefined as never);
     jest
       .spyOn(service as never, 'getControlStatus' as never)
       .mockResolvedValue({ status: 'claimed' } as never);
@@ -896,16 +910,24 @@ describe('ScoringService historical scoring corrections', () => {
       .spyOn(service as never, 'findDetailProjections' as never)
       .mockResolvedValue({} as never);
 
-    const result = await service.executeCommand('org-1', 'game-1', {} as never, {
-      command: {
-        idempotencyKey: 'reverse-old-score',
-        payload: { eventId: oldEventId, reason: 'Correcting the first basket' },
-        type: 'event.reverse',
+    const result = await service.executeCommand(
+      'org-1',
+      'game-1',
+      {} as never,
+      {
+        command: {
+          idempotencyKey: 'reverse-old-score',
+          payload: {
+            eventId: oldEventId,
+            reason: 'Correcting the first basket',
+          },
+          type: 'event.reverse',
+        },
+        controlToken: 'control-token',
+        expectedVersion: 0,
+        occurredAt: new Date(),
       },
-      controlToken: 'control-token',
-      expectedVersion: 0,
-      occurredAt: new Date(),
-    });
+    );
 
     expect(updateProjection).toHaveBeenCalledWith(
       expect.anything(),

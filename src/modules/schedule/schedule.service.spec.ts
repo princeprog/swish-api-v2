@@ -245,7 +245,7 @@ describe('ScheduleService final score updates', () => {
       service.update('org-1', 'game-1', {
         homeScore: 82,
         status: 'final' as any,
-      }),
+      } as any),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
@@ -258,7 +258,7 @@ describe('ScheduleService final score updates', () => {
         awayScore: 79,
         homeScore: 82,
         status: 'final' as any,
-      }),
+      } as any),
     ).rejects.toThrow(
       'Use Finalize game to record an official result and update standings.',
     );
@@ -275,7 +275,7 @@ describe('ScheduleService final score updates', () => {
         awayScore: 79,
         homeScore: 82,
         status: 'final' as any,
-      }),
+      } as any),
     ).rejects.toBeInstanceOf(ConflictException);
   });
 });
@@ -1019,7 +1019,9 @@ describe('ScheduleService scorekeeper assignments', () => {
     jest
       .spyOn(service as any, 'notifyScorekeeperAssignment')
       .mockRejectedValue(new Error('notification provider unavailable'));
-    jest.spyOn(service, 'findOne').mockRejectedValue(new Error('read unavailable'));
+    jest
+      .spyOn(service, 'findOne')
+      .mockRejectedValue(new Error('read unavailable'));
 
     await expect(
       service.updateScorekeeperAssignment(
@@ -1037,7 +1039,9 @@ describe('ScheduleService scorekeeper assignments', () => {
   it('returns a committed game when create-assignment enrichment or notifications fail', async () => {
     const service = new ScheduleService({} as never);
     const inserted = { id: 'game-1' };
-    jest.spyOn(service, 'findOne').mockRejectedValue(new Error('read unavailable'));
+    jest
+      .spyOn(service, 'findOne')
+      .mockRejectedValue(new Error('read unavailable'));
     jest
       .spyOn(service as any, 'notifyGameRecipients')
       .mockRejectedValue(new Error('notification provider unavailable'));

@@ -40,7 +40,7 @@ describe('JwtAuthGuard', () => {
         swish_access_token: 'cookie-token',
       },
       headers: {},
-    };
+    } as Record<string, unknown> & { user?: typeof user };
 
     tokenService.verifyAccessToken.mockResolvedValue({
       sid: 'session-1',

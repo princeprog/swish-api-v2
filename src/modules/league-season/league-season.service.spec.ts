@@ -1,4 +1,5 @@
 import { LeagueSeasonService } from './league-season.service';
+import type { TiebreakerRule } from './dto/league-season-competition-defaults.dto';
 
 const season = {
   created_at: new Date('2026-08-04T00:00:00.000Z'),
@@ -60,7 +61,7 @@ const input = {
       'point_differential',
       'points_for',
       'manual_decision',
-    ] as const,
+    ] as TiebreakerRule[],
   },
   gameRules: {
     overtimeDurationMs: 300000,

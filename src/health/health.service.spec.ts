@@ -9,8 +9,10 @@ const config: AppConfig = {
     serviceName: 'swish-api-v2',
   },
   auth: {
+    accessCookieName: 'swish_access_token',
     accessTokenExpiresIn: '15m',
     accessTokenSecret: 'access-secret',
+    corsOrigin: 'http://localhost:3000',
     refreshCookieName: 'swish_refresh_token',
     refreshTokenExpiresIn: '30d',
     refreshTokenSecret: 'refresh-secret',
