@@ -156,8 +156,10 @@ export class OfficialResultCoordinator {
             downstreamMatchupIds.map((matchupId, index) => [matchupId, index]),
           );
           const started = downstreamGames
-            .filter((candidate: { status: string }) =>
-              ['live', 'final', 'reopened'].includes(candidate.status),
+            .filter(
+              (candidate: { archived_at: Date | null; status: string }) =>
+                !candidate.archived_at &&
+                ['live', 'final', 'reopened'].includes(candidate.status),
             )
             .sort(
               (left: { matchup_id: string }, right: { matchup_id: string }) =>

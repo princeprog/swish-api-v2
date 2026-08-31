@@ -335,6 +335,12 @@ describe('OfficialResultCoordinator', () => {
           }
         } else {
           query.execute.mockResolvedValue([
+            {
+              archived_at: new Date('2026-08-30T00:00:00.000Z'),
+              id: 'archived-game-2',
+              matchup_id: 'matchup-2',
+              status: 'final',
+            },
             { id: 'game-2', matchup_id: 'matchup-2', status: 'live' },
           ]);
         }
