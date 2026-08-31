@@ -66,7 +66,7 @@ function createDb(game: Record<string, unknown>) {
     }),
   };
 
-  return { auditInsert, db, gameUpdate, matchupUpdate, trx };
+  return { auditInsert, db, gameUpdate, matchupUpdate, seasonQuery, trx };
 }
 
 describe('ScheduleService archival', () => {
@@ -115,5 +115,26 @@ describe('ScheduleService archival', () => {
       service.archive('org-1', 'game-1', access()),
     ).rejects.toBeInstanceOf(ConflictException);
     expect(gameUpdate.set).not.toHaveBeenCalled();
+  });
+
+  it('only restores a game while its season is active', async () => {
+    const { db, seasonQuery } = createDb({
+      archived_at: new Date('2026-08-31T00:00:00.000Z'),
+      away_score: null,
+      finalized_at: null,
+      home_score: null,
+      id: 'game-1',
+      matchup_id: null,
+      status: 'scheduled',
+    });
+    const service = new ScheduleService(db as never);
+
+    await service.restore('org-1', 'game-1', access());
+
+    expect(seasonQuery.where).toHaveBeenCalledWith(
+      'archived_at',
+      'is',
+      null,
+    );
   });
 });

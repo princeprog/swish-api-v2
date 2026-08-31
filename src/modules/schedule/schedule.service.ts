@@ -712,7 +712,8 @@ export class ScheduleService {
           trx
             .selectFrom('admin.league_seasons')
             .select('id')
-            .where('organization_id', '=', organizationId),
+            .where('organization_id', '=', organizationId)
+            .where('archived_at', 'is', null),
         )
         .forUpdate()
         .executeTakeFirst();
@@ -765,7 +766,8 @@ export class ScheduleService {
           trx
             .selectFrom('admin.league_seasons')
             .select('id')
-            .where('organization_id', '=', organizationId),
+            .where('organization_id', '=', organizationId)
+            .where('archived_at', 'is', null),
         )
         .forUpdate()
         .executeTakeFirst();
