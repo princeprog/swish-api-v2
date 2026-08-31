@@ -729,6 +729,52 @@ describe('ScoringService transactional device control', () => {
 });
 
 describe('ScoringService historical scoring corrections', () => {
+  it('invalidates a submitted stat sheet after an official score correction', async () => {
+    const sheetUpdate = {
+      execute: jest.fn().mockResolvedValue({ numUpdatedRows: 1n }),
+      set: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const auditInsert = {
+      execute: jest.fn().mockResolvedValue(undefined),
+      values: jest.fn().mockReturnThis(),
+    };
+    const db = {
+      insertInto: jest.fn().mockReturnValue(auditInsert),
+      updateTable: jest.fn().mockReturnValue(sheetUpdate),
+    };
+    const service = new ScoringService(db as never);
+    const correctedAt = new Date('2026-08-04T12:00:00.000Z');
+
+    await (service as any).invalidateSubmittedStatSheet(
+      db,
+      'game-1',
+      { membershipId: 'member-1', organizationId: 'org-1' },
+      correctedAt,
+    );
+
+    expect(sheetUpdate.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reconciled_at: null,
+        reopened_at: correctedAt,
+        status: 'reopened',
+        submitted_at: null,
+        updated_at: correctedAt,
+      }),
+    );
+    expect(sheetUpdate.where).toHaveBeenCalledWith(
+      'status',
+      '=',
+      'submitted',
+    );
+    expect(auditInsert.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'statistics.sheet.invalidated',
+        target_id: 'game-1',
+      }),
+    );
+  });
+
   it('loads an older active score event for a reasoned correction', async () => {
     const target = {
       id: 'event-old',
@@ -896,6 +942,11 @@ describe('ScoringService historical scoring corrections', () => {
     const transactionExecute = jest.fn(async (callback) =>
       callback({
         selectFrom: jest.fn().mockReturnValue(chainWithResult(undefined)),
+        updateTable: jest.fn().mockReturnValue({
+          execute: jest.fn().mockResolvedValue({ numUpdatedRows: 0 }),
+          set: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+        }),
       }),
     );
     const service = new ScoringService({

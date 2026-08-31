@@ -612,6 +612,17 @@ export class ScoringService {
           ) {
             await this.rebuildDetailProjections(lockedGame, trx);
           }
+          if (
+            input.command.type === 'score.record' ||
+            input.command.type === 'event.reverse'
+          ) {
+            await this.invalidateSubmittedStatSheet(
+              trx,
+              gameId,
+              access,
+              now,
+            );
+          }
 
           if (input.command.type === 'game.start') {
             await trx
@@ -1214,6 +1225,47 @@ export class ScoringService {
         'Choose a player from the published game roster.',
       );
     }
+  }
+
+  private async invalidateSubmittedStatSheet(
+    db: any,
+    gameId: string,
+    access: Pick<OrganizationAccessContext, 'membershipId' | 'organizationId'>,
+    correctedAt: Date,
+  ): Promise<void> {
+    const result = await db
+      .updateTable('statistics.game_stat_sheets')
+      .set({
+        finalized_at: null,
+        override_by_member_id: null,
+        override_reason: null,
+        reconciled_at: null,
+        reopened_at: correctedAt,
+        status: 'reopened',
+        submitted_at: null,
+        updated_at: correctedAt,
+        version: (eb: any) => eb('version', '+', 1),
+      })
+      .where('game_id', '=', gameId)
+      .where('status', '=', 'submitted')
+      .execute();
+
+    if (Number(result?.numUpdatedRows ?? 0) !== 1) return;
+
+    await db
+      .insertInto('access.audit_events')
+      .values({
+        action: 'statistics.sheet.invalidated',
+        actor_member_id: access.membershipId,
+        metadata: {
+          reason:
+            'The official team score changed. The statistician must resubmit the sheet.',
+        },
+        organization_id: access.organizationId,
+        target_id: gameId,
+        target_type: 'game',
+      })
+      .execute();
   }
 
   private async rebuildDetailProjections(game: ScheduleGame, db: any) {
