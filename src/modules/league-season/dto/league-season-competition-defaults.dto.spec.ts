@@ -77,6 +77,19 @@ describe('league season competition defaults DTO', () => {
     expect(await validate(dto)).not.toHaveLength(0);
   });
 
+  it('requires the manual decision to be the final tiebreaker', async () => {
+    const dto = createPayload({
+      crossoverTemplate: [],
+      playoffFormat: 'none',
+      poolCount: 1,
+      qualifiersPerPool: 1,
+      qualifyingFormat: 'none',
+      tiebreakers: ['win_percentage', 'manual_decision', 'points_for'],
+    });
+
+    expect(await validate(dto)).not.toHaveLength(0);
+  });
+
   it('rejects scheduling slots outside 15 minutes to one day', async () => {
     const dto = createPayload({
       crossoverTemplate: [],

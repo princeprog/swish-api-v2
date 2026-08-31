@@ -53,6 +53,21 @@ class RankingStartsWithWinPercentageConstraint
   }
 }
 
+@ValidatorConstraint({ name: 'rankingEndsWithManualDecision', async: false })
+class RankingEndsWithManualDecisionConstraint
+  implements ValidatorConstraintInterface
+{
+  validate(value: TiebreakerRule[]): boolean {
+    return (
+      Array.isArray(value) && value[value.length - 1] === 'manual_decision'
+    );
+  }
+
+  defaultMessage(): string {
+    return 'Ranking must end with a league decision.';
+  }
+}
+
 export class CrossoverMatchupDto {
   @IsString()
   @Matches(/^[A-Z]+[1-9]\d*$/)
@@ -85,6 +100,7 @@ export class LeagueSeasonCompetitionDefaultsDto {
   @ArrayUnique()
   @IsIn(TIEBREAKER_RULES, { each: true })
   @Validate(RankingStartsWithWinPercentageConstraint)
+  @Validate(RankingEndsWithManualDecisionConstraint)
   tiebreakers!: TiebreakerRule[];
 
   @IsArray()
