@@ -449,4 +449,49 @@ describe('OfficialResultCoordinator', () => {
       }),
     );
   });
+
+  it('locks official results only for games with active parent records', async () => {
+    const gameQuery = {
+      executeTakeFirst: jest.fn().mockResolvedValue(game),
+      forUpdate: jest.fn().mockReturnThis(),
+      innerJoin: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const service = new OfficialResultCoordinator(
+      { selectFrom: jest.fn().mockReturnValue(gameQuery) } as never,
+      { create: jest.fn() } as never,
+    );
+
+    await (service as any).findGameForUpdate(
+      (service as any).db,
+      input,
+    );
+
+    expect(gameQuery.where).toHaveBeenCalledWith(
+      'seasons.archived_at',
+      'is',
+      null,
+    );
+    expect(gameQuery.where).toHaveBeenCalledWith(
+      'divisions.archived_at',
+      'is',
+      null,
+    );
+    expect(gameQuery.where).toHaveBeenCalledWith(
+      'venues.archived_at',
+      'is',
+      null,
+    );
+    expect(gameQuery.where).toHaveBeenCalledWith(
+      'home_teams.archived_at',
+      'is',
+      null,
+    );
+    expect(gameQuery.where).toHaveBeenCalledWith(
+      'away_teams.archived_at',
+      'is',
+      null,
+    );
+  });
 });
