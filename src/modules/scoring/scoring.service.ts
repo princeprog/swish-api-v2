@@ -135,41 +135,69 @@ export class ScoringService {
     deviceLabel?: string,
   ) {
     const now = new Date();
-    await this.findGameForScoring(organizationId, gameId, access);
-    await this.releaseExpiredControl(gameId, now);
-
-    const existing = await this.findActiveControl(gameId);
-    if (existing) {
-      throw new ConflictException({
-        code: 'CONTROL_ALREADY_CLAIMED',
-        message: 'Another device is controlling this game',
-      });
-    }
+    const game = await this.findGameForScoring(organizationId, gameId, access);
 
     const controlToken = randomBytes(32).toString('base64url');
-    const session = await (this.db as any)
-      .insertInto('scoring.game_control_sessions')
-      .values({
-        control_token_hash: this.hashToken(controlToken),
-        device_label: deviceLabel,
-        expires_at: new Date(now.getTime() + 120000),
-        game_id: gameId,
-        last_heartbeat_at: now,
-        organization_member_id: access.membershipId,
-      })
-      .returning(['id', 'expires_at'])
-      .executeTakeFirstOrThrow();
+    let session: { id: string; expires_at: Date };
+    try {
+      session = await (this.db as any)
+        .transaction()
+        .execute(async (trx) => {
+          const lockedGame = await this.lockGameForScoring(
+            trx,
+            organizationId,
+            gameId,
+            game,
+          );
+          await this.lockExistingScoringState(trx, lockedGame.id);
+          await this.releaseExpiredControl(lockedGame.id, now, trx);
+          const existing = await this.findActiveControl(
+            lockedGame.id,
+            trx,
+            true,
+          );
+          if (existing) {
+            throw new ConflictException({
+              code: 'CONTROL_ALREADY_CLAIMED',
+              message: 'Another device is controlling this game. Try again.',
+            });
+          }
 
-    await this.audit(
-      organizationId,
-      access,
-      'scoring.control.claimed',
-      gameId,
-      {
-        deviceLabel,
-        sessionId: session.id,
-      },
-    );
+          const created = await trx
+            .insertInto('scoring.game_control_sessions')
+            .values({
+              control_token_hash: this.hashToken(controlToken),
+              device_label: deviceLabel,
+              expires_at: new Date(now.getTime() + 120000),
+              game_id: lockedGame.id,
+              last_heartbeat_at: now,
+              organization_member_id: access.membershipId,
+            })
+            .returning(['id', 'expires_at'])
+            .executeTakeFirstOrThrow();
+
+          await this.audit(
+            organizationId,
+            access,
+            'scoring.control.claimed',
+            lockedGame.id,
+            {
+              deviceLabel,
+              sessionId: created.id,
+            },
+            trx,
+          );
+          return created;
+        });
+    } catch (error) {
+      if (this.isUniqueViolation(error)) {
+        throw new ConflictException({
+          code: 'CONTROL_ALREADY_CLAIMED',
+          message: 'Another device is controlling this game. Try again.',
+        });
+      }
+      throw error;
+    }
 
     return {
       controlToken,
@@ -184,26 +212,40 @@ export class ScoringService {
     access: OrganizationAccessContext,
     controlToken: string,
   ) {
-    await this.findGameForScoring(organizationId, gameId, access);
-    const session = await this.assertControlSession(
-      gameId,
-      access,
-      controlToken,
-      false,
-    );
+    const game = await this.findGameForScoring(organizationId, gameId, access);
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 120000);
 
-    await (this.db as any)
-      .updateTable('scoring.game_control_sessions')
-      .set({
-        expires_at: expiresAt,
-        last_heartbeat_at: now,
-      })
-      .where('id', '=', session.id)
-      .execute();
+    return (this.db as any).transaction().execute(async (trx) => {
+      const lockedGame = await this.lockGameForScoring(
+        trx,
+        organizationId,
+        gameId,
+        game,
+      );
+      await this.lockExistingScoringState(trx, lockedGame.id);
+      const session = await this.assertControlSession(
+        lockedGame.id,
+        access,
+        controlToken,
+        false,
+        trx,
+        true,
+      );
 
-    return { expiresAt, sessionId: session.id };
+      const result = await trx
+        .updateTable('scoring.game_control_sessions')
+        .set({
+          expires_at: expiresAt,
+          last_heartbeat_at: now,
+        })
+        .where('id', '=', session.id)
+        .where('released_at', 'is', null)
+        .execute();
+      this.assertSingleRowUpdated(result, 'This scoring control is no longer active. Claim control again.');
+
+      return { expiresAt, sessionId: session.id };
+    });
   }
 
   async takeoverControl(
@@ -213,60 +255,93 @@ export class ScoringService {
     input: { deviceLabel?: string; reason: string },
   ) {
     const now = new Date();
-    await this.findGameForScoring(organizationId, gameId, access);
-    const existing = await this.findActiveControl(gameId);
-
-    if (
-      existing &&
-      existing.expires_at > now &&
-      !access.permissions.includes(ORGANIZATION_PERMISSIONS.GAME_SCORE_OVERRIDE)
-    ) {
-      throw new ConflictException({
-        code: 'CONTROL_ACTIVE',
-        message: 'This game is still controlled by another active device',
-      });
-    }
+    const game = await this.findGameForScoring(organizationId, gameId, access);
 
     const controlToken = randomBytes(32).toString('base64url');
-    const session = await (this.db as any)
-      .transaction()
-      .execute(async (trx) => {
-        if (existing) {
-          await trx
-            .updateTable('scoring.game_control_sessions')
-            .set({
-              released_at: now,
-              release_reason: 'takeover',
-              takeover_reason: input.reason,
+    let existing: any;
+    let session: { id: string; expires_at: Date };
+    try {
+      session = await (this.db as any)
+        .transaction()
+        .execute(async (trx) => {
+          const lockedGame = await this.lockGameForScoring(
+            trx,
+            organizationId,
+            gameId,
+            game,
+          );
+          await this.lockExistingScoringState(trx, lockedGame.id);
+          existing = await this.findActiveControl(lockedGame.id, trx, true);
+
+          if (
+            existing &&
+            existing.expires_at > now &&
+            !access.permissions.includes(
+              ORGANIZATION_PERMISSIONS.GAME_SCORE_OVERRIDE,
+            )
+          ) {
+            throw new ConflictException({
+              code: 'CONTROL_ACTIVE',
+              message: 'This game is still controlled by another active device. Try again.',
+            });
+          }
+
+          if (existing) {
+            await trx
+              .updateTable('scoring.game_control_sessions')
+              .set({
+                released_at: now,
+                release_reason: 'takeover',
+                takeover_reason: input.reason,
+              })
+              .where('id', '=', existing.id)
+              .where('released_at', 'is', null)
+              .execute();
+          }
+
+          const created = await trx
+            .insertInto('scoring.game_control_sessions')
+            .values({
+              control_token_hash: this.hashToken(controlToken),
+              device_label: input.deviceLabel,
+              expires_at: new Date(now.getTime() + 120000),
+              game_id: lockedGame.id,
+              last_heartbeat_at: now,
+              organization_member_id: access.membershipId,
             })
-            .where('id', '=', existing.id)
-            .execute();
-        }
+            .returning(['id', 'expires_at'])
+            .executeTakeFirstOrThrow();
 
-        return trx
-          .insertInto('scoring.game_control_sessions')
-          .values({
-            control_token_hash: this.hashToken(controlToken),
-            device_label: input.deviceLabel,
-            expires_at: new Date(now.getTime() + 120000),
-            game_id: gameId,
-            last_heartbeat_at: now,
-            organization_member_id: access.membershipId,
-          })
-          .returning(['id', 'expires_at'])
-          .executeTakeFirstOrThrow();
-      });
+          if (existing) {
+            await trx
+              .updateTable('scoring.game_control_sessions')
+              .set({ taken_over_by_session_id: created.id })
+              .where('id', '=', existing.id)
+              .execute();
+          }
 
-    await this.audit(
-      organizationId,
-      access,
-      'scoring.control.taken_over',
-      gameId,
-      {
-        reason: input.reason,
-        sessionId: session.id,
-      },
-    );
+          await this.audit(
+            organizationId,
+            access,
+            'scoring.control.taken_over',
+            lockedGame.id,
+            {
+              reason: input.reason,
+              sessionId: created.id,
+            },
+            trx,
+          );
+          return created;
+        });
+    } catch (error) {
+      if (this.isUniqueViolation(error)) {
+        throw new ConflictException({
+          code: 'CONTROL_ACTIVE',
+          message: 'This game is still controlled by another active device. Try again.',
+        });
+      }
+      throw error;
+    }
 
     if (this.notificationWriter && existing) {
       const [organization, game, member] = await Promise.all([
@@ -316,33 +391,48 @@ export class ScoringService {
     access: OrganizationAccessContext,
     controlToken: string,
   ) {
-    await this.findGameForScoring(organizationId, gameId, access);
-    const session = await this.assertControlSession(
-      gameId,
-      access,
-      controlToken,
-      true,
-    );
+    const game = await this.findGameForScoring(organizationId, gameId, access);
     const now = new Date();
 
-    await (this.db as any)
-      .updateTable('scoring.game_control_sessions')
-      .set({
-        released_at: now,
-        release_reason: 'released',
-      })
-      .where('id', '=', session.id)
-      .execute();
+    await (this.db as any).transaction().execute(async (trx) => {
+      const lockedGame = await this.lockGameForScoring(
+        trx,
+        organizationId,
+        gameId,
+        game,
+      );
+      await this.lockExistingScoringState(trx, lockedGame.id);
+      const session = await this.assertControlSession(
+        lockedGame.id,
+        access,
+        controlToken,
+        false,
+        trx,
+        true,
+      );
 
-    await this.audit(
-      organizationId,
-      access,
-      'scoring.control.released',
-      gameId,
-      {
-        sessionId: session.id,
-      },
-    );
+      const result = await trx
+        .updateTable('scoring.game_control_sessions')
+        .set({
+          released_at: now,
+          release_reason: 'released',
+        })
+        .where('id', '=', session.id)
+        .where('released_at', 'is', null)
+        .execute();
+      this.assertSingleRowUpdated(result, 'This scoring control is no longer active. Claim control again.');
+
+      await this.audit(
+        organizationId,
+        access,
+        'scoring.control.released',
+        lockedGame.id,
+        {
+          sessionId: session.id,
+        },
+        trx,
+      );
+    });
 
     return { success: true };
   }
@@ -381,7 +471,6 @@ export class ScoringService {
     }
     const now = new Date();
     const game = await this.findGameForScoring(organizationId, gameId, access);
-    await this.assertControlSession(gameId, access, input.controlToken, false);
 
     if (
       input.command.type === 'game.reopen' &&
@@ -414,6 +503,15 @@ export class ScoringService {
             .where('game_id', '=', gameId)
             .where('idempotency_key', '=', input.command.idempotencyKey)
             .executeTakeFirst();
+
+          await this.assertControlSession(
+            gameId,
+            access,
+            input.controlToken,
+            false,
+            trx,
+            true,
+          );
 
           if (existingEvent) {
             return {
@@ -668,8 +766,9 @@ export class ScoringService {
     action: string,
     gameId: string,
     metadata: Record<string, unknown>,
+    db: any = this.db,
   ) {
-    await (this.db as any)
+    await db
       .insertInto('access.audit_events')
       .values({
         action,
@@ -687,6 +786,8 @@ export class ScoringService {
     access: OrganizationAccessContext,
     controlToken: string | undefined,
     allowExpired: boolean,
+    db: any = this.db,
+    forUpdate = false,
   ) {
     if (!controlToken) {
       throw new ConflictException({
@@ -695,7 +796,7 @@ export class ScoringService {
       });
     }
 
-    const session = await this.findActiveControl(gameId);
+    const session = await this.findActiveControl(gameId, db, forUpdate);
     const now = new Date();
 
     if (!session) {
@@ -847,6 +948,19 @@ export class ScoringService {
       ...(fallbackGame ?? {}),
       ...lockedGame,
     } as ScheduleGame;
+  }
+
+  private async lockExistingScoringState(db: any, gameId: string) {
+    let query = db
+      .selectFrom('scoring.game_states')
+      .select(['game_id'])
+      .where('game_id', '=', gameId);
+
+    if (typeof query.forUpdate === 'function') {
+      query = query.forUpdate();
+    }
+
+    return query.executeTakeFirst();
   }
 
   private async ensureGameRosterSnapshots(game: ScheduleGame, db: any) {
@@ -1109,13 +1223,22 @@ export class ScoringService {
     };
   }
 
-  private async findActiveControl(gameId: string, db: any = this.db) {
-    return db
+  private async findActiveControl(
+    gameId: string,
+    db: any = this.db,
+    forUpdate = false,
+  ) {
+    let query = db
       .selectFrom('scoring.game_control_sessions')
       .selectAll()
       .where('game_id', '=', gameId)
-      .where('released_at', 'is', null)
-      .executeTakeFirst();
+      .where('released_at', 'is', null);
+
+    if (forUpdate && typeof query.forUpdate === 'function') {
+      query = query.forUpdate();
+    }
+
+    return query.executeTakeFirst();
   }
 
   private async findGameForScoring(
@@ -1241,8 +1364,12 @@ export class ScoringService {
       .executeTakeFirstOrThrow();
   }
 
-  private async releaseExpiredControl(gameId: string, now: Date) {
-    await (this.db as any)
+  private async releaseExpiredControl(
+    gameId: string,
+    now: Date,
+    db: any = this.db,
+  ) {
+    await db
       .updateTable('scoring.game_control_sessions')
       .set({
         released_at: now,
@@ -1252,6 +1379,24 @@ export class ScoringService {
       .where('released_at', 'is', null)
       .where('expires_at', '<=', now)
       .execute();
+  }
+
+  private assertSingleRowUpdated(result: any, message: string) {
+    if (
+      result?.numUpdatedRows !== undefined &&
+      Number(result.numUpdatedRows) !== 1
+    ) {
+      throw new ConflictException(message);
+    }
+  }
+
+  private isUniqueViolation(error: unknown) {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: unknown }).code === '23505'
+    );
   }
 
   private summarizeEvent(type: string, payload: Record<string, unknown>) {

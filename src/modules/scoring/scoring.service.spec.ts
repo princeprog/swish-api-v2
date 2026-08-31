@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { ScoringService } from './scoring.service';
 import { ORGANIZATION_PERMISSIONS } from '../../common/auth/roles';
 
@@ -323,7 +323,7 @@ describe('ScoringService official lifecycle serialization', () => {
     jest
       .spyOn(service as never, 'findGameForScoring' as never)
       .mockResolvedValue({ ...game, status: 'scheduled' } as never);
-    jest
+    const assertControlSession = jest
       .spyOn(service as never, 'assertControlSession' as never)
       .mockResolvedValue({} as never);
     jest
@@ -343,6 +343,63 @@ describe('ScoringService official lifecycle serialization', () => {
     ).rejects.toThrow('Only scheduled games can be started');
 
     expect(transactionExecute).toHaveBeenCalledTimes(1);
+    expect(assertControlSession).toHaveBeenCalledWith(
+      'game-1',
+      expect.anything(),
+      'control-token',
+      false,
+      expect.anything(),
+      true,
+    );
+  });
+
+  it('does not write when the scoring device loses control after the pre-read', async () => {
+    const existingEventQuery = chainWithResult(undefined);
+    const transactionExecute = jest.fn(async (callback) =>
+      callback({ selectFrom: jest.fn().mockReturnValue(existingEventQuery) }),
+    );
+    const service = new ScoringService({
+      transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
+    } as never);
+    jest
+      .spyOn(service as never, 'findGameForScoring' as never)
+      .mockResolvedValue(game as never);
+    jest
+      .spyOn(service as never, 'lockGameForScoring' as never)
+      .mockResolvedValue(game as never);
+    jest
+      .spyOn(service as never, 'ensureScoringState' as never)
+      .mockResolvedValue({ version: 0 } as never);
+    const assertControlSession = jest
+      .spyOn(service as never, 'assertControlSession' as never)
+      .mockImplementation(async (...args: any[]) => {
+        if (args.length === 6) {
+          throw new ConflictException(
+            'This scoring device no longer controls the game',
+          );
+        }
+        return {};
+      });
+    const insertEvent = jest.spyOn(service as never, 'insertEvent' as never);
+
+    await expect(
+      service.executeCommand('org-1', 'game-1', {} as never, {
+        command: { idempotencyKey: 'lost-control', type: 'clocks.pause' },
+        controlToken: 'control-token',
+        expectedVersion: 0,
+        occurredAt: new Date(),
+      }),
+    ).rejects.toThrow('This scoring device no longer controls the game');
+
+    expect(assertControlSession).toHaveBeenCalledWith(
+      'game-1',
+      expect.anything(),
+      'control-token',
+      false,
+      expect.anything(),
+      true,
+    );
+    expect(insertEvent).not.toHaveBeenCalled();
   });
 
   it('rejects a projection write when the locked version is no longer current', async () => {
@@ -396,5 +453,235 @@ describe('ScoringService official lifecycle serialization', () => {
     ).rejects.toThrow('The scoring state changed. Refresh it and try again.');
 
     expect(query.where).toHaveBeenCalledWith('version', '=', 0);
+  });
+});
+
+describe('ScoringService transactional device control', () => {
+  it('serializes heartbeat through the game and control transaction', async () => {
+    const updateQuery = {
+      execute: jest.fn().mockResolvedValue({ numUpdatedRows: 1n }),
+      set: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const gameQuery = {
+      executeTakeFirst: jest.fn().mockResolvedValue(game),
+      forUpdate: jest.fn().mockReturnThis(),
+      innerJoin: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const stateQuery = {
+      executeTakeFirst: jest.fn().mockResolvedValue(undefined),
+      forUpdate: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const transactionExecute = jest.fn(async (callback) =>
+      callback({
+        selectFrom: jest.fn((table: string) =>
+          table.startsWith('competition.') ? gameQuery : stateQuery,
+        ),
+        updateTable: jest.fn().mockReturnValue(updateQuery),
+      }),
+    );
+    const db = {
+      transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
+      updateTable: jest.fn().mockReturnValue(updateQuery),
+    };
+    const service = new ScoringService(db as never);
+    jest
+      .spyOn(service as never, 'findGameForScoring' as never)
+      .mockResolvedValue(game as never);
+    jest
+      .spyOn(service as never, 'assertControlSession' as never)
+      .mockResolvedValue({
+        expires_at: new Date('2026-08-04T10:02:00.000Z'),
+        id: 'control-1',
+      } as never);
+
+    await expect(
+      service.heartbeatControl(
+        'org-1',
+        'game-1',
+        { membershipId: 'member-1' } as never,
+        'control-token',
+      ),
+    ).resolves.toEqual(expect.objectContaining({ sessionId: 'control-1' }));
+
+    expect(transactionExecute).toHaveBeenCalledTimes(1);
+  });
+
+  it('locks the active control row when validating a mutation token', async () => {
+    const query = chainWithResult({
+      control_token_hash: 'hash',
+      expires_at: new Date('2099-01-01T00:00:00.000Z'),
+      id: 'control-1',
+      organization_member_id: 'member-1',
+    });
+    const db = { selectFrom: jest.fn(() => query) };
+    const service = new ScoringService(db as never);
+    query.executeTakeFirst.mockResolvedValue({
+      control_token_hash: (service as any).hashToken('control-token'),
+      expires_at: new Date('2099-01-01T00:00:00.000Z'),
+      id: 'control-1',
+      organization_member_id: 'member-1',
+    });
+
+    await expect(
+      (service as any).assertControlSession(
+        'game-1',
+        { membershipId: 'member-1', permissions: [] },
+        'control-token',
+        false,
+        db,
+        true,
+      ),
+    ).resolves.toEqual(expect.objectContaining({ id: 'control-1' }));
+
+    expect(query.forUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a heartbeat for an expired control session', async () => {
+    const service = new ScoringService({} as never);
+    const query = chainWithResult({
+      control_token_hash: (service as any).hashToken('control-token'),
+      expires_at: new Date('2020-01-01T00:00:00.000Z'),
+      id: 'control-1',
+      organization_member_id: 'member-1',
+    });
+    const db = { selectFrom: jest.fn(() => query) };
+
+    await expect(
+      (service as any).assertControlSession(
+        'game-1',
+        { membershipId: 'member-1', permissions: [] },
+        'control-token',
+        false,
+        db,
+        true,
+      ),
+    ).rejects.toThrow('Scoring control expired');
+  });
+
+  it('rejects a token held by another device owner', async () => {
+    const service = new ScoringService({} as never);
+    const query = chainWithResult({
+      control_token_hash: (service as any).hashToken('control-token'),
+      expires_at: new Date('2099-01-01T00:00:00.000Z'),
+      id: 'control-1',
+      organization_member_id: 'member-1',
+    });
+    const db = { selectFrom: jest.fn(() => query) };
+
+    await expect(
+      (service as any).assertControlSession(
+        'game-1',
+        { membershipId: 'member-2', permissions: [] },
+        'control-token',
+        false,
+        db,
+        true,
+      ),
+    ).rejects.toThrow('This device does not control this game');
+  });
+
+  it('turns a concurrent claim into one safe conflict inside the lock transaction', async () => {
+    const activeControlQuery = chainWithResult({
+      expires_at: new Date('2099-01-01T00:00:00.000Z'),
+      id: 'control-1',
+      organization_member_id: 'member-1',
+    });
+    const gameQuery = {
+      executeTakeFirst: jest.fn().mockResolvedValue(game),
+      forUpdate: jest.fn().mockReturnThis(),
+      innerJoin: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const stateQuery = chainWithResult(undefined);
+    const transactionExecute = jest.fn(async (callback) =>
+      callback({
+        insertInto: jest.fn(),
+        selectFrom: jest.fn((table: string) =>
+          table.startsWith('competition.')
+            ? gameQuery
+            : table === 'scoring.game_states'
+              ? stateQuery
+              : activeControlQuery,
+        ),
+        updateTable: jest.fn().mockReturnValue({
+          execute: jest.fn().mockResolvedValue({ numUpdatedRows: 0n }),
+          set: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+        }),
+      }),
+    );
+    const service = new ScoringService({
+      transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
+    } as never);
+    jest
+      .spyOn(service as never, 'findGameForScoring' as never)
+      .mockResolvedValue(game as never);
+
+    await expect(
+      service.claimControl(
+        'org-1',
+        'game-1',
+        { membershipId: 'member-2' } as never,
+        'Second device',
+      ),
+    ).rejects.toThrow('Another device is controlling this game');
+
+    expect(transactionExecute).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases control only through the ownership transaction', async () => {
+    const updateQuery = {
+      execute: jest.fn().mockResolvedValue({ numUpdatedRows: 1n }),
+      set: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const gameQuery = {
+      executeTakeFirst: jest.fn().mockResolvedValue(game),
+      forUpdate: jest.fn().mockReturnThis(),
+      innerJoin: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const stateQuery = chainWithResult(undefined);
+    const auditQuery = {
+      execute: jest.fn().mockResolvedValue(undefined),
+      values: jest.fn().mockReturnThis(),
+    };
+    const transactionExecute = jest.fn(async (callback) =>
+      callback({
+        insertInto: jest.fn().mockReturnValue(auditQuery),
+        selectFrom: jest.fn((table: string) =>
+          table.startsWith('competition.') ? gameQuery : stateQuery,
+        ),
+        updateTable: jest.fn().mockReturnValue(updateQuery),
+      }),
+    );
+    const db = {
+      transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
+    };
+    const service = new ScoringService(db as never);
+    jest
+      .spyOn(service as never, 'findGameForScoring' as never)
+      .mockResolvedValue(game as never);
+    jest
+      .spyOn(service as never, 'assertControlSession' as never)
+      .mockResolvedValue({ id: 'control-1' } as never);
+
+    await expect(
+      service.releaseControl(
+        'org-1',
+        'game-1',
+        { membershipId: 'member-1' } as never,
+        'control-token',
+      ),
+    ).resolves.toEqual({ success: true });
+
+    expect(transactionExecute).toHaveBeenCalledTimes(1);
   });
 });
