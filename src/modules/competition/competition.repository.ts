@@ -464,6 +464,7 @@ export class CompetitionRepository {
         })
         .where('id', '=', format.id)
         .where('status', '=', 'draft')
+        .where('revision', '=', format.revision)
         .returning('id')
         .executeTakeFirst();
 

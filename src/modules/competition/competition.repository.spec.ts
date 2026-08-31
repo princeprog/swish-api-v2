@@ -9,6 +9,7 @@ function chain(result: unknown) {
     forUpdate: jest.fn().mockReturnThis(),
     innerJoin: jest.fn().mockReturnThis(),
     orderBy: jest.fn().mockReturnThis(),
+    returning: jest.fn().mockReturnThis(),
     select: jest.fn().mockReturnThis(),
     selectAll: jest.fn().mockReturnThis(),
     set: jest.fn().mockReturnThis(),
@@ -91,6 +92,31 @@ describe('CompetitionRepository format mutation serialization', () => {
 });
 
 describe('CompetitionRepository generated matchup scheduling', () => {
+  it('requires the generated plan to use the current format revision', async () => {
+    const formatUpdate = chain({ id: 'format-1' });
+    const matchupsQuery = chain([]);
+    const transactionExecute = jest.fn(async (callback) =>
+      callback({
+        selectFrom: jest.fn().mockReturnValue(matchupsQuery),
+        updateTable: jest.fn().mockReturnValue(formatUpdate),
+      }),
+    );
+    const db = {
+      transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
+    };
+    const repository = new CompetitionRepository(db as never);
+
+    await repository.lockAndInsertMatchups(
+      {
+        id: 'format-1',
+        revision: 3,
+      } as never,
+      [],
+    );
+
+    expect(formatUpdate.where).toHaveBeenCalledWith('revision', '=', 3);
+  });
+
   it('requires the game to link to the matchup before transitioning it', async () => {
     const gameQuery = chain(undefined);
     const updateQuery = chain({ numUpdatedRows: 1n });
