@@ -44,6 +44,80 @@ describe('StatisticsService submission', () => {
     expect(db.insertInto).not.toHaveBeenCalled();
   });
 
+  it('keeps Player of the Game reads read-only when no award exists yet', async () => {
+    const sheetQuery = {
+      executeTakeFirst: jest.fn().mockResolvedValue({ status: 'finalized' }),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const awardQuery = {
+      executeTakeFirst: jest.fn().mockResolvedValue(undefined),
+      selectAll: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const candidatesQuery = {
+      execute: jest.fn().mockResolvedValue([
+        {
+          assists: 4,
+          playerId: 'home-player',
+          playerName: 'Home Player',
+          points: 20,
+          rebounds: 5,
+          steals: 1,
+          teamId: 'home-team',
+          turnovers: 1,
+        },
+        {
+          assists: 3,
+          playerId: 'away-player',
+          playerName: 'Away Player',
+          points: 18,
+          rebounds: 4,
+          steals: 1,
+          teamId: 'away-team',
+          turnovers: 1,
+        },
+      ]),
+      innerJoin: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const db = {
+      insertInto: jest.fn(),
+      selectFrom: jest.fn((table: string) => {
+        if (table === 'statistics.game_stat_sheets') return sheetQuery;
+        if (table === 'statistics.game_awards') return awardQuery;
+        return candidatesQuery;
+      }),
+    };
+    const service = new StatisticsService(db as never, {} as never);
+    jest.spyOn(service as any, 'assertGameAccess').mockResolvedValue({
+      away_score: 70,
+      away_team_id: 'away-team',
+      home_score: 80,
+      home_team_id: 'home-team',
+      id: 'game-1',
+      organization_id: 'org-1',
+      status: 'final',
+    });
+
+    await expect(
+      service.getPlayerOfGame('org-1', 'game-1', {} as never),
+    ).resolves.toMatchObject({
+      award: {
+        game_id: 'game-1',
+        selected_player_id: null,
+        suggested_player_id: 'home-player',
+        suggested_score: 29,
+      },
+      suggestion: {
+        metricScore: 29,
+        playerId: 'home-player',
+      },
+    });
+    expect(db.insertInto).not.toHaveBeenCalled();
+  });
+
   it('reconciles a submitted stat sheet against the live score projection', async () => {
     const sheetQuery = {
       executeTakeFirstOrThrow: jest.fn().mockResolvedValue({

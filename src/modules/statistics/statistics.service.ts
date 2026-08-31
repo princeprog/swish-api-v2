@@ -794,10 +794,15 @@ export class StatisticsService {
         'Player of the Game can be selected after the official result is finalized.',
       );
     }
-    const [sheet, candidates] = await Promise.all([
+    const [sheet, storedAward, candidates] = await Promise.all([
       this.db
         .selectFrom('statistics.game_stat_sheets')
         .select('status')
+        .where('game_id', '=', gameId)
+        .executeTakeFirst(),
+      this.db
+        .selectFrom('statistics.game_awards')
+        .selectAll()
         .where('game_id', '=', gameId)
         .executeTakeFirst(),
       this.db
@@ -835,25 +840,18 @@ export class StatisticsService {
         'Player statistics are required before selecting Player of the Game.',
       );
     }
-    const storedAward = await this.db
-      .insertInto('statistics.game_awards')
-      .values({
-        game_id: gameId,
-        suggested_player_id: suggestion.playerId,
-        suggested_score: suggestion.metricScore,
-      })
-      .onConflict((conflict) =>
-        conflict.column('game_id').doUpdateSet({
-          suggested_player_id: suggestion.playerId,
-          suggested_score: suggestion.metricScore,
-          updated_at: new Date(),
-        }),
-      )
-      .returningAll()
-      .executeTakeFirstOrThrow();
+    const award = storedAward ?? {
+      confirmation_reason: null,
+      confirmed_at: null,
+      confirmed_by_member_id: null,
+      game_id: gameId,
+      selected_player_id: null,
+      suggested_player_id: suggestion.playerId,
+      suggested_score: suggestion.metricScore,
+    };
 
     return {
-      award: storedAward,
+      award,
       candidates,
       suggestion,
     };
@@ -890,6 +888,21 @@ export class StatisticsService {
     }
     const now = new Date();
     const award = await this.db.transaction().execute(async (trx) => {
+      await trx
+        .insertInto('statistics.game_awards')
+        .values({
+          game_id: gameId,
+          suggested_player_id: state.suggestion.playerId,
+          suggested_score: state.suggestion.metricScore,
+        })
+        .onConflict((conflict) =>
+          conflict.column('game_id').doUpdateSet({
+            suggested_player_id: state.suggestion.playerId,
+            suggested_score: state.suggestion.metricScore,
+            updated_at: now,
+          }),
+        )
+        .execute();
       const confirmed = await trx
         .updateTable('statistics.game_awards')
         .set({
