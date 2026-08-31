@@ -7,6 +7,7 @@ function mutationQuery() {
   return {
     execute: jest.fn().mockResolvedValue([]),
     executeTakeFirstOrThrow: jest.fn().mockResolvedValue({}),
+    returningAll: jest.fn().mockReturnThis(),
     set: jest.fn().mockReturnThis(),
     values: jest.fn().mockReturnThis(),
     where: jest.fn().mockReturnThis(),
@@ -450,7 +451,10 @@ describe('OfficialResultCoordinator', () => {
       gameId: 'game-1',
       unscheduledGameIds: ['game-2'],
     });
-    expect(db.deleteFrom).toHaveBeenCalledWith('competition.games');
+    expect(db.deleteFrom).not.toHaveBeenCalled();
+    expect(mutation.set).toHaveBeenCalledWith(
+      expect.objectContaining({ archived_at: expect.any(Date) }),
+    );
     expect(mutation.values).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'game.reopened',

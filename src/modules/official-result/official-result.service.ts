@@ -11,6 +11,7 @@ import { DATABASE, type Database } from '../../database/database.tokens';
 import { NotificationWriter } from '../notification/notification.writer';
 import { resolveByeProgression } from '../competition/bye-progression';
 import { calculateRankedStandings } from '../standings/standings-calculator';
+import { archiveRecord } from '../../common/archival/archival';
 import type {
   FinalizedGameResult,
   ManualTieDecision,
@@ -188,10 +189,9 @@ export class OfficialResultCoordinator {
             )
             .map((candidate: { id: string }) => candidate.id);
           if (scheduledIds.length > 0) {
-            await db
-              .deleteFrom('competition.games')
-              .where('id', 'in', scheduledIds)
-              .execute();
+            for (const scheduledId of scheduledIds) {
+              await archiveRecord(db, 'competition.games', scheduledId, now);
+            }
             unscheduledGameIds.push(...scheduledIds);
           }
         }
