@@ -2,6 +2,8 @@ import 'dotenv/config';
 
 import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import process from 'node:process';
 import { Client } from 'pg';
 
@@ -37,10 +39,27 @@ async function withClient(database, run) {
 }
 
 function runCommand(args, environment) {
-  const command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
-  const result = spawnSync(command, args, {
+  const configuredEntrypoint = process.env.npm_execpath;
+  const windowsEntrypoint = join(
+    process.env.APPDATA || '',
+    'npm',
+    'node_modules',
+    'pnpm',
+    'bin',
+    'pnpm.mjs',
+  );
+  const pnpmScript = configuredEntrypoint || windowsEntrypoint;
+  const useNodeEntrypoint =
+    existsSync(pnpmScript) && /\.(?:cjs|mjs|js)$/i.test(pnpmScript);
+  const command = useNodeEntrypoint
+    ? process.execPath
+    : process.platform === 'win32'
+      ? 'pnpm.cmd'
+      : 'pnpm';
+  const commandArgs = useNodeEntrypoint ? [pnpmScript, ...args] : args;
+  const result = spawnSync(command, commandArgs, {
     env: environment,
-    shell: process.platform === 'win32',
+    shell: !useNodeEntrypoint && process.platform === 'win32',
     stdio: 'inherit',
   });
 
@@ -48,7 +67,9 @@ function runCommand(args, environment) {
     throw result.error;
   }
   if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(' ')} exited with ${result.status}.`);
+    throw new Error(
+      `${command} ${commandArgs.join(' ')} exited with ${result.status}.`,
+    );
   }
 }
 
