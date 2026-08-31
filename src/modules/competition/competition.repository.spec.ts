@@ -18,6 +18,30 @@ function chain(result: unknown) {
 }
 
 describe('CompetitionRepository format mutation serialization', () => {
+  it('bumps the format revision when draft defaults change', async () => {
+    const formatUpdate = chain({ id: 'format-1', revision: 2 }) as any;
+    formatUpdate.returningAll = jest.fn().mockReturnThis();
+    const poolsQuery = chain([]);
+    const transactionExecute = jest.fn(async (callback) =>
+      callback({
+        deleteFrom: jest.fn().mockReturnValue(chain(undefined)),
+        insertInto: jest.fn().mockReturnValue(chain(undefined)),
+        selectFrom: jest.fn().mockReturnValue(poolsQuery),
+        updateTable: jest.fn().mockReturnValue(formatUpdate),
+      }),
+    );
+    const db = {
+      transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
+    };
+    const repository = new CompetitionRepository(db as never);
+
+    await repository.updateFormat('format-1', {});
+
+    expect(formatUpdate.set).toHaveBeenCalledWith(
+      expect.objectContaining({ revision: expect.anything() }),
+    );
+  });
+
   it('locks the format before replacing pool assignments', async () => {
     const formatQuery = chain({ id: 'format-1', status: 'draft' });
     const deletion = chain(undefined);
@@ -30,6 +54,7 @@ describe('CompetitionRepository format mutation serialization', () => {
           values: jest.fn().mockReturnThis(),
         }),
         selectFrom: jest.fn().mockReturnValue(formatQuery),
+        updateTable: jest.fn().mockReturnValue(formatQuery),
       }),
     );
     const db = {
@@ -44,6 +69,9 @@ describe('CompetitionRepository format mutation serialization', () => {
     );
 
     expect(formatQuery.forUpdate).toHaveBeenCalledTimes(1);
+    expect(formatQuery.set).toHaveBeenCalledWith(
+      expect.objectContaining({ revision: expect.anything() }),
+    );
     expect(deletion.execute).toHaveBeenCalledTimes(1);
     expect(insertion.execute).toHaveBeenCalledTimes(1);
   });

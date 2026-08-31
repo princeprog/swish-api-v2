@@ -133,6 +133,7 @@ export class CompetitionRepository {
             dto.tiebreakers === undefined
               ? undefined
               : serializeJsonArray(dto.tiebreakers),
+          revision: (eb) => eb('revision', '+', 1),
           updated_at: new Date(),
         })
         .where('id', '=', formatId)
@@ -280,6 +281,15 @@ export class CompetitionRepository {
             'The competition format is locked. Reset it before changing pool assignments.',
           );
         }
+        await trx
+          .updateTable('competition.division_formats')
+          .set({
+            revision: (eb: any) => eb('revision', '+', 1),
+            updated_at: new Date(),
+          })
+          .where('id', '=', formatId)
+          .where('status', '=', 'draft')
+          .executeTakeFirstOrThrow();
       }
       await trx
         .deleteFrom('competition.pool_teams')
