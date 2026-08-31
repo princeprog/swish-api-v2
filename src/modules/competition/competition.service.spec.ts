@@ -87,9 +87,7 @@ describe('CompetitionService', () => {
     });
     const service = new CompetitionService(repo as never);
 
-    await expect(
-      service.generate('org-1', 'division-1', {}),
-    ).resolves.toEqual({
+    await expect(service.generate('org-1', 'division-1', {})).resolves.toEqual({
       formatRevision: 1,
       matchups: [{ id: 'existing-matchup' }],
       status: 'locked',
@@ -106,9 +104,7 @@ describe('CompetitionService', () => {
     });
     const service = new CompetitionService(repo as never);
 
-    await expect(
-      service.generate('org-1', 'division-1', {}),
-    ).rejects.toThrow(
+    await expect(service.generate('org-1', 'division-1', {})).rejects.toThrow(
       'Assign every division team to exactly one pool before generating matchups.',
     );
   });
@@ -133,7 +129,9 @@ describe('CompetitionService', () => {
   it('schedules a ready matchup and links the resulting game', async () => {
     const repo = repository();
     const scheduleService = {
-      createCompetitionGame: jest.fn().mockResolvedValue({ id: 'game-1', status: 'scheduled' }),
+      createCompetitionGame: jest
+        .fn()
+        .mockResolvedValue({ id: 'game-1', status: 'scheduled' }),
       createCompetitionGameInTransaction: jest
         .fn()
         .mockResolvedValue({ id: 'game-1', status: 'scheduled' }),
@@ -170,7 +168,9 @@ describe('CompetitionService', () => {
         venueId: 'c0a80121-0000-4000-8000-000000000001',
       }),
     ).resolves.toEqual({ id: 'game-1', status: 'scheduled' });
-    expect(scheduleService.createCompetitionGameInTransaction).toHaveBeenCalledWith(
+    expect(
+      scheduleService.createCompetitionGameInTransaction,
+    ).toHaveBeenCalledWith(
       'org-1',
       access,
       expect.objectContaining({
@@ -239,7 +239,9 @@ describe('CompetitionService', () => {
       }),
     ).rejects.toBe(rollback);
     expect(execute).toHaveBeenCalledTimes(1);
-    expect(scheduleService.createCompetitionGameInTransaction).toHaveBeenCalledTimes(1);
+    expect(
+      scheduleService.createCompetitionGameInTransaction,
+    ).toHaveBeenCalledTimes(1);
   });
 
   it('does not create a second game when the locked matchup is no longer ready', async () => {
@@ -284,7 +286,9 @@ describe('CompetitionService', () => {
         venueId: 'c0a80121-0000-4000-8000-000000000001',
       }),
     ).rejects.toThrow('already been scheduled');
-    expect(scheduleService.createCompetitionGameInTransaction).not.toHaveBeenCalled();
+    expect(
+      scheduleService.createCompetitionGameInTransaction,
+    ).not.toHaveBeenCalled();
   });
 
   it('records an audited unresolved tie order and recalculates qualification', async () => {
@@ -298,13 +302,25 @@ describe('CompetitionService', () => {
       getWorkspace: jest.fn().mockResolvedValue({
         format: { ...format, status: 'locked' },
         pools: [{ id: 'c0a80121-0000-4000-8000-000000000001' }],
+        standingsRevision: 1,
         standings: [
-          { pool_id: 'c0a80121-0000-4000-8000-000000000001', rank: null, team_id: teamA },
-          { pool_id: 'c0a80121-0000-4000-8000-000000000001', rank: null, team_id: teamB },
+          {
+            pool_id: 'c0a80121-0000-4000-8000-000000000001',
+            rank: null,
+            team_id: teamA,
+          },
+          {
+            pool_id: 'c0a80121-0000-4000-8000-000000000001',
+            rank: null,
+            team_id: teamB,
+          },
         ],
       }),
     });
-    const coordinator = { recalculateDivision: jest.fn().mockResolvedValue({ success: true }) };
+    const coordinator = {
+      recordTieDecision: jest.fn().mockResolvedValue({ id: 'decision-1' }),
+      recalculateDivision: jest.fn().mockResolvedValue({ success: true }),
+    };
     const service = new CompetitionService(
       repo as never,
       undefined,
@@ -319,25 +335,24 @@ describe('CompetitionService', () => {
     };
 
     await service.recordTieDecision('org-1', 'division-1', access, {
+      expectedStandingsRevision: 1,
       orderedTeamIds: [teamB, teamA],
       poolId: 'c0a80121-0000-4000-8000-000000000001',
       reason: 'The league committee confirmed the published order.',
       teamIds: [teamA, teamB],
     });
 
-    expect(repo.recordTieDecision).toHaveBeenCalledWith(
-      'format-1',
-      'c0a80121-0000-4000-8000-000000000001',
-      `${teamA}|${teamB}`,
-      [teamA, teamB],
-      [teamB, teamA],
-      'The league committee confirmed the published order.',
+    expect(coordinator.recordTieDecision).toHaveBeenCalledWith({
       access,
-    );
-    expect(coordinator.recalculateDivision).toHaveBeenCalledWith(
-      'org-1',
-      'division-1',
-      access,
-    );
+      divisionId: 'division-1',
+      expectedStandingsRevision: 1,
+      orderedTeamIds: [teamB, teamA],
+      organizationId: 'org-1',
+      poolId: 'c0a80121-0000-4000-8000-000000000001',
+      reason: 'The league committee confirmed the published order.',
+      teamIds: [teamA, teamB],
+    });
+    expect(repo.recordTieDecision).not.toHaveBeenCalled();
+    expect(coordinator.recalculateDivision).not.toHaveBeenCalled();
   });
 });

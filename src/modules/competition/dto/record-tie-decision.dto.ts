@@ -2,13 +2,19 @@ import {
   ArrayMinSize,
   ArrayUnique,
   IsArray,
+  IsInt,
   IsString,
   IsUUID,
   MaxLength,
   MinLength,
+  Min,
 } from 'class-validator';
 
 export class RecordTieDecisionDto {
+  @IsInt()
+  @Min(1)
+  expectedStandingsRevision!: number;
+
   @IsUUID()
   poolId!: string;
 

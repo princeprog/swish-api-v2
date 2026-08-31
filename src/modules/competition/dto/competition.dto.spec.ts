@@ -47,12 +47,14 @@ describe('competition DTOs', () => {
 
   it('requires a unique ordered list and a meaningful tie-decision reason', async () => {
     const valid = plainToInstance(RecordTieDecisionDto, {
+      expectedStandingsRevision: 1,
       orderedTeamIds: [teamB, teamA],
       poolId: poolA,
       reason: 'The league committee confirmed the published order.',
       teamIds: [teamA, teamB],
     });
     const invalid = plainToInstance(RecordTieDecisionDto, {
+      expectedStandingsRevision: 0,
       orderedTeamIds: [teamA, teamA],
       poolId: poolA,
       reason: 'short',
@@ -61,5 +63,20 @@ describe('competition DTOs', () => {
 
     await expect(validate(valid)).resolves.toHaveLength(0);
     expect(await validate(invalid)).not.toHaveLength(0);
+  });
+
+  it('requires the standings revision used to make a tie decision', async () => {
+    const missingRevision = plainToInstance(RecordTieDecisionDto, {
+      orderedTeamIds: [teamB, teamA],
+      poolId: poolA,
+      reason: 'The league committee confirmed the published order.',
+      teamIds: [teamA, teamB],
+    });
+
+    expect(await validate(missingRevision)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ property: 'expectedStandingsRevision' }),
+      ]),
+    );
   });
 });

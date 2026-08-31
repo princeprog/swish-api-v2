@@ -421,6 +421,7 @@ export interface CompetitionStandingsProjections {
   rank: number | null;
   ranking_explanation: Generated<Json>;
   team_id: string;
+  unresolved_tie_key: string | null;
   updated_at: Generated<Timestamp>;
   version: Generated<number>;
   win_percentage: Generated<Numeric>;

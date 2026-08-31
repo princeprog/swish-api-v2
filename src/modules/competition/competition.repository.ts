@@ -74,25 +74,39 @@ export class CompetitionRepository {
   }
 
   async getWorkspace(format: CompetitionFormatContext) {
-    const [pools, matchups, standings, tieDecisions] = await Promise.all([
-      this.listPoolsWithTeams(format.id),
-      this.listMatchups(format.id, format.revision),
-      this.db
-        .selectFrom('competition.standings_projections')
-        .selectAll()
-        .where('division_format_id', '=', format.id)
-        .orderBy('pool_id asc')
-        .orderBy('rank asc')
-        .execute(),
-      this.db
-        .selectFrom('competition.tie_decisions')
-        .selectAll()
-        .where('division_format_id', '=', format.id)
-        .orderBy('created_at desc')
-        .execute(),
-    ]);
+    const [pools, matchups, standings, tieDecisions, latestStanding] =
+      await Promise.all([
+        this.listPoolsWithTeams(format.id),
+        this.listMatchups(format.id, format.revision),
+        this.db
+          .selectFrom('competition.standings_projections')
+          .selectAll()
+          .where('division_format_id', '=', format.id)
+          .orderBy('pool_id asc')
+          .orderBy('rank asc')
+          .execute(),
+        this.db
+          .selectFrom('competition.tie_decisions')
+          .selectAll()
+          .where('division_format_id', '=', format.id)
+          .orderBy('created_at desc')
+          .execute(),
+        this.db
+          .selectFrom('competition.standings_projections')
+          .select('version')
+          .where('division_format_id', '=', format.id)
+          .orderBy('version desc')
+          .executeTakeFirst(),
+      ]);
 
-    return { format, matchups, pools, standings, tieDecisions };
+    return {
+      format,
+      matchups,
+      pools,
+      standings,
+      standingsRevision: latestStanding?.version ?? 0,
+      tieDecisions,
+    };
   }
 
   async updateFormat(formatId: string, dto: UpdateCompetitionFormatDto) {

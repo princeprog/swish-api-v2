@@ -111,6 +111,178 @@ describe('OfficialResultCoordinator', () => {
     expect(db.insertInto).not.toHaveBeenCalled();
   });
 
+  it('records a tie decision through one transaction boundary', async () => {
+    const transaction = jest
+      .fn()
+      .mockImplementation(async (callback) => callback({}));
+    const db = {
+      transaction: jest.fn().mockReturnValue({ execute: transaction }),
+    };
+    const service = new OfficialResultCoordinator(
+      db as never,
+      { create: jest.fn() } as never,
+    );
+    const tieInput = {
+      access: input.access,
+      divisionId: 'division-1',
+      expectedStandingsRevision: 3,
+      orderedTeamIds: ['team-b', 'team-a'],
+      organizationId: 'org-1',
+      poolId: 'pool-1',
+      reason: 'The league committee confirmed the published order.',
+      teamIds: ['team-a', 'team-b'],
+    };
+    const inTransaction = jest
+      .spyOn(service as any, 'recordTieDecisionInTransaction')
+      .mockResolvedValue({ decision: { id: 'decision-1' } });
+
+    await expect((service as any).recordTieDecision(tieInput)).resolves.toEqual(
+      { decision: { id: 'decision-1' } },
+    );
+    expect(db.transaction).toHaveBeenCalledTimes(1);
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(inTransaction).toHaveBeenCalledWith({}, tieInput);
+  });
+
+  it('resolves only the requested unresolved tie group', async () => {
+    const teamA = 'c0a80121-0000-4000-8000-000000000011';
+    const teamB = 'c0a80121-0000-4000-8000-000000000012';
+    const teamC = 'c0a80121-0000-4000-8000-000000000013';
+    const teamD = 'c0a80121-0000-4000-8000-000000000014';
+    const format = {
+      crossover_template: [],
+      division_id: 'division-1',
+      division_name: 'Open',
+      id: 'format-1',
+      league_season_id: 'season-1',
+      playoff_format: 'none',
+      pool_count: 1,
+      qualifiers_per_pool: 2,
+      qualifying_format: 'single_round_robin',
+      revision: 1,
+      schedule_slot_duration_minutes: 90,
+      status: 'locked',
+      tiebreakers: ['win_percentage', 'manual_decision'],
+    };
+    const rows = [
+      {
+        pool_id: 'pool-1',
+        rank: null,
+        team_id: teamA,
+        version: 4,
+        unresolved_tie_key: [teamA, teamB].sort().join('|'),
+      },
+      {
+        pool_id: 'pool-1',
+        rank: null,
+        team_id: teamB,
+        version: 4,
+        unresolved_tie_key: [teamA, teamB].sort().join('|'),
+      },
+      {
+        pool_id: 'pool-1',
+        rank: null,
+        team_id: teamC,
+        version: 4,
+        unresolved_tie_key: [teamC, teamD].sort().join('|'),
+      },
+      {
+        pool_id: 'pool-1',
+        rank: null,
+        team_id: teamD,
+        version: 4,
+        unresolved_tie_key: [teamC, teamD].sort().join('|'),
+      },
+    ];
+    const selectQuery = (table: string) => {
+      const query: Record<string, jest.Mock> = {
+        execute: jest
+          .fn()
+          .mockResolvedValue(
+            table === 'competition.standings_projections' ? rows : [],
+          ),
+        executeTakeFirst: jest.fn().mockResolvedValue(
+          table === 'competition.division_formats as formats'
+            ? format
+            : table === 'competition.games as games'
+              ? {
+                  away_score: 70,
+                  away_team_id: teamB,
+                  competition_kind: 'stage',
+                  division_id: 'division-1',
+                  home_score: 75,
+                  home_team_id: teamA,
+                  id: 'game-1',
+                  league_season_id: 'season-1',
+                  matchup_id: 'matchup-1',
+                  status: 'final',
+                }
+              : undefined,
+        ),
+      };
+      for (const method of [
+        'forUpdate',
+        'innerJoin',
+        'orderBy',
+        'select',
+        'selectAll',
+        'where',
+      ]) {
+        query[method] = jest.fn().mockReturnValue(query);
+      }
+      return query;
+    };
+    const decisionMutation = {
+      execute: jest.fn().mockResolvedValue([]),
+      executeTakeFirstOrThrow: jest
+        .fn()
+        .mockResolvedValue({ id: 'decision-1' }),
+      onConflict: jest.fn().mockImplementation((callback) => {
+        const conflict = {
+          columns: jest.fn().mockReturnThis(),
+          doUpdateSet: jest.fn().mockReturnThis(),
+        };
+        callback(conflict);
+        return decisionMutation;
+      }),
+      returningAll: jest.fn().mockReturnThis(),
+      values: jest.fn().mockReturnThis(),
+    };
+    const auditMutation = {
+      execute: jest.fn().mockResolvedValue([]),
+      values: jest.fn().mockReturnThis(),
+    };
+    const db = {
+      insertInto: jest.fn((table: string) =>
+        table === 'competition.tie_decisions'
+          ? decisionMutation
+          : auditMutation,
+      ),
+      selectFrom: jest.fn(selectQuery),
+    };
+    const service = new OfficialResultCoordinator(
+      {} as never,
+      { create: jest.fn() } as never,
+    );
+    const rebuild = jest
+      .spyOn(service as any, 'rebuildPoolStandings')
+      .mockResolvedValue(undefined);
+
+    await expect(
+      (service as any).recordTieDecisionInTransaction(db, {
+        access: input.access,
+        divisionId: 'division-1',
+        expectedStandingsRevision: 4,
+        orderedTeamIds: [teamB, teamA],
+        organizationId: 'org-1',
+        poolId: 'pool-1',
+        reason: 'The league committee confirmed the published order.',
+        teamIds: [teamA, teamB],
+      }),
+    ).resolves.toMatchObject({ decision: { id: 'decision-1' } });
+    expect(rebuild).toHaveBeenCalledTimes(1);
+  });
+
   it('blocks reopening when a dependent playoff game has already started', async () => {
     const source = {
       away_source_ref: 'team-b',

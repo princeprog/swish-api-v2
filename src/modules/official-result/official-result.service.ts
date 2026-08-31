@@ -43,6 +43,17 @@ export type ReopenOfficialResultInput = {
   reason: string;
 };
 
+export type RecordTieDecisionInput = {
+  access: OrganizationAccessContext;
+  divisionId: string;
+  expectedStandingsRevision: number;
+  orderedTeamIds: string[];
+  organizationId: string;
+  poolId: string;
+  reason: string;
+  teamIds: string[];
+};
+
 type OfficialGame = {
   away_score: number | null;
   away_team_id: string;
@@ -73,6 +84,12 @@ export class OfficialResultCoordinator {
     return this.db
       .transaction()
       .execute((trx) => this.reopenInTransaction(trx, input));
+  }
+
+  recordTieDecision(input: RecordTieDecisionInput) {
+    return this.db
+      .transaction()
+      .execute((trx) => this.recordTieDecisionInTransaction(trx, input));
   }
 
   async reopenInTransaction(db: any, input: ReopenOfficialResultInput) {
@@ -190,6 +207,7 @@ export class OfficialResultCoordinator {
           .selectFrom('competition.division_formats')
           .selectAll()
           .where('id', '=', sourceMatchup.division_format_id)
+          .forUpdate()
           .executeTakeFirst();
         if (format?.status === 'completed') {
           await db
@@ -268,6 +286,7 @@ export class OfficialResultCoordinator {
         .selectFrom('competition.division_formats')
         .selectAll()
         .where('division_id', '=', divisionId)
+        .forUpdate()
         .executeTakeFirstOrThrow();
       const game = await trx
         .selectFrom('competition.games')
@@ -302,6 +321,173 @@ export class OfficialResultCoordinator {
       });
       return { success: true };
     });
+  }
+
+  async recordTieDecisionInTransaction(db: any, input: RecordTieDecisionInput) {
+    const format = await db
+      .selectFrom('competition.division_formats as formats')
+      .innerJoin(
+        'admin.divisions as divisions',
+        'divisions.id',
+        'formats.division_id',
+      )
+      .innerJoin(
+        'admin.league_seasons as seasons',
+        'seasons.id',
+        'divisions.league_season_id',
+      )
+      .select([
+        'formats.crossover_template',
+        'formats.division_id',
+        'divisions.name as division_name',
+        'formats.id',
+        'divisions.league_season_id',
+        'formats.playoff_format',
+        'formats.pool_count',
+        'formats.qualifiers_per_pool',
+        'formats.qualifying_format',
+        'formats.revision',
+        'seasons.schedule_slot_duration_minutes',
+        'formats.status',
+        'formats.tiebreakers',
+      ])
+      .where('formats.division_id', '=', input.divisionId)
+      .where('seasons.organization_id', '=', input.organizationId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!format) throw new NotFoundException('Competition format not found');
+    if (format.status !== 'locked') {
+      throw new ConflictException(
+        'Tie decisions can only be recorded while the competition is locked and active.',
+      );
+    }
+    if (!this.hasSameMembers(input.teamIds, input.orderedTeamIds)) {
+      throw new BadRequestException(
+        'The confirmed order must include each tied team exactly once.',
+      );
+    }
+
+    const standings = await db
+      .selectFrom('competition.standings_projections')
+      .select(['pool_id', 'rank', 'team_id', 'unresolved_tie_key', 'version'])
+      .where('division_format_id', '=', format.id)
+      .forUpdate()
+      .execute();
+    const standingsRevision = standings.reduce(
+      (revision: number, row: { version: number }) =>
+        Math.max(revision, Number(row.version ?? 0)),
+      0,
+    );
+    if (standingsRevision !== input.expectedStandingsRevision) {
+      throw new ConflictException(
+        'The standings changed before this decision was saved. Refresh the standings and try again.',
+      );
+    }
+    const tieKey = [...input.teamIds].sort().join('|');
+    const unresolvedRows = standings.filter(
+      (row: {
+        pool_id: string;
+        rank: number | null;
+        unresolved_tie_key: string | null;
+      }) => row.pool_id === input.poolId && row.rank === null,
+    );
+    const keyedRows = unresolvedRows.filter(
+      (row: { unresolved_tie_key: string | null }) =>
+        row.unresolved_tie_key === tieKey,
+    );
+    const legacyRows = unresolvedRows.filter(
+      (row: { unresolved_tie_key: string | null }) =>
+        row.unresolved_tie_key === null,
+    );
+    const unresolvedTeamIds = (keyedRows.length > 0 ? keyedRows : legacyRows)
+      .map((row: { team_id: string }) => row.team_id);
+    if (!this.hasSameMembers(input.teamIds, unresolvedTeamIds)) {
+      throw new ConflictException(
+        'This tie has changed or has already been resolved. Refresh the standings before deciding.',
+      );
+    }
+
+    const decision = await db
+      .insertInto('competition.tie_decisions')
+      .values({
+        decided_by_member_id: input.access.membershipId,
+        division_format_id: format.id,
+        ordered_team_ids: serializeJsonArray(input.orderedTeamIds),
+        pool_id: input.poolId,
+        reason: input.reason.trim(),
+        team_ids: serializeJsonArray([...input.teamIds].sort()),
+        tie_key: tieKey,
+      })
+      .onConflict((conflict: any) =>
+        conflict
+          .columns(['division_format_id', 'pool_id', 'tie_key'])
+          .doUpdateSet({
+            decided_by_member_id: input.access.membershipId,
+            ordered_team_ids: serializeJsonArray(input.orderedTeamIds),
+            reason: input.reason.trim(),
+            team_ids: serializeJsonArray([...input.teamIds].sort()),
+          }),
+      )
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    await db
+      .insertInto('access.audit_events')
+      .values({
+        action: 'standings.tie_decided',
+        actor_member_id: input.access.membershipId,
+        metadata: {
+          expectedStandingsRevision: input.expectedStandingsRevision,
+          orderedTeamIds: input.orderedTeamIds,
+          poolId: input.poolId,
+          reason: input.reason.trim(),
+          teamIds: input.teamIds,
+          tieKey,
+        },
+        organization_id: input.organizationId,
+        target_id: format.id,
+        target_type: 'division_format',
+      })
+      .execute();
+
+    const game = await db
+      .selectFrom('competition.games as games')
+      .innerJoin(
+        'admin.league_seasons as seasons',
+        'seasons.id',
+        'games.league_season_id',
+      )
+      .select([
+        'games.away_score',
+        'games.away_team_id',
+        'games.competition_kind',
+        'games.division_id',
+        'games.home_score',
+        'games.home_team_id',
+        'games.id',
+        'games.league_season_id',
+        'games.matchup_id',
+        'games.status',
+      ])
+      .where('games.division_id', '=', input.divisionId)
+      .where('games.status', '=', 'final')
+      .where('seasons.organization_id', '=', input.organizationId)
+      .orderBy('games.finalized_at desc')
+      .executeTakeFirst();
+    if (!game) {
+      throw new ConflictException(
+        'A finalized game is required before standings can be recalculated.',
+      );
+    }
+
+    await this.rebuildPoolStandings(db, format, game, {
+      access: input.access,
+      awayScore: game.away_score ?? 0,
+      gameId: game.id,
+      homeScore: game.home_score ?? 0,
+      organizationId: input.organizationId,
+      source: 'manual',
+    });
+    return { decision };
   }
 
   async finalizeInTransaction(db: any, input: FinalizeOfficialResultInput) {
@@ -545,6 +731,7 @@ export class OfficialResultCoordinator {
       .selectFrom('competition.division_formats')
       .selectAll()
       .where('division_id', '=', game.division_id)
+      .forUpdate()
       .executeTakeFirst();
     if (!format) return { championTeamId: null, standingsRebuilt: false };
 
@@ -755,6 +942,14 @@ export class OfficialResultCoordinator {
       .execute();
     if (pools.length === 0) return;
 
+    const currentRevision = await db
+      .selectFrom('competition.standings_projections')
+      .select('version')
+      .where('division_format_id', '=', format.id)
+      .orderBy('version desc')
+      .executeTakeFirst();
+    const standingsRevision = Number(currentRevision?.version ?? 0) + 1;
+
     await db
       .deleteFrom('competition.standings_projections')
       .where('division_format_id', '=', format.id)
@@ -856,7 +1051,8 @@ export class OfficialResultCoordinator {
               rank: row.rank,
               ranking_explanation: serializeJsonArray(row.rankingExplanation),
               team_id: row.teamId,
-              version: 1,
+              unresolved_tie_key: row.unresolvedTieKey,
+              version: standingsRevision,
             })),
           )
           .execute();
@@ -1057,5 +1253,14 @@ export class OfficialResultCoordinator {
       .where('members.status', '=', 'active')
       .where('members.role', 'in', ['owner', 'admin'])
       .execute();
+  }
+
+  private hasSameMembers(left: string[], right: string[]): boolean {
+    return (
+      left.length === right.length &&
+      new Set(left).size === left.length &&
+      new Set(right).size === right.length &&
+      left.every((value) => right.includes(value))
+    );
   }
 }

@@ -317,8 +317,14 @@ export class CompetitionService {
         'The confirmed order must include each tied team exactly once.',
       );
     }
+    const tieKey = [...dto.teamIds].sort().join('|');
     const unresolvedTeamIds = workspace.standings
-      .filter((row) => row.pool_id === dto.poolId && row.rank === null)
+      .filter(
+        (row) =>
+          row.pool_id === dto.poolId &&
+          row.rank === null &&
+          (!row.unresolved_tie_key || row.unresolved_tie_key === tieKey),
+      )
       .map((row) => row.team_id);
     if (!this.hasSameMembers(dto.teamIds, unresolvedTeamIds)) {
       throw new ConflictException(
@@ -326,29 +332,38 @@ export class CompetitionService {
       );
     }
 
-    const tieKey = [...dto.teamIds].sort().join('|');
-    const decision = await this.repository.recordTieDecision(
-      format.id,
-      dto.poolId,
-      tieKey,
-      [...dto.teamIds].sort(),
-      dto.orderedTeamIds,
-      dto.reason.trim(),
-      access,
-    );
-    if (!this.officialResultCoordinator) {
+    if (
+      workspace.standingsRevision !== undefined &&
+      workspace.standingsRevision !== dto.expectedStandingsRevision
+    ) {
       throw new ConflictException(
-        'The standings service is temporarily unavailable. The decision was saved and can be recalculated after refresh.',
+        'The standings changed before this decision was saved. Refresh the standings and try again.',
       );
     }
-    await this.officialResultCoordinator.recalculateDivision(
+    if (!this.officialResultCoordinator) {
+      throw new ConflictException(
+        'The standings service is temporarily unavailable. Refresh and try again.',
+      );
+    }
+    const { decision } = await this.officialResultCoordinator.recordTieDecision(
+      {
+        access,
+        divisionId,
+        expectedStandingsRevision: dto.expectedStandingsRevision,
+        orderedTeamIds: dto.orderedTeamIds,
+        organizationId,
+        poolId: dto.poolId,
+        reason: dto.reason.trim(),
+        teamIds: [...dto.teamIds].sort(),
+      },
+    );
+    const latestFormat = await this.repository.findFormatContext(
       organizationId,
       divisionId,
-      access,
     );
     return {
       decision,
-      workspace: await this.repository.getWorkspace(format),
+      workspace: await this.repository.getWorkspace(latestFormat),
     };
   }
 
@@ -364,6 +379,7 @@ export class CompetitionService {
     return (
       left.length === right.length &&
       new Set(left).size === left.length &&
+      new Set(right).size === right.length &&
       left.every((value) => right.includes(value))
     );
   }
