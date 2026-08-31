@@ -25,7 +25,8 @@
     "migrate:down": "kysely migrate down",
     "migrate:latest": "kysely migrate latest",
     "migrate:list": "kysely migrate list",
-    "test:migrations:release": "node scripts/migration-release-check.mjs"
+    "test:migrations:release": "node scripts/migration-release-check.mjs",
+    "test:concurrency:release": "node scripts/concurrency-release-check.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
