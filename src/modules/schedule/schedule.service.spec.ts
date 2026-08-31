@@ -1327,3 +1327,26 @@ describe('ScheduleService statistician assignments', () => {
     );
   });
 });
+
+describe('ScheduleService archived parent protection', () => {
+  it('requires an active game and season before scheduling mutations', async () => {
+    const { db, executeTakeFirst } = createDbMock();
+    const service = new ScheduleService(db as never);
+
+    await (service as any).findGameRecord('org-1', 'game-1');
+    await (service as any).lockGameForScheduling(db, 'game-1');
+
+    const whereCalls = db.selectFrom.mock.results[0].value.where.mock.calls;
+    expect(whereCalls).toContainEqual(['games.archived_at', 'is', null]);
+    expect(whereCalls).toContainEqual([
+      'league_seasons.archived_at',
+      'is',
+      null,
+    ]);
+    expect(whereCalls).toContainEqual(['divisions.archived_at', 'is', null]);
+    expect(whereCalls).toContainEqual(['venues.archived_at', 'is', null]);
+    expect(whereCalls).toContainEqual(['home_teams.archived_at', 'is', null]);
+    expect(whereCalls).toContainEqual(['away_teams.archived_at', 'is', null]);
+    expect(executeTakeFirst).toHaveBeenCalled();
+  });
+});

@@ -92,7 +92,8 @@ export class ScheduleService {
     let query = trx
       .selectFrom('competition.games')
       .select(['id'])
-      .where('id', '=', gameId);
+      .where('id', '=', gameId)
+      .where('archived_at', 'is', null);
     if (typeof query.forUpdate === 'function') query = query.forUpdate();
     return query.executeTakeFirst();
   }
@@ -1452,6 +1453,26 @@ export class ScheduleService {
         'league_seasons.id',
         'games.league_season_id',
       )
+      .innerJoin(
+        'admin.divisions as divisions',
+        'divisions.id',
+        'games.division_id',
+      )
+      .innerJoin(
+        'admin.venues as venues',
+        'venues.id',
+        'games.venue_id',
+      )
+      .innerJoin(
+        'admin.teams as home_teams',
+        'home_teams.id',
+        'games.home_team_id',
+      )
+      .innerJoin(
+        'admin.teams as away_teams',
+        'away_teams.id',
+        'games.away_team_id',
+      )
       .select([
         'games.away_team_id',
         'games.away_score',
@@ -1473,6 +1494,12 @@ export class ScheduleService {
       ])
       .where('games.id', '=', gameId)
       .where('league_seasons.organization_id', '=', organizationId)
+      .where('games.archived_at', 'is', null)
+      .where('league_seasons.archived_at', 'is', null)
+      .where('divisions.archived_at', 'is', null)
+      .where('venues.archived_at', 'is', null)
+      .where('home_teams.archived_at', 'is', null)
+      .where('away_teams.archived_at', 'is', null)
       .executeTakeFirst();
 
     if (!game) {
@@ -1496,6 +1523,8 @@ export class ScheduleService {
       .select('games.league_season_id')
       .where('games.id', '=', gameId)
       .where('seasons.organization_id', '=', organizationId)
+      .where('games.archived_at', 'is', null)
+      .where('seasons.archived_at', 'is', null)
       .executeTakeFirst();
     if (!game) throw new NotFoundException('Schedule game not found');
     return game.league_season_id;
