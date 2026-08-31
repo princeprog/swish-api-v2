@@ -45,29 +45,57 @@ describe('StatisticsService submission', () => {
   });
 
   it('reconciles a submitted stat sheet against the live score projection', async () => {
-    const stateQuery = {
-      executeTakeFirst: jest.fn().mockResolvedValue({
-      away_score: 79,
-      home_score: 82,
-      phase: 'period_break',
-      current_period_number: 4,
-      regulation_periods: 4,
-      game_clock_remaining_ms: 0,
-      game_clock_running: false,
-      shot_clock_running: false,
+    const sheetQuery = {
+      executeTakeFirstOrThrow: jest.fn().mockResolvedValue({
+        id: 'sheet-1',
+        status: 'draft',
       }),
-      select: jest.fn().mockReturnThis(),
+      forUpdate: jest.fn().mockReturnThis(),
+      selectAll: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const boxScoreQuery = {
+      execute: jest.fn().mockResolvedValue([
+        {
+          assists: 0,
+          game_roster_player_id: 'home-player',
+          points: 82,
+          rebounds: 0,
+          steals: 0,
+          team_id: 'home-team',
+          turnovers: 0,
+        },
+        {
+          assists: 0,
+          game_roster_player_id: 'away-player',
+          points: 79,
+          rebounds: 0,
+          steals: 0,
+          team_id: 'away-team',
+          turnovers: 0,
+        },
+      ]),
+      selectAll: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
     };
     const updateSet = jest.fn().mockReturnThis();
     const updateQuery = {
-      executeTakeFirstOrThrow: jest.fn().mockResolvedValue({}),
+      execute: jest.fn().mockResolvedValue({ numUpdatedRows: 1n }),
       set: updateSet,
       where: jest.fn().mockReturnThis(),
     };
+    const transactionExecute = jest.fn(async (callback) =>
+      callback({
+        selectFrom: jest.fn((table: string) =>
+          table === 'statistics.game_stat_sheets'
+            ? sheetQuery
+            : boxScoreQuery,
+        ),
+        updateTable: jest.fn().mockReturnValue(updateQuery),
+      }),
+    );
     const db = {
-      selectFrom: jest.fn().mockReturnValue(stateQuery),
-      updateTable: jest.fn().mockReturnValue(updateQuery),
+      transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
     };
     const service = new StatisticsService(db as never, {} as never);
     jest.spyOn(service as any, 'assertGameAccess').mockResolvedValue({
@@ -84,28 +112,24 @@ describe('StatisticsService submission', () => {
       .spyOn(service as any, 'assertGameRosterSnapshots')
       .mockResolvedValue(undefined);
     jest.spyOn(service as any, 'ensureStatSheet').mockResolvedValue(undefined);
-    jest.spyOn(service, 'getState').mockResolvedValue({
-      boxScores: [
-        {
-          assists: 0,
-          playerId: 'home-player',
-          points: 82,
-          rebounds: 0,
-          steals: 0,
-          teamId: 'home-team',
-          turnovers: 0,
-        },
-        {
-          assists: 0,
-          playerId: 'away-player',
-          points: 79,
-          rebounds: 0,
-          steals: 0,
-          teamId: 'away-team',
-          turnovers: 0,
-        },
-      ],
-    } as never);
+    jest.spyOn(service as any, 'lockGameForStatistics').mockResolvedValue({
+      away_team_id: 'away-team',
+      home_team_id: 'home-team',
+      id: 'game-1',
+    });
+    jest
+      .spyOn(service as any, 'lockExistingScoringState')
+      .mockResolvedValue(undefined);
+    jest.spyOn(service as any, 'findLiveOfficialScore').mockResolvedValue({
+      away_score: 79,
+      home_score: 82,
+      phase: 'period_break',
+      current_period_number: 4,
+      regulation_periods: 4,
+      game_clock_remaining_ms: 0,
+      game_clock_running: false,
+      shot_clock_running: false,
+    });
 
     await expect(
       service.submit('org-1', 'game-1', {} as never, 'control-token'),
@@ -121,28 +145,28 @@ describe('StatisticsService submission', () => {
   });
 
   it('rejects a reconciled sheet while the game is still in an active period', async () => {
-    const stateQuery = {
-      executeTakeFirst: jest.fn().mockResolvedValue({
-        away_score: 79,
-        home_score: 82,
-        phase: 'live',
-        current_period_number: 1,
-        regulation_periods: 4,
-        game_clock_remaining_ms: 300_000,
-        game_clock_running: true,
-        shot_clock_running: true,
+    const sheetQuery = {
+      executeTakeFirstOrThrow: jest.fn().mockResolvedValue({
+        id: 'sheet-1',
+        status: 'draft',
       }),
-      select: jest.fn().mockReturnThis(),
+      forUpdate: jest.fn().mockReturnThis(),
+      selectAll: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
     };
     const updateQuery = {
-      executeTakeFirstOrThrow: jest.fn().mockResolvedValue({}),
+      execute: jest.fn().mockResolvedValue({ numUpdatedRows: 1n }),
       set: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
     };
+    const transactionExecute = jest.fn(async (callback) =>
+      callback({
+        selectFrom: jest.fn().mockReturnValue(sheetQuery),
+        updateTable: jest.fn().mockReturnValue(updateQuery),
+      }),
+    );
     const db = {
-      selectFrom: jest.fn().mockReturnValue(stateQuery),
-      updateTable: jest.fn().mockReturnValue(updateQuery),
+      transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
     };
     const service = new StatisticsService(db as never, {} as never);
     jest.spyOn(service as any, 'assertGameAccess').mockResolvedValue({
@@ -159,12 +183,24 @@ describe('StatisticsService submission', () => {
       .spyOn(service as any, 'assertGameRosterSnapshots')
       .mockResolvedValue(undefined);
     jest.spyOn(service as any, 'ensureStatSheet').mockResolvedValue(undefined);
-    jest.spyOn(service, 'getState').mockResolvedValue({
-      boxScores: [
-        { assists: 0, playerId: 'home-player', points: 82, rebounds: 0, steals: 0, teamId: 'home-team', turnovers: 0 },
-        { assists: 0, playerId: 'away-player', points: 79, rebounds: 0, steals: 0, teamId: 'away-team', turnovers: 0 },
-      ],
-    } as never);
+    jest.spyOn(service as any, 'lockGameForStatistics').mockResolvedValue({
+      away_team_id: 'away-team',
+      home_team_id: 'home-team',
+      id: 'game-1',
+    });
+    jest
+      .spyOn(service as any, 'lockExistingScoringState')
+      .mockResolvedValue(undefined);
+    jest.spyOn(service as any, 'findLiveOfficialScore').mockResolvedValue({
+      away_score: 79,
+      home_score: 82,
+      phase: 'live',
+      current_period_number: 1,
+      regulation_periods: 4,
+      game_clock_remaining_ms: 300_000,
+      game_clock_running: true,
+      shot_clock_running: true,
+    });
 
     await expect(
       service.submit('org-1', 'game-1', {} as never, 'control-token'),
@@ -310,5 +346,79 @@ describe('StatisticsService submission', () => {
     ).rejects.toThrow(
       'Start the game before recording player statistics. The published game rosters are captured when scoring begins.',
     );
+  });
+});
+
+describe('StatisticsService transactional control', () => {
+  it('claims control after locking the game, scoring state, and active session', async () => {
+    const game = {
+      away_score: null,
+      away_team_id: 'away-team',
+      home_score: null,
+      home_team_id: 'home-team',
+      id: 'game-1',
+      organization_id: 'org-1',
+      status: 'live',
+    };
+    const gameQuery = {
+      executeTakeFirst: jest.fn().mockResolvedValue(game),
+      forUpdate: jest.fn().mockReturnThis(),
+      innerJoin: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const stateQuery = {
+      executeTakeFirst: jest.fn().mockResolvedValue(undefined),
+      forUpdate: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const controlQuery = {
+      executeTakeFirst: jest.fn().mockResolvedValue(undefined),
+      forUpdate: jest.fn().mockReturnThis(),
+      selectAll: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const insertQuery = {
+      executeTakeFirstOrThrow: jest.fn().mockResolvedValue({
+        expires_at: new Date('2026-08-04T10:01:30.000Z'),
+        id: 'control-1',
+      }),
+      returning: jest.fn().mockReturnThis(),
+      values: jest.fn().mockReturnThis(),
+    };
+    const transactionExecute = jest.fn(async (callback) =>
+      callback({
+        insertInto: jest.fn().mockReturnValue(insertQuery),
+        selectFrom: jest.fn((table: string) =>
+          table.startsWith('competition.')
+            ? gameQuery
+            : table === 'scoring.game_states'
+              ? stateQuery
+              : controlQuery,
+        ),
+      }),
+    );
+    const db = {
+      transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
+    };
+    const service = new StatisticsService(db as never, {} as never);
+    jest.spyOn(service as any, 'assertGameAccess').mockResolvedValue(game);
+
+    await expect(
+      service.claimControl(
+        'org-1',
+        'game-1',
+        { membershipId: 'member-1' } as never,
+        'Statistics device',
+      ),
+    ).resolves.toEqual(
+      expect.objectContaining({ sessionId: 'control-1' }),
+    );
+
+    expect(transactionExecute).toHaveBeenCalledTimes(1);
+    expect(gameQuery.forUpdate).toHaveBeenCalledTimes(1);
+    expect(stateQuery.forUpdate).toHaveBeenCalledTimes(1);
+    expect(controlQuery.forUpdate).toHaveBeenCalledTimes(1);
   });
 });
