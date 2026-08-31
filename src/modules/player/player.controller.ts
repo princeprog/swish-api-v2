@@ -82,4 +82,24 @@ export class PlayerController {
   ) {
     return this.playerService.remove(organizationId, playerId, access);
   }
+
+  @Post(':playerId/archive')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.PLAYERS_MANAGE)
+  archive(
+    @Param('organizationId') organizationId: string,
+    @Param('playerId') playerId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+  ) {
+    return this.playerService.archive(organizationId, playerId, access);
+  }
+
+  @Post(':playerId/restore')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.PLAYERS_MANAGE)
+  restore(
+    @Param('organizationId') organizationId: string,
+    @Param('playerId') playerId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+  ) {
+    return this.playerService.restore(organizationId, playerId, access);
+  }
 }

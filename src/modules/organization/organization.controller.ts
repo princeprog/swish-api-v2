@@ -69,4 +69,24 @@ export class OrganizationController {
   ) {
     return this.organizationService.remove(organizationId, access);
   }
+
+  @Post(':organizationId/archive')
+  @UseGuards(OrganizationPermissionsGuard)
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.ORGANIZATION_MANAGE)
+  archive(
+    @Param('organizationId') organizationId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+  ) {
+    return this.organizationService.archive(organizationId, access);
+  }
+
+  @Post(':organizationId/restore')
+  @UseGuards(OrganizationPermissionsGuard)
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.ORGANIZATION_MANAGE)
+  restore(
+    @Param('organizationId') organizationId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+  ) {
+    return this.organizationService.restore(organizationId, access);
+  }
 }

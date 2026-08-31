@@ -312,30 +312,17 @@ describe('ScheduleService finalized game protection', () => {
     expect(updateExecuteTakeFirstOrThrow).not.toHaveBeenCalled();
   });
 
-  it('rejects deleting finalized games', async () => {
-    const { db, executeTakeFirst, deleteExecute } = createDbMock();
-    executeTakeFirst.mockResolvedValueOnce({
-      away_score: 79,
-      away_team_id: 'team-b',
-      created_at: new Date('2026-07-09T00:00:00.000Z'),
-      division_id: 'division-1',
-      finalized_at: new Date('2026-07-09T12:00:00.000Z'),
-      home_score: 82,
-      home_team_id: 'team-a',
-      id: 'game-1',
-      league_season_id: 'season-1',
-      published_at: new Date('2026-07-09T00:00:00.000Z'),
-      starts_at: new Date('2026-07-09T10:00:00.000Z'),
-      status: 'final',
-      updated_at: new Date('2026-07-09T12:00:00.000Z'),
-      venue_id: 'venue-1',
-    });
+  it('routes finalized game removal through archival', async () => {
+    const { db } = createDbMock();
     const service = new ScheduleService(db as never);
+    const archive = jest
+      .spyOn(service, 'archive')
+      .mockResolvedValue({ archived_at: new Date() } as never);
 
-    await expect(service.remove('org-1', 'game-1')).rejects.toThrow(
-      'This record cannot be deleted. Archive support is being prepared so league history remains available.',
+    await expect(service.remove('org-1', 'game-1')).resolves.toEqual(
+      expect.objectContaining({ archived_at: expect.any(Date) }),
     );
-    expect(deleteExecute).not.toHaveBeenCalled();
+    expect(archive).toHaveBeenCalledWith('org-1', 'game-1', undefined);
   });
 });
 

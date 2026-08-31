@@ -17,6 +17,11 @@ import { DATABASE, type Database } from '../../database/database.tokens';
 import { CreateTeamDto } from './dto/create-team.dto';
 import type { TeamListQueryDto } from './dto/team-list-query.dto';
 import { UpdateTeamDto } from './dto/update-team.dto';
+import {
+  archiveRecord,
+  restoreRecord,
+  writeArchiveAudit,
+} from '../../common/archival/archival';
 
 @Injectable()
 export class TeamService {
@@ -72,7 +77,10 @@ export class TeamService {
         'divisions.league_season_id',
       )
       .select((eb) => eb.fn.countAll().as('count'))
-      .where('league_seasons.organization_id', '=', organizationId);
+      .where('league_seasons.organization_id', '=', organizationId)
+      .where('league_seasons.archived_at', 'is', null)
+      .where('divisions.archived_at', 'is', null)
+      .where('teams.archived_at', 'is', null);
     let dataQuery = this.db
       .selectFrom('admin.teams as teams')
       .innerJoin(
@@ -88,6 +96,7 @@ export class TeamService {
       .select([
         'teams.color',
         'teams.created_at',
+        'teams.archived_at',
         'teams.division_id',
         'teams.id',
         'divisions.name as division_name',
@@ -99,6 +108,10 @@ export class TeamService {
         'teams.updated_at',
       ])
       .where('league_seasons.organization_id', '=', organizationId);
+    dataQuery = dataQuery
+      .where('league_seasons.archived_at', 'is', null)
+      .where('divisions.archived_at', 'is', null)
+      .where('teams.archived_at', 'is', null);
 
     if (
       access.permissions.includes(
@@ -198,6 +211,7 @@ export class TeamService {
       .select([
         'teams.color',
         'teams.created_at',
+        'teams.archived_at',
         'teams.division_id',
         'teams.id',
         'divisions.name as division_name',
@@ -284,6 +298,12 @@ export class TeamService {
         ? [ORGANIZATION_PERMISSIONS.TEAMS_READ]
         : [ORGANIZATION_PERMISSIONS.TEAMS_READ_ASSIGNED],
     });
+
+    if (team.archived_at) {
+      throw new ConflictException(
+        'This team is archived. Restore it before making changes.',
+      );
+    }
     const targetDivisionId = updateTeamDto.divisionId ?? team.division_id;
 
     if (
@@ -328,16 +348,121 @@ export class TeamService {
     return updated;
   }
 
-  async remove(organizationId: string, teamId: string) {
-    throw new ConflictException(
-      'This record cannot be deleted. Archive support is being prepared so league history remains available.',
-    );
+  async remove(
+    organizationId: string,
+    teamId: string,
+    access?: OrganizationAccessContext,
+  ) {
+    return this.archive(organizationId, teamId, access);
+  }
 
-    await this.findOne(organizationId, teamId);
+  async archive(
+    organizationId: string,
+    teamId: string,
+    access?: OrganizationAccessContext,
+  ) {
+    return this.db.transaction().execute(async (trx) => {
+      const team = await trx
+        .selectFrom('admin.teams as teams')
+        .innerJoin(
+          'admin.divisions as divisions',
+          'divisions.id',
+          'teams.division_id',
+        )
+        .innerJoin(
+          'admin.league_seasons as seasons',
+          'seasons.id',
+          'divisions.league_season_id',
+        )
+        .select([
+          'teams.archived_at',
+          'teams.id',
+          'divisions.archived_at as division_archived_at',
+          'seasons.archived_at as season_archived_at',
+        ])
+        .where('teams.id', '=', teamId)
+        .where('seasons.organization_id', '=', organizationId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!team) throw new NotFoundException('Team not found');
+      if (team.archived_at) return team;
 
-    await this.db.deleteFrom('admin.teams').where('id', '=', teamId).execute();
+      const openGame = await trx
+        .selectFrom('competition.games')
+        .select('id')
+        .where((eb) =>
+          eb.or([
+            eb('home_team_id', '=', teamId),
+            eb('away_team_id', '=', teamId),
+          ]),
+        )
+        .where('archived_at', 'is', null)
+        .where('status', 'in', ['live', 'reopened'])
+        .executeTakeFirst();
+      if (openGame) {
+        throw new ConflictException(
+          'Finish or reopen the active games before archiving this team.',
+        );
+      }
 
-    return { success: true };
+      const archived = await archiveRecord(trx, 'admin.teams', teamId);
+      await writeArchiveAudit(trx, {
+        action: 'team.archived',
+        actor: access,
+        organizationId,
+        targetId: teamId,
+        targetType: 'team',
+      });
+      return archived;
+    });
+  }
+
+  async restore(
+    organizationId: string,
+    teamId: string,
+    access?: OrganizationAccessContext,
+  ) {
+    return this.db.transaction().execute(async (trx) => {
+      const team = await trx
+        .selectFrom('admin.teams as teams')
+        .innerJoin(
+          'admin.divisions as divisions',
+          'divisions.id',
+          'teams.division_id',
+        )
+        .innerJoin(
+          'admin.league_seasons as seasons',
+          'seasons.id',
+          'divisions.league_season_id',
+        )
+        .select([
+          'teams.archived_at',
+          'teams.id',
+          'divisions.archived_at as division_archived_at',
+          'seasons.archived_at as season_archived_at',
+        ])
+        .where('teams.id', '=', teamId)
+        .where('seasons.organization_id', '=', organizationId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!team) throw new NotFoundException('Team not found');
+      if (!team.archived_at) return team;
+      if (team.division_archived_at || team.season_archived_at) {
+        throw new ConflictException(
+          'Restore the league season and division before restoring this team.',
+        );
+      }
+
+      const restored = await restoreRecord(trx, 'admin.teams', teamId);
+      await writeArchiveAudit(trx, {
+        action: 'team.restored',
+        actor: access,
+        organizationId,
+        targetId: teamId,
+        targetType: 'team',
+      });
+      return restored;
+    });
   }
 
   private async assertDivisionBelongsToOrganization(
@@ -354,6 +479,8 @@ export class TeamService {
       .select(['divisions.id'])
       .where('divisions.id', '=', divisionId)
       .where('league_seasons.organization_id', '=', organizationId)
+      .where('divisions.archived_at', 'is', null)
+      .where('league_seasons.archived_at', 'is', null)
       .executeTakeFirst();
 
     if (!division) {

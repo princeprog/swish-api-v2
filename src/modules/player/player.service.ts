@@ -18,6 +18,11 @@ import { RosterService } from '../roster/roster.service';
 import { CreatePlayerDto } from './dto/create-player.dto';
 import type { PlayerListQueryDto } from './dto/player-list-query.dto';
 import { UpdatePlayerDto } from './dto/update-player.dto';
+import {
+  archiveRecord,
+  restoreRecord,
+  writeArchiveAudit,
+} from '../../common/archival/archival';
 
 @Injectable()
 export class PlayerService {
@@ -75,7 +80,11 @@ export class PlayerService {
         'divisions.league_season_id',
       )
       .select((eb) => eb.fn.countAll().as('count'))
-      .where('league_seasons.organization_id', '=', organizationId);
+      .where('league_seasons.organization_id', '=', organizationId)
+      .where('league_seasons.archived_at', 'is', null)
+      .where('divisions.archived_at', 'is', null)
+      .where('teams.archived_at', 'is', null)
+      .where('players.archived_at', 'is', null);
     let dataQuery = this.db
       .selectFrom('admin.players as players')
       .innerJoin('admin.teams as teams', 'teams.id', 'players.team_id')
@@ -91,6 +100,7 @@ export class PlayerService {
       )
       .select([
         'players.created_at',
+        'players.archived_at',
         'players.id',
         'players.jersey_number',
         'players.name',
@@ -100,6 +110,11 @@ export class PlayerService {
         'players.updated_at',
       ])
       .where('league_seasons.organization_id', '=', organizationId);
+    dataQuery = dataQuery
+      .where('league_seasons.archived_at', 'is', null)
+      .where('divisions.archived_at', 'is', null)
+      .where('teams.archived_at', 'is', null)
+      .where('players.archived_at', 'is', null);
 
     if (
       access.permissions.includes(
@@ -200,10 +215,7 @@ export class PlayerService {
         .orderBy('players.name', 'asc');
     } else {
       dataQuery = dataQuery
-        .orderBy(
-          'players.updated_at',
-          query.sortDirection ?? 'desc',
-        )
+        .orderBy('players.updated_at', query.sortDirection ?? 'desc')
         .orderBy('players.name', 'asc');
     }
 
@@ -235,6 +247,7 @@ export class PlayerService {
       )
       .select([
         'players.created_at',
+        'players.archived_at',
         'players.id',
         'players.jersey_number',
         'players.name',
@@ -285,6 +298,11 @@ export class PlayerService {
     updatePlayerDto: UpdatePlayerDto,
   ) {
     const player = await this.findOne(organizationId, playerId, access);
+    if (player.archived_at) {
+      throw new ConflictException(
+        'This player is archived. Restore the player before making changes.',
+      );
+    }
     const targetTeamId = updatePlayerDto.teamId ?? player.team_id;
     await this.assertCanManageTeamRoster(access, targetTeamId);
     await this.rosterService.assertRosterEditable(player.team_id);
@@ -330,20 +348,107 @@ export class PlayerService {
     playerId: string,
     access: OrganizationAccessContext,
   ) {
-    throw new ConflictException(
-      'This record cannot be deleted. Archive support is being prepared so league history remains available.',
-    );
+    return this.archive(organizationId, playerId, access);
+  }
 
-    const player = await this.findOne(organizationId, playerId, access);
-    await this.assertCanManageTeamRoster(access, player.team_id);
-    await this.rosterService.assertRosterEditable(player.team_id);
+  async archive(
+    organizationId: string,
+    playerId: string,
+    access?: OrganizationAccessContext,
+  ) {
+    return this.db.transaction().execute(async (trx) => {
+      const player = await trx
+        .selectFrom('admin.players as players')
+        .innerJoin('admin.teams as teams', 'teams.id', 'players.team_id')
+        .innerJoin(
+          'admin.divisions as divisions',
+          'divisions.id',
+          'teams.division_id',
+        )
+        .innerJoin(
+          'admin.league_seasons as seasons',
+          'seasons.id',
+          'divisions.league_season_id',
+        )
+        .select([
+          'players.archived_at',
+          'players.id',
+          'players.team_id',
+          'teams.archived_at as team_archived_at',
+          'divisions.archived_at as division_archived_at',
+          'seasons.archived_at as season_archived_at',
+        ])
+        .where('players.id', '=', playerId)
+        .where('seasons.organization_id', '=', organizationId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!player) throw new NotFoundException('Player not found');
+      if (player.archived_at) return player;
 
-    await this.db
-      .deleteFrom('admin.players')
-      .where('id', '=', playerId)
-      .execute();
+      const archived = await archiveRecord(trx, 'admin.players', playerId);
+      await writeArchiveAudit(trx, {
+        action: 'player.archived',
+        actor: access,
+        organizationId,
+        targetId: playerId,
+        targetType: 'player',
+      });
+      return archived;
+    });
+  }
 
-    return { success: true };
+  async restore(
+    organizationId: string,
+    playerId: string,
+    access?: OrganizationAccessContext,
+  ) {
+    return this.db.transaction().execute(async (trx) => {
+      const player = await trx
+        .selectFrom('admin.players as players')
+        .innerJoin('admin.teams as teams', 'teams.id', 'players.team_id')
+        .innerJoin(
+          'admin.divisions as divisions',
+          'divisions.id',
+          'teams.division_id',
+        )
+        .innerJoin(
+          'admin.league_seasons as seasons',
+          'seasons.id',
+          'divisions.league_season_id',
+        )
+        .select([
+          'players.archived_at',
+          'players.id',
+          'teams.archived_at as team_archived_at',
+          'divisions.archived_at as division_archived_at',
+          'seasons.archived_at as season_archived_at',
+        ])
+        .where('players.id', '=', playerId)
+        .where('seasons.organization_id', '=', organizationId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!player) throw new NotFoundException('Player not found');
+      if (!player.archived_at) return player;
+      if (
+        player.team_archived_at ||
+        player.division_archived_at ||
+        player.season_archived_at
+      ) {
+        throw new ConflictException(
+          'Restore the league season, division, and team before restoring this player.',
+        );
+      }
+
+      const restored = await restoreRecord(trx, 'admin.players', playerId);
+      await writeArchiveAudit(trx, {
+        action: 'player.restored',
+        actor: access,
+        organizationId,
+        targetId: playerId,
+        targetType: 'player',
+      });
+      return restored;
+    });
   }
 
   private async assertTeamBelongsToOrganization(
@@ -365,6 +470,9 @@ export class PlayerService {
       .select(['teams.id'])
       .where('teams.id', '=', teamId)
       .where('league_seasons.organization_id', '=', organizationId)
+      .where('teams.archived_at', 'is', null)
+      .where('divisions.archived_at', 'is', null)
+      .where('league_seasons.archived_at', 'is', null)
       .executeTakeFirst();
 
     if (!team) {

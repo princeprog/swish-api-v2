@@ -196,6 +196,7 @@ export interface AdminRosterVersions {
 }
 
 export interface AdminScheduleGames {
+  archived_at: Timestamp | null;
   away_score: number | null;
   away_team_color: string | null;
   away_team_id: string | null;

@@ -15,8 +15,15 @@ import { CreateLeagueSeasonDto } from './dto/create-league-season.dto';
 import { UpdateLeagueSeasonDto } from './dto/update-league-season.dto';
 import type { LeagueSeasonGameRulesDto } from './dto/league-season-game-rules.dto';
 import type { LeagueSeasonCompetitionDefaultsDto } from './dto/league-season-competition-defaults.dto';
+import type { OrganizationAccessContext } from '../../common/auth/roles';
+import {
+  archiveRecord,
+  restoreRecord,
+  writeArchiveAudit,
+} from '../../common/archival/archival';
 
 type LeagueSeasonRecord = {
+  archived_at: Date | null;
   created_at: Date;
   default_crossover_template: unknown;
   default_playoff_format: string;
@@ -167,11 +174,13 @@ export class LeagueSeasonService {
       .selectFrom('admin.league_seasons')
       .select((eb) => eb.fn.countAll().as('count'))
       .where('organization_id', '=', organizationId)
+      .where('archived_at', 'is', null)
       .executeTakeFirstOrThrow();
     const data = await this.db
       .selectFrom('admin.league_seasons')
       .selectAll()
       .where('organization_id', '=', organizationId)
+      .where('archived_at', 'is', null)
       .orderBy('created_at asc')
       .limit(pagination.limit)
       .offset(pagination.offset)
@@ -242,6 +251,12 @@ export class LeagueSeasonService {
   ) {
     const leagueSeason = await this.findOne(organizationId, leagueSeasonId);
 
+    if (leagueSeason.archived_at) {
+      throw new ConflictException(
+        'This season is archived. Restore it before making changes.',
+      );
+    }
+
     if (
       updateLeagueSeasonDto.slug &&
       updateLeagueSeasonDto.slug !== leagueSeason.slug
@@ -297,20 +312,93 @@ export class LeagueSeasonService {
     });
   }
 
-  async remove(organizationId: string, leagueSeasonId: string) {
-    throw new ConflictException(
-      'This record cannot be deleted. Archive support is being prepared so league history remains available.',
-    );
+  async remove(
+    organizationId: string,
+    leagueSeasonId: string,
+    access?: OrganizationAccessContext,
+  ) {
+    return this.archive(organizationId, leagueSeasonId, access);
+  }
 
-    await this.findOne(organizationId, leagueSeasonId);
+  async archive(
+    organizationId: string,
+    leagueSeasonId: string,
+    access?: OrganizationAccessContext,
+  ) {
+    return this.db.transaction().execute(async (trx) => {
+      const season = await trx
+        .selectFrom('admin.league_seasons')
+        .selectAll()
+        .where('id', '=', leagueSeasonId)
+        .where('organization_id', '=', organizationId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!season) {
+        throw new NotFoundException('League season not found');
+      }
+      if (season.archived_at) return season;
 
-    await this.db
-      .deleteFrom('admin.league_seasons')
-      .where('id', '=', leagueSeasonId)
-      .where('organization_id', '=', organizationId)
-      .execute();
+      const openGame = await trx
+        .selectFrom('competition.games')
+        .select('id')
+        .where('league_season_id', '=', leagueSeasonId)
+        .where('archived_at', 'is', null)
+        .where('status', 'in', ['live', 'reopened'])
+        .executeTakeFirst();
+      if (openGame) {
+        throw new ConflictException(
+          'Finish or reopen the active games before archiving this season.',
+        );
+      }
 
-    return { success: true };
+      const archived = await archiveRecord(
+        trx,
+        'admin.league_seasons',
+        leagueSeasonId,
+      );
+      await writeArchiveAudit(trx, {
+        action: 'league_season.archived',
+        actor: access,
+        organizationId,
+        targetId: leagueSeasonId,
+        targetType: 'league_season',
+      });
+      return archived;
+    });
+  }
+
+  async restore(
+    organizationId: string,
+    leagueSeasonId: string,
+    access?: OrganizationAccessContext,
+  ) {
+    return this.db.transaction().execute(async (trx) => {
+      const season = await trx
+        .selectFrom('admin.league_seasons')
+        .selectAll()
+        .where('id', '=', leagueSeasonId)
+        .where('organization_id', '=', organizationId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!season) {
+        throw new NotFoundException('League season not found');
+      }
+      if (!season.archived_at) return season;
+
+      const restored = await restoreRecord(
+        trx,
+        'admin.league_seasons',
+        leagueSeasonId,
+      );
+      await writeArchiveAudit(trx, {
+        action: 'league_season.restored',
+        actor: access,
+        organizationId,
+        targetId: leagueSeasonId,
+        targetType: 'league_season',
+      });
+      return restored;
+    });
   }
 
   private async assertOrganizationExists(
@@ -320,6 +408,7 @@ export class LeagueSeasonService {
       .selectFrom('admin.organizations')
       .select(['id'])
       .where('id', '=', organizationId)
+      .where('archived_at', 'is', null)
       .executeTakeFirst();
 
     if (!organization) {

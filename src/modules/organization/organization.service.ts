@@ -13,6 +13,12 @@ import {
 } from '../../common/auth/roles';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
+import {
+  archiveRecord,
+  lockArchiveRecord,
+  restoreRecord,
+  writeArchiveAudit,
+} from '../../common/archival/archival';
 
 @Injectable()
 export class OrganizationService {
@@ -88,6 +94,7 @@ export class OrganizationService {
       ])
       .where('organization_members.user_id', '=', userId)
       .where('organization_members.status', '=', 'active')
+      .where('organizations.archived_at', 'is', null)
       .orderBy('organizations.created_at asc')
       .execute()
       .then((organizations) =>
@@ -114,6 +121,12 @@ export class OrganizationService {
     updateOrganizationDto: UpdateOrganizationDto,
   ) {
     const organization = await this.findOne(organizationId);
+
+    if (organization.archived_at) {
+      throw new ConflictException(
+        'This organization is archived. Restore it before making changes.',
+      );
+    }
 
     if (
       updateOrganizationDto.slug &&
@@ -142,44 +155,84 @@ export class OrganizationService {
   }
 
   async remove(organizationId: string, access: OrganizationAccessContext) {
-    throw new ConflictException(
-      'This record cannot be deleted. Archive support is being prepared so league history remains available.',
-    );
-
-    await this.findOne(organizationId);
-    await this.writeAudit(
-      access,
-      'organization.deleted',
-      'organization',
-      organizationId,
-      {},
-    );
-
-    await this.db
-      .deleteFrom('admin.organizations')
-      .where('id', '=', organizationId)
-      .execute();
-
-    return { success: true };
+    return this.archive(organizationId, access);
   }
 
-  private async writeAudit(
-    access: OrganizationAccessContext,
-    action: string,
-    targetType: string,
-    targetId: string,
-    metadata: Record<string, unknown>,
-  ) {
-    await (this.db as any)
-      .insertInto('access.audit_events')
-      .values({
-        action,
-        actor_member_id: access.membershipId,
-        metadata,
-        organization_id: access.organizationId,
-        target_id: targetId,
-        target_type: targetType,
-      })
-      .execute();
+  async archive(organizationId: string, access?: OrganizationAccessContext) {
+    return this.db.transaction().execute(async (trx) => {
+      const organization = await lockArchiveRecord(
+        trx,
+        'admin.organizations',
+        organizationId,
+      );
+      if (!organization) {
+        throw new NotFoundException('Organization not found');
+      }
+      if (organization.archived_at) {
+        return organization;
+      }
+
+      const openGame = await trx
+        .selectFrom('competition.games as games')
+        .innerJoin(
+          'admin.league_seasons as seasons',
+          'seasons.id',
+          'games.league_season_id',
+        )
+        .select('games.id')
+        .where('seasons.organization_id', '=', organizationId)
+        .where('games.archived_at', 'is', null)
+        .where('games.status', 'in', ['live', 'reopened'])
+        .executeTakeFirst();
+      if (openGame) {
+        throw new ConflictException(
+          'Finish or reopen the active games before archiving this organization.',
+        );
+      }
+
+      const archived = await archiveRecord(
+        trx,
+        'admin.organizations',
+        organizationId,
+      );
+      await writeArchiveAudit(trx, {
+        action: 'organization.archived',
+        actor: access,
+        organizationId,
+        targetId: organizationId,
+        targetType: 'organization',
+      });
+      return archived;
+    });
+  }
+
+  async restore(organizationId: string, access?: OrganizationAccessContext) {
+    return this.db.transaction().execute(async (trx) => {
+      const organization = await lockArchiveRecord(
+        trx,
+        'admin.organizations',
+        organizationId,
+      );
+      if (!organization) {
+        throw new NotFoundException('Organization not found');
+      }
+      if (!organization.archived_at) {
+        return organization;
+      }
+
+      const restored = await restoreRecord(
+        trx,
+        'admin.organizations',
+        organizationId,
+      );
+      await writeArchiveAudit(trx, {
+        action: 'organization.restored',
+        actor: access,
+        organizationId,
+        targetId: organizationId,
+        targetType: 'organization',
+      });
+      return restored;
+    });
   }
 }

@@ -144,7 +144,28 @@ export class ScheduleController {
   remove(
     @Param('organizationId') organizationId: string,
     @Param('gameId') gameId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
   ) {
-    return this.scheduleService.remove(organizationId, gameId);
+    return this.scheduleService.remove(organizationId, gameId, access);
+  }
+
+  @Post(':gameId/archive')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE)
+  archive(
+    @Param('organizationId') organizationId: string,
+    @Param('gameId') gameId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+  ) {
+    return this.scheduleService.archive(organizationId, gameId, access);
+  }
+
+  @Post(':gameId/restore')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE)
+  restore(
+    @Param('organizationId') organizationId: string,
+    @Param('gameId') gameId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+  ) {
+    return this.scheduleService.restore(organizationId, gameId, access);
   }
 }

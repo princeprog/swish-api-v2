@@ -9,7 +9,11 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ORGANIZATION_PERMISSIONS } from '../../common/auth/roles';
+import {
+  ORGANIZATION_PERMISSIONS,
+  type OrganizationAccessContext,
+} from '../../common/auth/roles';
+import { OrganizationAccess } from '../../common/decorators/organization-access.decorator';
 import { RequireOrganizationPermissions } from '../../common/decorators/organization-permissions.decorator';
 import { OrganizationPermissionsGuard } from '../../common/guards/organization-permissions.guard';
 import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
@@ -61,7 +65,26 @@ export class VenueController {
   remove(
     @Param('organizationId') organizationId: string,
     @Param('venueId') venueId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
   ) {
-    return this.venueService.remove(organizationId, venueId);
+    return this.venueService.remove(organizationId, venueId, access);
+  }
+
+  @Post(':venueId/archive')
+  archive(
+    @Param('organizationId') organizationId: string,
+    @Param('venueId') venueId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+  ) {
+    return this.venueService.archive(organizationId, venueId, access);
+  }
+
+  @Post(':venueId/restore')
+  restore(
+    @Param('organizationId') organizationId: string,
+    @Param('venueId') venueId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+  ) {
+    return this.venueService.restore(organizationId, venueId, access);
   }
 }

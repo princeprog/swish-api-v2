@@ -77,7 +77,28 @@ export class TeamController {
   remove(
     @Param('organizationId') organizationId: string,
     @Param('teamId') teamId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
   ) {
-    return this.teamService.remove(organizationId, teamId);
+    return this.teamService.remove(organizationId, teamId, access);
+  }
+
+  @Post(':teamId/archive')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.TEAMS_DELETE)
+  archive(
+    @Param('organizationId') organizationId: string,
+    @Param('teamId') teamId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+  ) {
+    return this.teamService.archive(organizationId, teamId, access);
+  }
+
+  @Post(':teamId/restore')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.TEAMS_DELETE)
+  restore(
+    @Param('organizationId') organizationId: string,
+    @Param('teamId') teamId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+  ) {
+    return this.teamService.restore(organizationId, teamId, access);
   }
 }

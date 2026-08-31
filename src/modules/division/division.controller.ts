@@ -9,7 +9,11 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ORGANIZATION_PERMISSIONS } from '../../common/auth/roles';
+import {
+  ORGANIZATION_PERMISSIONS,
+  type OrganizationAccessContext,
+} from '../../common/auth/roles';
+import { OrganizationAccess } from '../../common/decorators/organization-access.decorator';
 import { RequireOrganizationPermissions } from '../../common/decorators/organization-permissions.decorator';
 import { OrganizationPermissionsGuard } from '../../common/guards/organization-permissions.guard';
 import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
@@ -69,7 +73,28 @@ export class DivisionController {
   remove(
     @Param('organizationId') organizationId: string,
     @Param('divisionId') divisionId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
   ) {
-    return this.divisionService.remove(organizationId, divisionId);
+    return this.divisionService.remove(organizationId, divisionId, access);
+  }
+
+  @Post(':divisionId/archive')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.DIVISIONS_MANAGE)
+  archive(
+    @Param('organizationId') organizationId: string,
+    @Param('divisionId') divisionId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+  ) {
+    return this.divisionService.archive(organizationId, divisionId, access);
+  }
+
+  @Post(':divisionId/restore')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.DIVISIONS_MANAGE)
+  restore(
+    @Param('organizationId') organizationId: string,
+    @Param('divisionId') divisionId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+  ) {
+    return this.divisionService.restore(organizationId, divisionId, access);
   }
 }

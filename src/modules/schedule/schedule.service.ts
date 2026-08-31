@@ -22,8 +22,14 @@ import type { NotificationEventType } from '../notification/notification.events'
 import { findScheduleConflict } from './schedule-conflicts';
 import type { UpdateStatisticianAssignmentDto } from './dto/update-statistician-assignment.dto';
 import { OfficialResultCoordinator } from '../official-result/official-result.service';
+import {
+  archiveRecord,
+  restoreRecord,
+  writeArchiveAudit,
+} from '../../common/archival/archival';
 
 type ScheduleGameRecord = {
+  archived_at: Date | null;
   away_score: number | null;
   away_team_id: string;
   created_at: Date;
@@ -70,7 +76,8 @@ export class ScheduleService {
       .selectFrom('admin.league_seasons')
       .select(['id', 'schedule_slot_duration_minutes'])
       .where('id', '=', leagueSeasonId)
-      .where('organization_id', '=', organizationId);
+      .where('organization_id', '=', organizationId)
+      .where('archived_at', 'is', null);
     if (typeof query.forUpdate === 'function') query = query.forUpdate();
     const season = await query.executeTakeFirst();
     if (!season) {
@@ -245,6 +252,7 @@ export class ScheduleService {
       .selectFrom('competition.games')
       .select('id')
       .where('matchup_id', '=', input.matchupId)
+      .where('archived_at', 'is', null)
       .executeTakeFirst();
 
     if (existingGame) {
@@ -475,7 +483,8 @@ export class ScheduleService {
     let dataQuery = (this.db as any)
       .selectFrom('admin.schedule_games')
       .selectAll()
-      .where('organization_id', '=', organizationId);
+      .where('organization_id', '=', organizationId)
+      .where('archived_at', 'is', null);
 
     dataQuery = this.applyGameReadScope(dataQuery, access);
 
@@ -678,29 +687,124 @@ export class ScheduleService {
     return updatedGame;
   }
 
-  async remove(organizationId: string, gameId: string) {
-    throw new ConflictException(
-      'This record cannot be deleted. Archive support is being prepared so league history remains available.',
-    );
+  async remove(
+    organizationId: string,
+    gameId: string,
+    access?: OrganizationAccessContext,
+  ) {
+    return this.archive(organizationId, gameId, access);
+  }
 
-    const existingGame = await this.findGameRecord(organizationId, gameId);
-    this.assertGameCanBeDeleted(existingGame.status);
+  async archive(
+    organizationId: string,
+    gameId: string,
+    access?: OrganizationAccessContext,
+  ) {
+    return this.db.transaction().execute(async (trx) => {
+      const game = await trx
+        .selectFrom('competition.games')
+        .selectAll()
+        .where('id', '=', gameId)
+        .where(
+          'league_season_id',
+          'in',
+          trx
+            .selectFrom('admin.league_seasons')
+            .select('id')
+            .where('organization_id', '=', organizationId),
+        )
+        .forUpdate()
+        .executeTakeFirst();
+      if (!game) throw new NotFoundException('Schedule game not found');
+      if (game.archived_at) return game;
+      if (['live', 'reopened'].includes(game.status)) {
+        throw new ConflictException(
+          'Live or reopened games must be completed before they can be archived.',
+        );
+      }
 
-    if (existingGame.published_at) {
-      await this.notifyGameRecipients(
+      const archived = await archiveRecord(trx, 'competition.games', gameId);
+      const isUnstartedGeneratedGame =
+        Boolean(game.matchup_id) &&
+        game.home_score === null &&
+        game.away_score === null &&
+        game.finalized_at === null &&
+        !['live', 'reopened', 'final'].includes(game.status);
+      if (isUnstartedGeneratedGame && game.matchup_id) {
+        await trx
+          .updateTable('competition.matchups')
+          .set({ status: 'ready', updated_at: new Date() })
+          .where('id', '=', game.matchup_id)
+          .executeTakeFirst();
+      }
+      await writeArchiveAudit(trx, {
+        action: 'game.archived',
+        actor: access,
         organizationId,
-        gameId,
-        undefined,
-        'schedule.game_removed',
-      );
-    }
+        targetId: gameId,
+        targetType: 'game',
+      });
+      return archived;
+    });
+  }
 
-    await this.db
-      .deleteFrom('competition.games')
-      .where('id', '=', gameId)
-      .execute();
+  async restore(
+    organizationId: string,
+    gameId: string,
+    access?: OrganizationAccessContext,
+  ) {
+    return this.db.transaction().execute(async (trx) => {
+      const game = await trx
+        .selectFrom('competition.games')
+        .selectAll()
+        .where('id', '=', gameId)
+        .where(
+          'league_season_id',
+          'in',
+          trx
+            .selectFrom('admin.league_seasons')
+            .select('id')
+            .where('organization_id', '=', organizationId),
+        )
+        .forUpdate()
+        .executeTakeFirst();
+      if (!game) throw new NotFoundException('Schedule game not found');
+      if (!game.archived_at) return game;
+      if (game.matchup_id) {
+        const activeGame = await trx
+          .selectFrom('competition.games')
+          .select('id')
+          .where('matchup_id', '=', game.matchup_id)
+          .where('archived_at', 'is', null)
+          .where('id', '!=', gameId)
+          .executeTakeFirst();
+        if (activeGame) {
+          throw new ConflictException(
+            'This generated matchup already has an active game.',
+          );
+        }
+      }
 
-    return { success: true };
+      const restored = await restoreRecord(trx, 'competition.games', gameId);
+      if (game.matchup_id) {
+        await trx
+          .updateTable('competition.matchups')
+          .set({
+            status: game.status === 'draft' ? 'ready' : 'scheduled',
+            updated_at: new Date(),
+          })
+          .where('id', '=', game.matchup_id)
+          .executeTakeFirst();
+      }
+      await writeArchiveAudit(trx, {
+        action: 'game.restored',
+        actor: access,
+        organizationId,
+        targetId: gameId,
+        targetType: 'game',
+      });
+      return restored;
+    });
   }
 
   async finalizeManually(
@@ -1225,6 +1329,7 @@ export class ScheduleService {
         'statisticians.organization_member_id as statistician_member_id',
       ])
       .where('games.league_season_id', '=', params.leagueSeasonId)
+      .where('games.archived_at', 'is', null)
       .where('games.status', 'in', ['scheduled', 'live', 'reopened'])
       .execute();
     const conflict = findScheduleConflict(
@@ -1271,6 +1376,7 @@ export class ScheduleService {
       .select(['id'])
       .where('id', '=', leagueSeasonId)
       .where('organization_id', '=', organizationId)
+      .where('archived_at', 'is', null)
       .executeTakeFirst();
 
     if (!leagueSeason) {
@@ -1290,6 +1396,7 @@ export class ScheduleService {
       .select(['id'])
       .where('id', '=', divisionId)
       .where('league_season_id', '=', leagueSeasonId)
+      .where('archived_at', 'is', null)
       .executeTakeFirst();
 
     if (!division) {
@@ -1307,6 +1414,7 @@ export class ScheduleService {
       .select(['id'])
       .where('id', '=', venueId)
       .where('league_season_id', '=', leagueSeasonId)
+      .where('archived_at', 'is', null)
       .executeTakeFirst();
 
     if (!venue) {
@@ -1324,6 +1432,7 @@ export class ScheduleService {
       .select(['id'])
       .where('id', '=', teamId)
       .where('division_id', '=', divisionId)
+      .where('archived_at', 'is', null)
       .executeTakeFirst();
 
     if (!team) {
@@ -1346,6 +1455,7 @@ export class ScheduleService {
       .select([
         'games.away_team_id',
         'games.away_score',
+        'games.archived_at',
         'games.created_at',
         'games.division_id',
         'games.finalized_at',
@@ -1545,6 +1655,7 @@ export class ScheduleService {
   ): Promise<void> {
     if (
       ['live', 'final', 'reopened'].includes(game.status) ||
+      (game.archived_at !== null && game.archived_at !== undefined) ||
       game.away_score !== null ||
       game.home_score !== null ||
       game.finalized_at !== null ||

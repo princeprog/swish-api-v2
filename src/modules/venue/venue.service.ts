@@ -12,6 +12,12 @@ import {
 import { DATABASE, type Database } from '../../database/database.tokens';
 import { CreateVenueDto } from './dto/create-venue.dto';
 import { UpdateVenueDto } from './dto/update-venue.dto';
+import type { OrganizationAccessContext } from '../../common/auth/roles';
+import {
+  archiveRecord,
+  restoreRecord,
+  writeArchiveAudit,
+} from '../../common/archival/archival';
 
 @Injectable()
 export class VenueService {
@@ -50,6 +56,8 @@ export class VenueService {
       )
       .select((eb) => eb.fn.countAll().as('count'))
       .where('league_seasons.organization_id', '=', organizationId)
+      .where('league_seasons.archived_at', 'is', null)
+      .where('venues.archived_at', 'is', null)
       .executeTakeFirstOrThrow();
     const data = await this.db
       .selectFrom('admin.venues as venues')
@@ -60,6 +68,7 @@ export class VenueService {
       )
       .select([
         'venues.created_at',
+        'venues.archived_at',
         'venues.id',
         'venues.league_season_id',
         'venues.name',
@@ -68,6 +77,8 @@ export class VenueService {
         'venues.updated_at',
       ])
       .where('league_seasons.organization_id', '=', organizationId)
+      .where('league_seasons.archived_at', 'is', null)
+      .where('venues.archived_at', 'is', null)
       .orderBy('venues.created_at asc')
       .limit(pagination.limit)
       .offset(pagination.offset)
@@ -86,6 +97,7 @@ export class VenueService {
       )
       .select([
         'venues.created_at',
+        'venues.archived_at',
         'venues.id',
         'venues.league_season_id',
         'venues.name',
@@ -110,6 +122,11 @@ export class VenueService {
     updateVenueDto: UpdateVenueDto,
   ) {
     const venue = await this.findOne(organizationId, venueId);
+    if (venue.archived_at) {
+      throw new ConflictException(
+        'This venue is archived. Restore it before making changes.',
+      );
+    }
     const targetLeagueSeasonId =
       updateVenueDto.leagueSeasonId ?? venue.league_season_id;
 
@@ -147,19 +164,104 @@ export class VenueService {
       .executeTakeFirstOrThrow();
   }
 
-  async remove(organizationId: string, venueId: string) {
-    throw new ConflictException(
-      'This record cannot be deleted. Archive support is being prepared so league history remains available.',
-    );
+  async remove(
+    organizationId: string,
+    venueId: string,
+    access?: OrganizationAccessContext,
+  ) {
+    return this.archive(organizationId, venueId, access);
+  }
 
-    await this.findOne(organizationId, venueId);
+  async archive(
+    organizationId: string,
+    venueId: string,
+    access?: OrganizationAccessContext,
+  ) {
+    return this.db.transaction().execute(async (trx) => {
+      const venue = await trx
+        .selectFrom('admin.venues as venues')
+        .innerJoin(
+          'admin.league_seasons as seasons',
+          'seasons.id',
+          'venues.league_season_id',
+        )
+        .select([
+          'venues.archived_at',
+          'venues.id',
+          'seasons.archived_at as season_archived_at',
+        ])
+        .where('venues.id', '=', venueId)
+        .where('seasons.organization_id', '=', organizationId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!venue) throw new NotFoundException('Venue not found');
+      if (venue.archived_at) return venue;
 
-    await this.db
-      .deleteFrom('admin.venues')
-      .where('id', '=', venueId)
-      .execute();
+      const openGame = await trx
+        .selectFrom('competition.games')
+        .select('id')
+        .where('venue_id', '=', venueId)
+        .where('archived_at', 'is', null)
+        .where('status', 'in', ['live', 'reopened'])
+        .executeTakeFirst();
+      if (openGame) {
+        throw new ConflictException(
+          'Finish or reopen the active games before archiving this venue.',
+        );
+      }
 
-    return { success: true };
+      const archived = await archiveRecord(trx, 'admin.venues', venueId);
+      await writeArchiveAudit(trx, {
+        action: 'venue.archived',
+        actor: access,
+        organizationId,
+        targetId: venueId,
+        targetType: 'venue',
+      });
+      return archived;
+    });
+  }
+
+  async restore(
+    organizationId: string,
+    venueId: string,
+    access?: OrganizationAccessContext,
+  ) {
+    return this.db.transaction().execute(async (trx) => {
+      const venue = await trx
+        .selectFrom('admin.venues as venues')
+        .innerJoin(
+          'admin.league_seasons as seasons',
+          'seasons.id',
+          'venues.league_season_id',
+        )
+        .select([
+          'venues.archived_at',
+          'venues.id',
+          'seasons.archived_at as season_archived_at',
+        ])
+        .where('venues.id', '=', venueId)
+        .where('seasons.organization_id', '=', organizationId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!venue) throw new NotFoundException('Venue not found');
+      if (!venue.archived_at) return venue;
+      if (venue.season_archived_at) {
+        throw new ConflictException(
+          'Restore the league season before restoring this venue.',
+        );
+      }
+
+      const restored = await restoreRecord(trx, 'admin.venues', venueId);
+      await writeArchiveAudit(trx, {
+        action: 'venue.restored',
+        actor: access,
+        organizationId,
+        targetId: venueId,
+        targetType: 'venue',
+      });
+      return restored;
+    });
   }
 
   private async assertLeagueSeasonBelongsToOrganization(
@@ -171,6 +273,7 @@ export class VenueService {
       .select(['id'])
       .where('id', '=', leagueSeasonId)
       .where('organization_id', '=', organizationId)
+      .where('archived_at', 'is', null)
       .executeTakeFirst();
 
     if (!leagueSeason) {

@@ -9,7 +9,11 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ORGANIZATION_PERMISSIONS } from '../../common/auth/roles';
+import {
+  ORGANIZATION_PERMISSIONS,
+  type OrganizationAccessContext,
+} from '../../common/auth/roles';
+import { OrganizationAccess } from '../../common/decorators/organization-access.decorator';
 import { RequireOrganizationPermissions } from '../../common/decorators/organization-permissions.decorator';
 import { OrganizationPermissionsGuard } from '../../common/guards/organization-permissions.guard';
 import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
@@ -72,7 +76,40 @@ export class LeagueSeasonController {
   remove(
     @Param('organizationId') organizationId: string,
     @Param('leagueSeasonId') leagueSeasonId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
   ) {
-    return this.leagueSeasonService.remove(organizationId, leagueSeasonId);
+    return this.leagueSeasonService.remove(
+      organizationId,
+      leagueSeasonId,
+      access,
+    );
+  }
+
+  @Post(':leagueSeasonId/archive')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE)
+  archive(
+    @Param('organizationId') organizationId: string,
+    @Param('leagueSeasonId') leagueSeasonId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+  ) {
+    return this.leagueSeasonService.archive(
+      organizationId,
+      leagueSeasonId,
+      access,
+    );
+  }
+
+  @Post(':leagueSeasonId/restore')
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.SCHEDULE_MANAGE)
+  restore(
+    @Param('organizationId') organizationId: string,
+    @Param('leagueSeasonId') leagueSeasonId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+  ) {
+    return this.leagueSeasonService.restore(
+      organizationId,
+      leagueSeasonId,
+      access,
+    );
   }
 }
