@@ -56,6 +56,7 @@ describe('Admin setup flow controllers', () => {
     } = createMocks();
 
     leagueSeasonService.create.mockResolvedValue({
+      archived_at: null,
       created_at: new Date('2026-06-17T00:00:00.000Z'),
       id: 'league-1',
       name: 'Season 1',
@@ -66,6 +67,7 @@ describe('Admin setup flow controllers', () => {
       updated_at: new Date('2026-06-17T00:00:00.000Z'),
     } as never);
     divisionService.create.mockResolvedValue({
+      archived_at: null,
       created_at: new Date('2026-06-17T00:00:00.000Z'),
       id: 'division-1',
       league_season_id: 'league-1',
@@ -75,6 +77,7 @@ describe('Admin setup flow controllers', () => {
       updated_at: new Date('2026-06-17T00:00:00.000Z'),
     });
     teamService.create.mockResolvedValue({
+      archived_at: null,
       color: null,
       created_at: new Date('2026-06-17T00:00:00.000Z'),
       division_id: 'division-1',
@@ -85,6 +88,7 @@ describe('Admin setup flow controllers', () => {
       updated_at: new Date('2026-06-17T00:00:00.000Z'),
     });
     playerService.create.mockResolvedValue({
+      archived_at: null,
       created_at: new Date('2026-06-17T00:00:00.000Z'),
       id: 'player-1',
       jersey_number: '23',
@@ -95,6 +99,7 @@ describe('Admin setup flow controllers', () => {
       updated_at: new Date('2026-06-17T00:00:00.000Z'),
     });
     venueService.create.mockResolvedValue({
+      archived_at: null,
       created_at: new Date('2026-06-17T00:00:00.000Z'),
       id: 'venue-1',
       league_season_id: 'league-1',

@@ -96,6 +96,7 @@ export interface AdminDivisionRosterSettings {
 }
 
 export interface AdminDivisions {
+  archived_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   id: Generated<string>;
   league_season_id: string;
@@ -123,6 +124,7 @@ export interface AdminLeagueSeasonGameRules {
 }
 
 export interface AdminLeagueSeasons {
+  archived_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   default_crossover_template: Generated<Json>;
   default_playoff_format: Generated<string>;
@@ -151,6 +153,7 @@ export interface AdminOrganizationMembers {
 }
 
 export interface AdminOrganizations {
+  archived_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   id: Generated<string>;
   name: string;
@@ -160,6 +163,7 @@ export interface AdminOrganizations {
 }
 
 export interface AdminPlayers {
+  archived_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   id: Generated<string>;
   jersey_number: string;
@@ -245,6 +249,7 @@ export interface AdminTeamRosters {
 }
 
 export interface AdminTeams {
+  archived_at: Timestamp | null;
   color: string | null;
   created_at: Generated<Timestamp>;
   division_id: string;
@@ -256,6 +261,7 @@ export interface AdminTeams {
 }
 
 export interface AdminVenues {
+  archived_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   id: Generated<string>;
   league_season_id: string;
@@ -345,6 +351,7 @@ export interface CompetitionFinalizedGameResults {
 }
 
 export interface CompetitionGames {
+  archived_at: Timestamp | null;
   away_score: number | null;
   away_team_id: string;
   competition_kind: Generated<string>;

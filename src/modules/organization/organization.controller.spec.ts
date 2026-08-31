@@ -7,6 +7,7 @@ const organization = {
     permissions: [],
     role: 'owner',
   },
+  archived_at: null,
   created_at: new Date('2026-06-17T00:00:00.000Z'),
   id: 'org-1',
   name: 'Swish League',
