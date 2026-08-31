@@ -123,6 +123,7 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
       .select((eb) => eb.fn.count('published_players.id').as('published_count'))
       .where('teams.division_id', '=', divisionId)
       .where('teams.status', '=', 'active')
+      .where('teams.archived_at', 'is', null)
       .groupBy([
         'teams.id',
         'rosters.workflow_status',
@@ -474,6 +475,7 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
         .select(['teams.id', 'rosters.id as roster_id'])
         .where('teams.division_id', '=', divisionId)
         .where('teams.status', '=', 'active')
+        .where('teams.archived_at', 'is', null)
         .execute();
 
       for (const team of teams) {
@@ -551,6 +553,7 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
         .select(['id'])
         .where('division_id', '=', divisionId)
         .where('status', '=', 'active')
+        .where('archived_at', 'is', null)
         .execute();
       const deadlineLabel = formatDeadlineLabel(updated.submission_deadline_at);
 
@@ -581,8 +584,20 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
 
   async releaseDueDeadlines() {
     const divisions = await (this.db as any)
-      .selectFrom('admin.division_roster_settings')
-      .select(['division_id'])
+      .selectFrom('admin.division_roster_settings as settings')
+      .innerJoin(
+        'admin.divisions as divisions',
+        'divisions.id',
+        'settings.division_id',
+      )
+      .innerJoin(
+        'admin.league_seasons as seasons',
+        'seasons.id',
+        'divisions.league_season_id',
+      )
+      .select(['settings.division_id as division_id'])
+      .where('divisions.archived_at', 'is', null)
+      .where('seasons.archived_at', 'is', null)
       .where('released_at', 'is', null)
       .where('submission_deadline_at', '<=', new Date())
       .execute();
@@ -662,6 +677,7 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
       .select(['teams.id'])
       .where('teams.division_id', '=', divisionId)
       .where('teams.status', '=', 'active')
+      .where('teams.archived_at', 'is', null)
       .where((eb) =>
         eb.or([
           eb('rosters.workflow_status', 'is', null),
@@ -703,6 +719,7 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
       .select(['rosters.id', 'rosters.latest_approved_version_id'])
       .where('teams.division_id', '=', divisionId)
       .where('teams.status', '=', 'active')
+      .where('teams.archived_at', 'is', null)
       .where('rosters.workflow_status', '=', 'approved')
       .where('rosters.latest_approved_version_id', 'is not', null)
       .execute();
@@ -761,6 +778,9 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
       ])
       .where('teams.id', '=', teamId)
       .where('seasons.organization_id', '=', organizationId)
+      .where('teams.archived_at', 'is', null)
+      .where('divisions.archived_at', 'is', null)
+      .where('seasons.archived_at', 'is', null)
       .executeTakeFirst();
 
     if (!team) {
@@ -783,6 +803,16 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async ensureTeamRoster(teamId: string, db: any = this.db) {
+    const team = await db
+      .selectFrom('admin.teams')
+      .select('id')
+      .where('id', '=', teamId)
+      .where('archived_at', 'is', null)
+      .executeTakeFirst();
+    if (!team) {
+      throw new NotFoundException('Team not found');
+    }
+
     await db
       .insertInto('admin.team_rosters')
       .values({ team_id: teamId })
@@ -797,6 +827,16 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async ensureDivisionSettings(divisionId: string, db: any = this.db) {
+    const division = await db
+      .selectFrom('admin.divisions')
+      .select('id')
+      .where('id', '=', divisionId)
+      .where('archived_at', 'is', null)
+      .executeTakeFirst();
+    if (!division) {
+      throw new NotFoundException('Division not found');
+    }
+
     await db
       .insertInto('admin.division_roster_settings')
       .values({ division_id: divisionId })
@@ -824,6 +864,7 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
         'updated_at',
       ])
       .where('team_id', '=', teamId)
+      .where('archived_at', 'is', null)
       .orderBy('jersey_number asc')
       .orderBy('name asc')
       .execute();
@@ -861,6 +902,7 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
       .select((eb) => eb.fn.countAll().as('count'))
       .where('team_id', '=', teamId)
       .where('status', '=', 'active')
+      .where('archived_at', 'is', null)
       .executeTakeFirstOrThrow();
 
     return Number(row.count);
@@ -891,6 +933,7 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
       .select(['assignments.id'])
       .where('assignments.organization_member_id', '=', access.membershipId)
       .where('teams.division_id', '=', divisionId)
+      .where('teams.archived_at', 'is', null)
       .executeTakeFirst();
 
     if (!assignment) {
@@ -912,6 +955,8 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
       .select(['divisions.id'])
       .where('divisions.id', '=', divisionId)
       .where('seasons.organization_id', '=', organizationId)
+      .where('divisions.archived_at', 'is', null)
+      .where('seasons.archived_at', 'is', null)
       .executeTakeFirst();
 
     if (!division) {
@@ -1014,6 +1059,10 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
       ])
       .where('teams.id', '=', teamId)
       .where('organizations.id', '=', organizationId)
+      .where('teams.archived_at', 'is', null)
+      .where('divisions.archived_at', 'is', null)
+      .where('seasons.archived_at', 'is', null)
+      .where('organizations.archived_at', 'is', null)
       .executeTakeFirst();
 
     if (!context) {
@@ -1026,6 +1075,7 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
   private async findTeamManagerRecipients(teamId: string) {
     const rows = await (this.db as any)
       .selectFrom('access.team_manager_assignments as assignments')
+      .innerJoin('admin.teams as teams', 'teams.id', 'assignments.team_id')
       .innerJoin(
         'admin.organization_members as members',
         'members.id',
@@ -1033,6 +1083,7 @@ export class RosterService implements OnModuleInit, OnModuleDestroy {
       )
       .select(['members.user_id'])
       .where('assignments.team_id', '=', teamId)
+      .where('teams.archived_at', 'is', null)
       .where('members.status', '=', 'active')
       .execute();
 
