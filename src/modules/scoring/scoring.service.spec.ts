@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { ScoringService } from './scoring.service';
+import { createInitialScoringState } from './scoring-engine';
 import { ORGANIZATION_PERMISSIONS } from '../../common/auth/roles';
 
 const game = {
@@ -683,5 +684,239 @@ describe('ScoringService transactional device control', () => {
     ).resolves.toEqual({ success: true });
 
     expect(transactionExecute).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ScoringService historical scoring corrections', () => {
+  it('loads an older active score event for a reasoned correction', async () => {
+    const target = {
+      id: 'event-old',
+      payload: { points: 2, teamId: 'home-team' },
+      reverses_event_id: null,
+      type: 'score.record',
+    };
+    const targetQuery = chainWithResult(target);
+    const reversalQuery = chainWithResult(undefined);
+    let queryNumber = 0;
+    const db = {
+      selectFrom: jest.fn(() =>
+        queryNumber++ === 0 ? targetQuery : reversalQuery,
+      ),
+    };
+    const service = new ScoringService(db as never);
+
+    const state = await (service as any).prepareReversalState(
+      db,
+      'game-1',
+      {
+        latestReversibleEvent: {
+          id: 'event-new',
+          payload: { points: 3, teamId: 'away-team' },
+          summary: 'Away +3',
+          type: 'score.record',
+        },
+      },
+      {
+        idempotencyKey: 'reverse-old',
+        payload: { eventId: 'event-old', reason: 'Correcting the first basket' },
+        type: 'event.reverse',
+      },
+    );
+
+    expect(state.latestReversibleEvent).toEqual(
+      expect.objectContaining({ id: 'event-old', type: 'score.record' }),
+    );
+  });
+
+  it('requires a reason before reversing an older event', async () => {
+    const targetQuery = chainWithResult({
+      id: 'event-old',
+      payload: { points: 2, teamId: 'home-team' },
+      reverses_event_id: null,
+      type: 'score.record',
+    });
+    const reversalQuery = chainWithResult(undefined);
+    let queryNumber = 0;
+    const db = {
+      selectFrom: jest.fn(() =>
+        queryNumber++ === 0 ? targetQuery : reversalQuery,
+      ),
+    };
+    const service = new ScoringService(db as never);
+
+    await expect(
+      (service as any).prepareReversalState(
+        db,
+        'game-1',
+        {
+          latestReversibleEvent: {
+            id: 'event-new',
+            payload: { points: 3, teamId: 'away-team' },
+            summary: 'Away +3',
+            type: 'score.record',
+          },
+        },
+        {
+          idempotencyKey: 'reverse-old-without-reason',
+          payload: { eventId: 'event-old' },
+          type: 'event.reverse',
+        },
+      ),
+    ).rejects.toThrow('Older corrections require review and a reason');
+  });
+
+  it('rejects an event that has already been reversed', async () => {
+    const targetQuery = chainWithResult({
+      id: 'event-old',
+      payload: { points: 2, teamId: 'home-team' },
+      reverses_event_id: null,
+      type: 'score.record',
+    });
+    const reversalQuery = chainWithResult({ id: 'event-reversal' });
+    let queryNumber = 0;
+    const db = {
+      selectFrom: jest.fn(() =>
+        queryNumber++ === 0 ? targetQuery : reversalQuery,
+      ),
+    };
+    const service = new ScoringService(db as never);
+
+    await expect(
+      (service as any).prepareReversalState(
+        db,
+        'game-1',
+        { latestReversibleEvent: null },
+        {
+          idempotencyKey: 'reverse-twice',
+          payload: { eventId: 'event-old', reason: 'Duplicate correction' },
+          type: 'event.reverse',
+        },
+      ),
+    ).rejects.toThrow('This scoring event has already been reversed.');
+  });
+
+  it('finds the newest active score or foul event after a reversal', async () => {
+    const query = {
+      execute: jest.fn().mockResolvedValue([
+        {
+          id: 'event-reversal',
+          payload: { eventId: 'event-old' },
+          reverses_event_id: 'event-old',
+          type: 'event.reverse',
+        },
+        {
+          id: 'event-new',
+          payload: { points: 3, teamId: 'away-team' },
+          reverses_event_id: null,
+          type: 'score.record',
+        },
+        {
+          id: 'event-old',
+          payload: { points: 2, teamId: 'home-team' },
+          reverses_event_id: null,
+          type: 'score.record',
+        },
+      ]),
+      orderBy: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const db = { selectFrom: jest.fn(() => query) };
+    const service = new ScoringService(db as never);
+
+    await expect(
+      (service as any).findLatestActiveReversibleEvent(db, 'game-1'),
+    ).resolves.toEqual(
+      expect.objectContaining({ id: 'event-new', type: 'score.record' }),
+    );
+  });
+
+  it('persists the next active event after correcting an older score', async () => {
+    const oldEventId = '00000000-0000-4000-8000-000000000001';
+    const nextEventId = '00000000-0000-4000-8000-000000000002';
+    const state = {
+      ...createInitialScoringState({
+        awayTeamId: 'away-team',
+        gameId: 'game-1',
+        homeTeamId: 'home-team',
+      }),
+      homeScore: 4,
+      latestReversibleEvent: {
+        id: oldEventId,
+        payload: { points: 2, teamId: 'home-team' },
+        summary: 'Home +2',
+        type: 'score.record' as const,
+      },
+      phase: 'reopened' as const,
+    };
+    const transactionExecute = jest.fn(async (callback) =>
+      callback({
+        selectFrom: jest.fn().mockReturnValue(chainWithResult(undefined)),
+      }),
+    );
+    const service = new ScoringService({
+      transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
+    } as never);
+    jest
+      .spyOn(service as never, 'findGameForScoring' as never)
+      .mockResolvedValue({ ...game, status: 'reopened' } as never);
+    jest
+      .spyOn(service as never, 'lockGameForScoring' as never)
+      .mockResolvedValue({ ...game, status: 'reopened' } as never);
+    jest
+      .spyOn(service as never, 'ensureScoringState' as never)
+      .mockResolvedValue(state as never);
+    jest
+      .spyOn(service as never, 'assertControlSession' as never)
+      .mockResolvedValue({} as never);
+    jest
+      .spyOn(service as never, 'prepareReversalState' as never)
+      .mockResolvedValue(state as never);
+    jest
+      .spyOn(service as never, 'insertEvent' as never)
+      .mockResolvedValue({ id: 'reversal-event' } as never);
+    jest
+      .spyOn(service as never, 'findLatestActiveReversibleEvent' as never)
+      .mockResolvedValue({
+        id: nextEventId,
+        payload: { points: 3, teamId: 'away-team' },
+        summary: 'Away +3',
+        type: 'score.record',
+      } as never);
+    const updateProjection = jest
+      .spyOn(service as never, 'updateProjection' as never)
+      .mockResolvedValue(undefined);
+    jest
+      .spyOn(service as never, 'rebuildDetailProjections' as never)
+      .mockResolvedValue(undefined);
+    jest
+      .spyOn(service as never, 'getControlStatus' as never)
+      .mockResolvedValue({ status: 'claimed' } as never);
+    jest
+      .spyOn(service as never, 'findDetailProjections' as never)
+      .mockResolvedValue({} as never);
+
+    const result = await service.executeCommand('org-1', 'game-1', {} as never, {
+      command: {
+        idempotencyKey: 'reverse-old-score',
+        payload: { eventId: oldEventId, reason: 'Correcting the first basket' },
+        type: 'event.reverse',
+      },
+      controlToken: 'control-token',
+      expectedVersion: 0,
+      occurredAt: new Date(),
+    });
+
+    expect(updateProjection).toHaveBeenCalledWith(
+      expect.anything(),
+      'game-1',
+      expect.objectContaining({ homeScore: 2 }),
+      'reversal-event',
+      0,
+      nextEventId,
+    );
+    expect(result.state.latestReversibleEvent).toEqual(
+      expect.objectContaining({ id: nextEventId }),
+    );
   });
 });

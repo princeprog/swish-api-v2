@@ -770,4 +770,29 @@ describe('scoring engine', () => {
       ),
     ).toThrow('Final games must be reopened before scoring changes');
   });
+
+  it('requires a finalized game to be reopened before correcting an event', () => {
+    const finalState = {
+      ...createInitialScoringState(game),
+      latestReversibleEvent: {
+        id: 'event-1',
+        payload: { points: 2, teamId: 'home-team' },
+        summary: 'Home +2',
+        type: 'score.record' as const,
+      },
+      phase: 'final' as const,
+    };
+
+    expect(() =>
+      applyScoringCommand(
+        finalState,
+        {
+          idempotencyKey: 'reverse-final',
+          payload: { eventId: 'event-1', reason: 'Correction' },
+          type: 'event.reverse',
+        },
+        new Date('2026-07-29T12:00:00.000Z'),
+      ),
+    ).toThrow('Final games must be reopened before scoring changes');
+  });
 });

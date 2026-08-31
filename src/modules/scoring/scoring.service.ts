@@ -81,6 +81,15 @@ type ScoringStateRow = {
   version: number;
 };
 
+function isReversibleEventType(type: string): type is LatestReversibleScoringEvent['type'] {
+  return [
+    'score.record',
+    'personal_foul.record',
+    'team_foul.record',
+    'timeout.record',
+  ].includes(type as LatestReversibleScoringEvent['type']);
+}
+
 @Injectable()
 export class ScoringService {
   constructor(
@@ -554,7 +563,16 @@ export class ScoringService {
             );
           }
 
-          const applied = applyScoringCommand(lockedState, input.command, now);
+          const commandState =
+            input.command.type === 'event.reverse'
+              ? await this.prepareReversalState(
+                  trx,
+                  gameId,
+                  lockedState,
+                  input.command,
+                )
+              : lockedState;
+          const applied = applyScoringCommand(commandState, input.command, now);
           let responseGame = lockedGame;
 
           const insertedEvent = await this.insertEvent(
@@ -564,12 +582,22 @@ export class ScoringService {
             applied.event,
             input.occurredAt,
           );
+          let latestReversibleEventId = applied.state.latestReversibleEvent
+            ? insertedEvent.id
+            : null;
+          if (input.command.type === 'event.reverse') {
+            applied.state.latestReversibleEvent =
+              await this.findLatestActiveReversibleEvent(trx, gameId);
+            latestReversibleEventId =
+              applied.state.latestReversibleEvent?.id ?? null;
+          }
           await this.updateProjection(
             trx,
             gameId,
             applied.state,
             insertedEvent.id,
             lockedState.version,
+            latestReversibleEventId,
           );
           if (
             ['score.record', 'personal_foul.record', 'event.reverse'].includes(
@@ -621,14 +649,19 @@ export class ScoringService {
 
           notificationGame = responseGame;
 
-          const responseState = {
-            ...applied.state,
-            latestReversibleEvent: applied.state.latestReversibleEvent
+          const responseLatestReversibleEvent =
+            applied.state.latestReversibleEvent
               ? {
                   ...applied.state.latestReversibleEvent,
-                  id: insertedEvent.id,
+                  id:
+                    applied.state.latestReversibleEvent.id === applied.event.id
+                      ? insertedEvent.id
+                      : applied.state.latestReversibleEvent.id,
                 }
-              : null,
+              : null;
+          const responseState = {
+            ...applied.state,
+            latestReversibleEvent: responseLatestReversibleEvent,
           };
 
           return {
@@ -961,6 +994,104 @@ export class ScoringService {
     }
 
     return query.executeTakeFirst();
+  }
+
+  private async prepareReversalState(
+    db: any,
+    gameId: string,
+    state: ScoringState,
+    command: Extract<ScoringCommand, { type: 'event.reverse' }>,
+  ): Promise<ScoringState> {
+    const target = await db
+      .selectFrom('scoring.game_events')
+      .select(['id', 'payload', 'reverses_event_id', 'type'])
+      .where('game_id', '=', gameId)
+      .where('id', '=', command.payload.eventId)
+      .forUpdate()
+      .executeTakeFirst();
+
+    if (!target || target.reverses_event_id) {
+      throw new ScoringActionError(
+        'REVERSAL_EVENT_NOT_FOUND',
+        'Choose an active score or foul event to correct.',
+      );
+    }
+
+    const existingReversal = await db
+      .selectFrom('scoring.game_events')
+      .select('id')
+      .where('game_id', '=', gameId)
+      .where('reverses_event_id', '=', target.id)
+      .executeTakeFirst();
+    if (existingReversal) {
+      throw new ScoringActionError(
+        'EVENT_ALREADY_REVERSED',
+        'This scoring event has already been reversed.',
+      );
+    }
+
+    if (!isReversibleEventType(target.type)) {
+      throw new ScoringActionError(
+        'EVENT_NOT_REVERSIBLE',
+        'Only scores and fouls can be corrected from the scoring history.',
+      );
+    }
+
+    if (
+      state.latestReversibleEvent?.id !== target.id &&
+      !command.payload.reason?.trim()
+    ) {
+      throw new ScoringActionError(
+        'REVERSAL_REQUIRES_REVIEW',
+        'Older corrections require review and a reason',
+      );
+    }
+
+    return {
+      ...state,
+      latestReversibleEvent: {
+        id: target.id,
+        payload: target.payload as Record<string, unknown>,
+        summary: this.summarizeEvent(target.type, target.payload),
+        type: target.type as LatestReversibleScoringEvent['type'],
+      },
+    };
+  }
+
+  private async findLatestActiveReversibleEvent(
+    db: any,
+    gameId: string,
+  ): Promise<LatestReversibleScoringEvent | null> {
+    const events = await db
+      .selectFrom('scoring.game_events')
+      .select(['id', 'payload', 'reverses_event_id', 'type'])
+      .where('game_id', '=', gameId)
+      .orderBy('sequence desc')
+      .execute();
+    const reversedIds = new Set(
+      events.flatMap((event: { reverses_event_id: string | null }) =>
+        event.reverses_event_id ? [event.reverses_event_id] : [],
+      ),
+    );
+    const latest = events.find(
+      (event: {
+        id: string;
+        payload: Record<string, unknown>;
+        reverses_event_id: string | null;
+        type: string;
+      }) =>
+        !event.reverses_event_id &&
+        !reversedIds.has(event.id) &&
+        isReversibleEventType(event.type),
+    );
+    if (!latest) return null;
+
+    return {
+      id: latest.id,
+      payload: latest.payload,
+      summary: this.summarizeEvent(latest.type, latest.payload),
+      type: latest.type as LatestReversibleScoringEvent['type'],
+    };
   }
 
   private async ensureGameRosterSnapshots(game: ScheduleGame, db: any) {
@@ -1572,6 +1703,9 @@ export class ScoringService {
     state: ScoringState,
     insertedEventId: string,
     expectedVersion: number,
+    latestReversibleEventId = state.latestReversibleEvent
+      ? insertedEventId
+      : null,
   ) {
     const result = await db
       .updateTable('scoring.game_states')
@@ -1586,9 +1720,7 @@ export class ScoringService {
         home_score: state.homeScore,
         home_team_fouls: state.homeTeamFouls,
         home_timeouts_used: state.homeTimeoutsUsed,
-        latest_reversible_event_id: state.latestReversibleEvent
-          ? insertedEventId
-          : null,
+        latest_reversible_event_id: latestReversibleEventId,
         overtime_number: state.overtimeNumber,
         overtime_duration_ms: state.overtimeDurationMs,
         period_duration_ms: state.periodDurationMs,

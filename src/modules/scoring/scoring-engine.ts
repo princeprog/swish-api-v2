@@ -451,6 +451,7 @@ export function applyScoringCommand(
       break;
     }
     case 'event.reverse': {
+      assertNotFinal(next);
       const latestEvent = next.latestReversibleEvent;
       if (!latestEvent || latestEvent.id !== command.payload.eventId) {
         assertReason(command.payload.reason);
