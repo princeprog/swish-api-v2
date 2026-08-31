@@ -49,6 +49,13 @@ type PublicLeagueShell = {
   };
 };
 
+export function includePublicHistoryGame(game: {
+  archived_at?: Date | string | null;
+  status: string;
+}): boolean {
+  return game.archived_at == null || game.status === 'final';
+}
+
 @Injectable()
 export class PublicService {
   constructor(@Inject(DATABASE) private readonly db: Database) {}
@@ -171,6 +178,8 @@ export class PublicService {
       .where('organizations.slug', '=', organizationSlug)
       .where('seasons.slug', '=', seasonSlug)
       .where('seasons.public_enabled', '=', true)
+      .where('organizations.archived_at', 'is', null)
+      .where('seasons.archived_at', 'is', null)
       .executeTakeFirst();
     if (!season) throw new NotFoundException('Public league not found');
 
@@ -201,6 +210,12 @@ export class PublicService {
         ])
         .where('games.league_season_id', '=', season.id)
         .where('games.published_at', 'is not', null)
+        .where((eb: any) =>
+          eb.or([
+            eb('games.archived_at', 'is', null),
+            eb('games.status', '=', 'final'),
+          ]),
+        )
         .where('games.status', 'in', ['scheduled', 'live', 'final', 'reopened'])
         .orderBy('games.starts_at asc')
         .execute(),
@@ -338,7 +353,7 @@ export class PublicService {
         .execute(),
     ]);
 
-    const publicGames = games.map((game: any) => ({
+    const publicGames = games.filter(includePublicHistoryGame).map((game: any) => ({
       awayScore:
         game.status === 'live' || game.status === 'reopened'
           ? (game.live_away_score ?? game.away_score)

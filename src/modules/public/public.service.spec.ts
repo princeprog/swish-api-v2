@@ -1,4 +1,18 @@
-import { PublicService } from './public.service';
+import { includePublicHistoryGame, PublicService } from './public.service';
+
+describe('includePublicHistoryGame', () => {
+  it('keeps finalized history while hiding archived operational games', () => {
+    expect(
+      includePublicHistoryGame({ archived_at: new Date(), status: 'final' }),
+    ).toBe(true);
+    expect(
+      includePublicHistoryGame({ archived_at: new Date(), status: 'scheduled' }),
+    ).toBe(false);
+    expect(includePublicHistoryGame({ archived_at: null, status: 'live' })).toBe(
+      true,
+    );
+  });
+});
 
 function createDatabaseMock(rows: unknown[]) {
   const builder = {
