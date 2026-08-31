@@ -309,6 +309,7 @@ export function applyScoringCommand(
       next.shotClockStartedAt = null;
       break;
     case 'game_clock.adjust':
+      assertNotFinal(next);
       assertReason(command.payload.reason);
       assertDurationRange(
         'gameClockRemainingMs',
@@ -333,11 +334,13 @@ export function applyScoringCommand(
       break;
     case 'shot_clock.pause':
       assertShotClockEnabled(next);
+      assertNotFinal(next);
       next.shotClockRunning = false;
       next.shotClockStartedAt = null;
       break;
     case 'shot_clock.reset':
       assertShotClockEnabled(next);
+      assertNotFinal(next);
       next.shotClockRemainingMs =
         command.payload.resetTo === 'short'
           ? next.shotClockShortMs
@@ -346,6 +349,7 @@ export function applyScoringCommand(
       break;
     case 'shot_clock.adjust':
       assertShotClockEnabled(next);
+      assertNotFinal(next);
       assertReason(command.payload.reason);
       assertDurationRange(
         'shotClockRemainingMs',

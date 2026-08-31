@@ -393,9 +393,21 @@ export class ScoringService {
     }
 
     try {
+      let notificationGame = game;
       const result = await (this.db as any)
         .transaction()
         .execute(async (trx) => {
+          const lockedGame = await this.lockGameForScoring(
+            trx,
+            organizationId,
+            gameId,
+            game,
+          );
+          const lockedState = await this.ensureScoringState(
+            lockedGame,
+            trx,
+            true,
+          );
           const existingEvent = await trx
             .selectFrom('scoring.game_events')
             .selectAll()
@@ -404,19 +416,17 @@ export class ScoringService {
             .executeTakeFirst();
 
           if (existingEvent) {
-            const state = await this.ensureScoringState(game, trx);
             return {
               event: existingEvent,
               state: this.toStateResponse(
-                game,
-                state,
+                lockedGame,
+                lockedState,
                 await this.getControlStatus(gameId, access, now, trx),
                 now,
               ),
             };
           }
 
-          const lockedState = await this.ensureScoringState(game, trx, true);
           if (lockedState.version !== input.expectedVersion) {
             throw new ConflictException({
               code: 'STALE_SCORING_STATE',
@@ -426,7 +436,7 @@ export class ScoringService {
 
           if (
             input.command.type === 'game.start' &&
-            game.status !== 'scheduled'
+            lockedGame.status !== 'scheduled'
           ) {
             throw new ScoringActionError(
               'GAME_START_STATUS_INVALID',
@@ -435,7 +445,7 @@ export class ScoringService {
           }
 
           if (input.command.type === 'game.start') {
-            await this.ensureGameRosterSnapshots(game, trx);
+            await this.ensureGameRosterSnapshots(lockedGame, trx);
           }
           if (input.command.type === 'personal_foul.record') {
             await this.assertPersonalFoulPlayer(
@@ -447,7 +457,7 @@ export class ScoringService {
           }
 
           const applied = applyScoringCommand(lockedState, input.command, now);
-          let responseGame = game;
+          let responseGame = lockedGame;
 
           const insertedEvent = await this.insertEvent(
             trx,
@@ -461,13 +471,14 @@ export class ScoringService {
             gameId,
             applied.state,
             insertedEvent.id,
+            lockedState.version,
           );
           if (
             ['score.record', 'personal_foul.record', 'event.reverse'].includes(
               input.command.type,
             )
           ) {
-            await this.rebuildDetailProjections(game, trx);
+            await this.rebuildDetailProjections(lockedGame, trx);
           }
 
           if (input.command.type === 'game.start') {
@@ -479,7 +490,7 @@ export class ScoringService {
               })
               .where('id', '=', gameId)
               .execute();
-            responseGame = { ...game, status: 'live' };
+            responseGame = { ...lockedGame, status: 'live' };
           }
 
           if (input.command.type === 'game.finalize') {
@@ -494,7 +505,7 @@ export class ScoringService {
               organizationId,
               source: 'scorekeeper',
             });
-            responseGame = { ...game, status: 'final' };
+            responseGame = { ...lockedGame, status: 'final' };
           }
 
           if (input.command.type === 'game.reopen') {
@@ -507,8 +518,10 @@ export class ScoringService {
               organizationId,
               reason: input.command.payload.reason,
             });
-            responseGame = { ...game, status: 'reopened' };
+            responseGame = { ...lockedGame, status: 'reopened' };
           }
+
+          notificationGame = responseGame;
 
           const responseState = {
             ...applied.state,
@@ -540,7 +553,7 @@ export class ScoringService {
         if (input.command.type === 'game.reopen') {
           await this.notifyOfficialResult(
             organizationId,
-            game,
+            notificationGame,
             access,
             'scoring.game_reopened',
           );
@@ -794,6 +807,46 @@ export class ScoringService {
       .executeTakeFirstOrThrow();
 
     return this.toEngineState(game, inserted, null);
+  }
+
+  private async lockGameForScoring(
+    db: any,
+    organizationId: string,
+    gameId: string,
+    fallbackGame?: ScheduleGame,
+  ): Promise<ScheduleGame> {
+    const lockedGame = await db
+      .selectFrom('competition.games as games')
+      .innerJoin(
+        'admin.league_seasons as seasons',
+        'seasons.id',
+        'games.league_season_id',
+      )
+      .select([
+        'games.away_score as away_score',
+        'games.away_team_id as away_team_id',
+        'games.division_id as division_id',
+        'games.home_score as home_score',
+        'games.home_team_id as home_team_id',
+        'games.id as id',
+        'games.league_season_id as league_season_id',
+        'games.starts_at as starts_at',
+        'games.status as status',
+        'seasons.organization_id as organization_id',
+      ])
+      .where('games.id', '=', gameId)
+      .where('seasons.organization_id', '=', organizationId)
+      .forUpdate()
+      .executeTakeFirst();
+
+    if (!lockedGame) {
+      throw new NotFoundException('Scoring game not found');
+    }
+
+    return {
+      ...(fallbackGame ?? {}),
+      ...lockedGame,
+    } as ScheduleGame;
   }
 
   private async ensureGameRosterSnapshots(game: ScheduleGame, db: any) {
@@ -1373,8 +1426,9 @@ export class ScoringService {
     gameId: string,
     state: ScoringState,
     insertedEventId: string,
+    expectedVersion: number,
   ) {
-    await db
+    const result = await db
       .updateTable('scoring.game_states')
       .set({
         away_score: state.awayScore,
@@ -1409,6 +1463,16 @@ export class ScoringService {
         version: state.version,
       })
       .where('game_id', '=', gameId)
+      .where('version', '=', expectedVersion)
       .execute();
+
+    if (
+      result?.numUpdatedRows !== undefined &&
+      Number(result.numUpdatedRows) !== 1
+    ) {
+      throw new ConflictException(
+        'The scoring state changed. Refresh it and try again.',
+      );
+    }
   }
 }

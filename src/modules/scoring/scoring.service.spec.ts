@@ -280,3 +280,121 @@ describe('ScoringService command boundary', () => {
     },
   );
 });
+
+describe('ScoringService official lifecycle serialization', () => {
+  it('locks the base game before the scoring projection', async () => {
+    const calls: string[] = [];
+    const lockedGame = { ...game, status: 'scheduled' };
+    const query = {
+      executeTakeFirst: jest.fn().mockResolvedValue(lockedGame),
+      forUpdate: jest.fn().mockImplementation(() => {
+        calls.push('forUpdate');
+        return query;
+      }),
+      innerJoin: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const trx = {
+      selectFrom: jest.fn((table: string) => {
+        calls.push(table);
+        return query;
+      }),
+    };
+    const service = new ScoringService(trx as never);
+
+    await expect(
+      (service as any).lockGameForScoring(trx, 'org-1', 'game-1'),
+    ).resolves.toEqual(lockedGame);
+
+    expect(calls[0]).toBe('competition.games as games');
+    expect(calls[1]).toBe('forUpdate');
+    expect(calls).not.toContain('scoring.game_states');
+  });
+
+  it('uses the locked game status when a game changed after the access pre-read', async () => {
+    const existingEventQuery = chainWithResult(undefined);
+    const transactionExecute = jest.fn(async (callback) =>
+      callback({ selectFrom: jest.fn().mockReturnValue(existingEventQuery) }),
+    );
+    const service = new ScoringService({
+      transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
+    } as never);
+    jest
+      .spyOn(service as never, 'findGameForScoring' as never)
+      .mockResolvedValue({ ...game, status: 'scheduled' } as never);
+    jest
+      .spyOn(service as never, 'assertControlSession' as never)
+      .mockResolvedValue({} as never);
+    jest
+      .spyOn(service as never, 'lockGameForScoring' as never)
+      .mockResolvedValue({ ...game, status: 'live' } as never);
+    jest
+      .spyOn(service as never, 'ensureScoringState' as never)
+      .mockResolvedValue({ version: 0 } as never);
+
+    await expect(
+      service.executeCommand('org-1', 'game-1', {} as never, {
+        command: { idempotencyKey: 'start-after-change', type: 'game.start' },
+        controlToken: 'control-token',
+        expectedVersion: 0,
+        occurredAt: new Date(),
+      }),
+    ).rejects.toThrow('Only scheduled games can be started');
+
+    expect(transactionExecute).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a projection write when the locked version is no longer current', async () => {
+    const execute = jest.fn().mockResolvedValue({ numUpdatedRows: 0n });
+    const query = {
+      execute,
+      set: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const db = {
+      updateTable: jest.fn().mockReturnValue(query),
+    };
+    const service = new ScoringService(db as never);
+
+    await expect(
+      (service as any).updateProjection(
+        db,
+        'game-1',
+        {
+          awayScore: 1,
+          awayTeamFouls: 0,
+          awayTimeoutsUsed: 0,
+          currentPeriodNumber: 1,
+          gameClockRemainingMs: 600000,
+          gameClockRunning: false,
+          gameClockStartedAt: null,
+          homeScore: 2,
+          homeTeamFouls: 0,
+          homeTimeoutsUsed: 0,
+          latestReversibleEvent: null,
+          overtimeDurationMs: 300000,
+          overtimeNumber: 0,
+          periodDurationMs: 600000,
+          phase: 'pregame',
+          regulationPeriods: 4,
+          shotClockEnabled: true,
+          shotClockFullMs: 24000,
+          shotClockRemainingMs: 24000,
+          shotClockRunning: false,
+          shotClockShortMs: 14000,
+          shotClockStartedAt: null,
+          teamFoulsBeforePenalty: 4,
+          timeoutsFirstHalf: 2,
+          timeoutsPerOvertime: 1,
+          timeoutsSecondHalf: 3,
+          version: 1,
+        },
+        'event-1',
+        0,
+      ),
+    ).rejects.toThrow('The scoring state changed. Refresh it and try again.');
+
+    expect(query.where).toHaveBeenCalledWith('version', '=', 0);
+  });
+});

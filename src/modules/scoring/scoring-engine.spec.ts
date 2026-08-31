@@ -730,4 +730,44 @@ describe('scoring engine', () => {
     expect(nextPeriod.gameClockRunning).toBe(false);
     expect(nextPeriod.shotClockRunning).toBe(false);
   });
+
+  it.each([
+    [
+      'game_clock.adjust',
+      {
+        payload: { reason: 'Correcting the displayed clock', remainingMs: 300000 },
+        type: 'game_clock.adjust',
+      },
+    ],
+    ['shot_clock.pause', { type: 'shot_clock.pause' }],
+    [
+      'shot_clock.reset',
+      { payload: { resetTo: 'full' }, type: 'shot_clock.reset' },
+    ],
+    [
+      'shot_clock.adjust',
+      {
+        payload: {
+          reason: 'Correcting the displayed shot clock',
+          remainingMs: 12000,
+        },
+        type: 'shot_clock.adjust',
+      },
+    ],
+  ])('rejects %s while the game is final', (_label, command) => {
+    const finalState = {
+      ...createInitialScoringState(game),
+      phase: 'final' as const,
+      gameClockRunning: false,
+      shotClockRunning: false,
+    };
+
+    expect(() =>
+      applyScoringCommand(
+        finalState,
+        { idempotencyKey: `final-${_label}`, ...command } as never,
+        new Date('2026-07-29T12:00:00.000Z'),
+      ),
+    ).toThrow('Final games must be reopened before scoring changes');
+  });
 });
