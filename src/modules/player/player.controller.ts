@@ -74,7 +74,7 @@ export class PlayerController {
   }
 
   @Delete(':playerId')
-  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.ORGANIZATION_READ)
+  @RequireOrganizationPermissions(ORGANIZATION_PERMISSIONS.PLAYERS_MANAGE)
   remove(
     @Param('organizationId') organizationId: string,
     @Param('playerId') playerId: string,
