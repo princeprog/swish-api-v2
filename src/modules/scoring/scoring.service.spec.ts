@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { ScoringService } from './scoring.service';
 import { ORGANIZATION_PERMISSIONS } from '../../common/auth/roles';
 
@@ -209,4 +210,73 @@ describe('ScoringService official result authorization', () => {
     expect(transactionExecute).not.toHaveBeenCalled();
     expect(coordinator.reopenInTransaction).not.toHaveBeenCalled();
   });
+});
+
+describe('ScoringService command boundary', () => {
+  it('rejects malformed commands before opening a mutation transaction', async () => {
+    const transactionExecute = jest.fn();
+    const service = new (ScoringService as any)({
+      transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
+    });
+
+    await expect(
+      service.executeCommand('org-1', 'game-1', {} as never, {
+        command: {
+          idempotencyKey: 'bad-command',
+          payload: { teamId: 'not-a-uuid', points: 2 },
+          type: 'score.record',
+        },
+        expectedVersion: 0,
+        occurredAt: new Date(),
+      }),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(transactionExecute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['expectedVersion', { expectedVersion: -1 }],
+    ['occurredAt', { occurredAt: new Date('invalid') }],
+    ['controlToken', { controlToken: '   ' }],
+  ])('rejects an invalid %s before reading the game', async (field, override) => {
+    const service = new (ScoringService as any)({
+      transaction: jest.fn(),
+      selectFrom: jest.fn(),
+    });
+    const findGame = jest.spyOn(service, 'findGameForScoring').mockResolvedValue(game as never);
+
+    await expect(
+      service.executeCommand('org-1', 'game-1', {} as never, {
+        command: { idempotencyKey: 'command-1', type: 'game.start' },
+        expectedVersion: 0,
+        occurredAt: new Date(),
+        ...override,
+      }),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(findGame).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, {}])(
+    'rejects an empty game configuration before reading the game (%s)',
+    async (payload) => {
+      const service = new (ScoringService as any)({
+        transaction: jest.fn(),
+        selectFrom: jest.fn(),
+      });
+      const findGame = jest
+        .spyOn(service, 'findGameForScoring')
+        .mockResolvedValue(game as never);
+
+      await expect(
+        service.executeCommand('org-1', 'game-1', {} as never, {
+          command: { idempotencyKey: 'configure-1', type: 'game.configure', payload },
+          expectedVersion: 0,
+          occurredAt: new Date(),
+        }),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(findGame).not.toHaveBeenCalled();
+    },
+  );
 });

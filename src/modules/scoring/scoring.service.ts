@@ -25,6 +25,7 @@ import {
   type ScoringGameRules,
   type ScoringState,
 } from './scoring-engine';
+import { parseScoringCommand } from './scoring-command.parser';
 import { NotificationWriter } from '../notification/notification.writer';
 import {
   projectPeriodScores,
@@ -357,6 +358,27 @@ export class ScoringService {
       occurredAt: Date;
     },
   ) {
+    input.command = parseScoringCommand(input.command);
+    if (
+      !Number.isSafeInteger(input.expectedVersion) ||
+      input.expectedVersion < 0
+    ) {
+      throw new BadRequestException('The game changed. Refresh it and try again.');
+    }
+    if (
+      !(input.occurredAt instanceof Date) ||
+      Number.isNaN(input.occurredAt.getTime())
+    ) {
+      throw new BadRequestException('Choose a valid game time and try again.');
+    }
+    if (
+      input.controlToken !== undefined &&
+      (typeof input.controlToken !== 'string' ||
+        !input.controlToken.trim() ||
+        input.controlToken.length > 512)
+    ) {
+      throw new BadRequestException('Your scoring control is no longer valid. Claim control again.');
+    }
     const now = new Date();
     const game = await this.findGameForScoring(organizationId, gameId, access);
     await this.assertControlSession(gameId, access, input.controlToken, false);

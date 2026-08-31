@@ -5,54 +5,65 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
   Min,
 } from 'class-validator';
 
 export class ScoringCommandDto {
-  @IsString()
-  @MaxLength(120)
+  @IsString({ message: 'Enter a valid scoring request reference.' })
+  @MaxLength(120, { message: 'The scoring request reference is too long.' })
+  @Matches(/\S/, { message: 'Enter a valid scoring request reference.' })
   idempotencyKey!: string;
 
-  @IsInt()
-  @Min(0)
+  @IsInt({ message: 'The game changed. Refresh it and try again.' })
+  @Min(0, { message: 'The game changed. Refresh it and try again.' })
   expectedVersion!: number;
 
-  @IsDateString()
+  @IsDateString({}, { message: 'Choose a valid game time and try again.' })
   occurredAt!: string;
 
-  @IsString()
+  @IsString({ message: 'Choose a scoring action.' })
+  @MaxLength(80, { message: 'Choose a valid scoring action.' })
+  @Matches(/\S/, { message: 'Choose a scoring action.' })
   type!: string;
 
-  @IsObject()
+  @IsObject({ message: 'This scoring action is missing required information.' })
   @IsOptional()
   payload?: Record<string, unknown>;
 
-  @IsString()
+  @IsString({ message: 'Your scoring control is no longer valid. Claim control again.' })
   @IsOptional()
+  @MaxLength(512, { message: 'Your scoring control is no longer valid. Claim control again.' })
+  @Matches(/\S/, { message: 'Your scoring control is no longer valid. Claim control again.' })
   controlToken?: string;
 }
 
 export class ClaimScoringControlDto {
-  @IsString()
+  @IsString({ message: 'Enter a device name.' })
   @IsOptional()
-  @MaxLength(120)
+  @MaxLength(120, { message: 'The device name is too long.' })
+  @Matches(/\S/, { message: 'Enter a device name.' })
   deviceLabel?: string;
 }
 
 export class ScoringControlTokenDto {
-  @IsString()
+  @IsString({ message: 'Your scoring control is no longer valid. Claim control again.' })
+  @MaxLength(512, { message: 'Your scoring control is no longer valid. Claim control again.' })
+  @Matches(/\S/, { message: 'Your scoring control is no longer valid. Claim control again.' })
   controlToken!: string;
 }
 
 export class TakeoverScoringControlDto {
-  @IsString()
-  @MaxLength(400)
+  @IsString({ message: 'Add a reason for taking control.' })
+  @MaxLength(400, { message: 'The reason is too long.' })
+  @Matches(/\S/, { message: 'Add a reason for taking control.' })
   reason!: string;
 
-  @IsString()
+  @IsString({ message: 'Enter a device name.' })
   @IsOptional()
-  @MaxLength(120)
+  @MaxLength(120, { message: 'The device name is too long.' })
+  @Matches(/\S/, { message: 'Enter a device name.' })
   deviceLabel?: string;
 }
 
