@@ -1,6 +1,49 @@
 import { StatisticsService } from './statistics.service';
 
 describe('StatisticsService submission', () => {
+  it('keeps the statistics state read-only before game start', async () => {
+    const query = {
+      execute: jest.fn().mockResolvedValue([]),
+      executeTakeFirst: jest.fn().mockResolvedValue(undefined),
+      executeTakeFirstOrThrow: jest.fn(),
+      innerJoin: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      selectAll: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const db = {
+      insertInto: jest.fn(),
+      selectFrom: jest.fn().mockReturnValue(query),
+    };
+    const service = new StatisticsService(db as never, {} as never);
+    jest.spyOn(service as any, 'assertGameAccess').mockResolvedValue({
+      away_score: null,
+      away_team_id: 'away-team',
+      home_score: null,
+      home_team_id: 'home-team',
+      id: 'game-1',
+      organization_id: 'org-1',
+      status: 'scheduled',
+    });
+
+    await expect(
+      service.getState('org-1', 'game-1', {} as never),
+    ).resolves.toMatchObject({
+      boxScores: [],
+      events: [],
+      roster: [],
+      sheet: {
+        away_player_points: 0,
+        home_player_points: 0,
+        status: 'draft',
+        version: 0,
+      },
+      version: 0,
+    });
+    expect(db.insertInto).not.toHaveBeenCalled();
+  });
+
   it('reconciles a submitted stat sheet against the live score projection', async () => {
     const stateQuery = {
       executeTakeFirst: jest.fn().mockResolvedValue({
@@ -37,6 +80,10 @@ describe('StatisticsService submission', () => {
       status: 'live',
     });
     jest.spyOn(service as any, 'assertControl').mockResolvedValue(undefined);
+    jest
+      .spyOn(service as any, 'assertGameRosterSnapshots')
+      .mockResolvedValue(undefined);
+    jest.spyOn(service as any, 'ensureStatSheet').mockResolvedValue(undefined);
     jest.spyOn(service, 'getState').mockResolvedValue({
       boxScores: [
         {
@@ -108,6 +155,10 @@ describe('StatisticsService submission', () => {
       status: 'live',
     });
     jest.spyOn(service as any, 'assertControl').mockResolvedValue(undefined);
+    jest
+      .spyOn(service as any, 'assertGameRosterSnapshots')
+      .mockResolvedValue(undefined);
+    jest.spyOn(service as any, 'ensureStatSheet').mockResolvedValue(undefined);
     jest.spyOn(service, 'getState').mockResolvedValue({
       boxScores: [
         { assists: 0, playerId: 'home-player', points: 82, rebounds: 0, steals: 0, teamId: 'home-team', turnovers: 0 },
@@ -237,5 +288,27 @@ describe('StatisticsService submission', () => {
       organizationId: 'org-1',
       reason: 'Correct an attributed rebound.',
     });
+  });
+
+  it('requires the two game-start roster snapshots before recording statistics', async () => {
+    const query = {
+      execute: jest.fn().mockResolvedValue([{ team_id: 'home-team' }]),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const service = new StatisticsService(
+      { selectFrom: jest.fn().mockReturnValue(query) } as never,
+      {} as never,
+    );
+
+    await expect(
+      (service as any).assertGameRosterSnapshots({
+        away_team_id: 'away-team',
+        home_team_id: 'home-team',
+        id: 'game-1',
+      }),
+    ).rejects.toThrow(
+      'Start the game before recording player statistics. The published game rosters are captured when scoring begins.',
+    );
   });
 });

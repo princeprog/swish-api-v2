@@ -65,13 +65,12 @@ export class StatisticsService {
     access: OrganizationAccessContext,
   ) {
     const game = await this.assertGameAccess(organizationId, gameId, access);
-    await this.ensureRosterAndSheet(game);
     const [sheet, eventRows, boxScoreRows, roster] = await Promise.all([
       this.db
         .selectFrom('statistics.game_stat_sheets')
         .selectAll()
         .where('game_id', '=', gameId)
-        .executeTakeFirstOrThrow(),
+        .executeTakeFirst(),
       this.db
         .selectFrom('statistics.stat_events')
         .selectAll()
@@ -124,8 +123,14 @@ export class StatisticsService {
         status: game.status,
       },
       roster,
-      sheet,
-      version: sheet.version,
+      sheet: sheet ?? {
+        away_player_points: 0,
+        home_player_points: 0,
+        override_reason: null,
+        status: 'draft',
+        version: 0,
+      },
+      version: sheet?.version ?? 0,
     };
   }
 
@@ -136,7 +141,6 @@ export class StatisticsService {
     deviceLabel?: string,
   ) {
     const game = await this.assertGameAccess(organizationId, gameId, access);
-    await this.ensureRosterAndSheet(game);
     const now = new Date();
     const active = await this.db
       .selectFrom('statistics.stat_control_sessions')
@@ -265,8 +269,9 @@ export class StatisticsService {
     dto: RecordStatisticEventDto,
   ) {
     const game = await this.assertGameAccess(organizationId, gameId, access);
-    await this.ensureRosterAndSheet(game);
     await this.assertControl(gameId, access, dto.controlToken);
+    await this.assertGameRosterSnapshots(game);
+    await this.ensureStatSheet(game);
 
     await this.db.transaction().execute(async (trx) => {
       const sheet = await trx
@@ -413,6 +418,8 @@ export class StatisticsService {
   ) {
     const game = await this.assertGameAccess(organizationId, gameId, access);
     await this.assertControl(gameId, access, controlToken);
+    await this.assertGameRosterSnapshots(game);
+    await this.ensureStatSheet(game);
     const score = await this.findLiveOfficialScore(gameId);
     if (!score || score.away_score === null || score.home_score === null) {
       throw new ConflictException(
@@ -493,7 +500,7 @@ export class StatisticsService {
   ) {
     this.assertOverrideAccess(access);
     const game = await this.assertGameAccess(organizationId, gameId, access);
-    await this.ensureRosterAndSheet(game);
+    await this.ensureStatSheet(game);
     const now = new Date();
     await this.db
       .updateTable('statistics.game_stat_sheets')
@@ -714,66 +721,33 @@ export class StatisticsService {
     return game;
   }
 
-  private async ensureRosterAndSheet(
+  private async ensureStatSheet(game: StatisticsGameContext): Promise<void> {
+    await this.db
+      .insertInto('statistics.game_stat_sheets')
+      .values({ game_id: game.id })
+      .onConflict((conflict) => conflict.column('game_id').doNothing())
+      .execute();
+  }
+
+  private async assertGameRosterSnapshots(
     game: StatisticsGameContext,
   ): Promise<void> {
-    await this.db.transaction().execute(async (trx) => {
-      await trx
-        .insertInto('statistics.game_stat_sheets')
-        .values({ game_id: game.id })
-        .onConflict((conflict) => conflict.column('game_id').doNothing())
-        .execute();
-      const existing = await trx
-        .selectFrom('scoring.game_roster_snapshots')
-        .select(['id', 'team_id'])
-        .where('game_id', '=', game.id)
-        .execute();
-      const existingTeams = new Set(existing.map((row) => row.team_id));
-
-      for (const teamId of [game.home_team_id, game.away_team_id]) {
-        if (existingTeams.has(teamId)) continue;
-        const roster = await trx
-          .selectFrom('admin.team_rosters')
-          .select('published_version_id')
-          .where('team_id', '=', teamId)
-          .executeTakeFirst();
-        if (!roster?.published_version_id) {
-          throw new ConflictException(
-            'Publish both team rosters before opening game statistics.',
-          );
-        }
-        const players = await trx
-          .selectFrom('admin.roster_version_players')
-          .selectAll()
-          .where('roster_version_id', '=', roster.published_version_id)
-          .orderBy('sort_order asc')
-          .execute();
-        const snapshot = await trx
-          .insertInto('scoring.game_roster_snapshots')
-          .values({
-            game_id: game.id,
-            source_roster_version_id: roster.published_version_id,
-            team_id: teamId,
-          })
-          .returning('id')
-          .executeTakeFirstOrThrow();
-        if (players.length > 0) {
-          await trx
-            .insertInto('scoring.game_roster_players')
-            .values(
-              players.map((player) => ({
-                game_roster_snapshot_id: snapshot.id,
-                jersey_number: player.jersey_number,
-                name: player.name,
-                position: player.position,
-                sort_order: player.sort_order,
-                source_player_id: player.source_player_id,
-              })),
-            )
-            .execute();
-        }
-      }
-    });
+    const snapshots = await this.db
+      .selectFrom('scoring.game_roster_snapshots')
+      .select('team_id')
+      .where('game_id', '=', game.id)
+      .execute();
+    const snapshotTeams = new Set(snapshots.map((snapshot) => snapshot.team_id));
+    if (
+      snapshotTeams.size !== 2 ||
+      ![game.home_team_id, game.away_team_id].every((teamId) =>
+        snapshotTeams.has(teamId),
+      )
+    ) {
+      throw new ConflictException(
+        'Start the game before recording player statistics. The published game rosters are captured when scoring begins.',
+      );
+    }
   }
 
   private async assertControl(
