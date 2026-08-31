@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -763,23 +764,9 @@ export class ComplianceService {
     access: OrganizationAccessContext,
     fileId: string,
   ) {
-    await this.assertCanSubmitTeam(access, teamId);
-    await this.teamRequirementContext(organizationId, teamId, requirementId);
-    const submission = await this.repository.ensureSubmission(
-      teamId,
-      requirementId,
+    throw new ConflictException(
+      'Uploaded files cannot be deleted yet. Keep the file in the submission or ask a league administrator to archive it.',
     );
-    ensureSubmissionCanBeChanged(
-      submission.workflow_status as ComplianceWorkflowStatus,
-    );
-    await this.storage.deleteUpload({
-      fileId,
-      organizationId,
-      requirementId,
-      submissionId: submission.id,
-      teamId,
-    });
-    return { deleted: true };
   }
 
   async createDownloadUrl(
