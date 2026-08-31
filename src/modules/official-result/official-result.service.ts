@@ -354,6 +354,8 @@ export class OfficialResultCoordinator {
       ])
       .where('formats.division_id', '=', input.divisionId)
       .where('seasons.organization_id', '=', input.organizationId)
+      .where('divisions.archived_at', 'is', null)
+      .where('seasons.archived_at', 'is', null)
       .forUpdate()
       .executeTakeFirst();
     if (!format) throw new NotFoundException('Competition format not found');

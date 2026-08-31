@@ -281,6 +281,17 @@ describe('OfficialResultCoordinator', () => {
       }),
     ).resolves.toMatchObject({ decision: { id: 'decision-1' } });
     expect(rebuild).toHaveBeenCalledTimes(1);
+    const formatQuery = db.selectFrom.mock.results[0].value;
+    expect(formatQuery.where).toHaveBeenCalledWith(
+      'divisions.archived_at',
+      'is',
+      null,
+    );
+    expect(formatQuery.where).toHaveBeenCalledWith(
+      'seasons.archived_at',
+      'is',
+      null,
+    );
   });
 
   it('blocks reopening when a dependent playoff game has already started', async () => {
