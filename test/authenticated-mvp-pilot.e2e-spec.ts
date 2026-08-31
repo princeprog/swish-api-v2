@@ -5,7 +5,6 @@ import { Test } from '@nestjs/testing';
 import cookieParser from 'cookie-parser';
 import type { Transaction } from 'kysely';
 import request from 'supertest';
-import type { App } from 'supertest/types';
 import { ApiExceptionFilter } from '../src/common/filters/api-exception.filter';
 import { DATABASE } from '../src/database/database.tokens';
 import { DatabaseService } from '../src/database/database.module';
@@ -51,7 +50,7 @@ async function rollbackHttpPilot<T>(
   throw new Error('Authenticated HTTP pilot did not roll back as expected.');
 }
 
-async function createPilotApp(trx: Trx): Promise<INestApplication<App>> {
+async function createPilotApp(trx: Trx): Promise<INestApplication> {
   const moduleFixture = await Test.createTestingModule({
     imports: [AppModule],
   })
@@ -59,7 +58,7 @@ async function createPilotApp(trx: Trx): Promise<INestApplication<App>> {
     .useValue(transactionProxy(trx))
     .compile();
 
-  const app = moduleFixture.createNestApplication<App>();
+  const app = moduleFixture.createNestApplication();
   app.use(cookieParser());
   app.useGlobalFilters(new ApiExceptionFilter());
   app.useGlobalPipes(
