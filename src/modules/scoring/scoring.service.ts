@@ -970,6 +970,7 @@ export class ScoringService {
       ])
       .where('games.id', '=', gameId)
       .where('seasons.organization_id', '=', organizationId)
+      .where('games.archived_at', 'is', null)
       .forUpdate()
       .executeTakeFirst();
 
@@ -1381,7 +1382,8 @@ export class ScoringService {
       .selectFrom('admin.schedule_games')
       .selectAll()
       .where('organization_id', '=', organizationId)
-      .where('id', '=', gameId);
+      .where('id', '=', gameId)
+      .where('archived_at', 'is', null);
 
     if (
       !access.permissions.includes(ORGANIZATION_PERMISSIONS.GAME_SCORE_OVERRIDE)

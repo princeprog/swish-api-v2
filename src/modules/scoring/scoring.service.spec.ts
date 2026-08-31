@@ -319,6 +319,11 @@ describe('ScoringService official lifecycle serialization', () => {
 
     expect(calls[0]).toBe('competition.games as games');
     expect(calls[1]).toBe('forUpdate');
+    expect(query.where).toHaveBeenCalledWith(
+      'games.archived_at',
+      'is',
+      null,
+    );
     expect(calls).not.toContain('scoring.game_states');
   });
 

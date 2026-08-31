@@ -1034,6 +1034,7 @@ export class StatisticsService {
       ])
       .where('games.id', '=', gameId)
       .where('seasons.organization_id', '=', organizationId)
+      .where('games.archived_at', 'is', null)
       .executeTakeFirst();
     if (!game) throw new NotFoundException('Game not found');
 
@@ -1150,6 +1151,7 @@ export class StatisticsService {
       ])
       .where('games.id', '=', gameId)
       .where('seasons.organization_id', '=', organizationId)
+      .where('games.archived_at', 'is', null)
       .forUpdate()
       .executeTakeFirst();
     if (!lockedGame) throw new NotFoundException('Game not found');
