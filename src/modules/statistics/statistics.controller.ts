@@ -164,6 +164,21 @@ export class StatisticsController {
     );
   }
 
+  @Post('resume')
+  resume(
+    @Param('organizationId') organizationId: string,
+    @Param('gameId') gameId: string,
+    @OrganizationAccess() access: OrganizationAccessContext,
+    @Body() dto: StatisticsOverrideDto,
+  ) {
+    return this.statisticsService.resume(
+      organizationId,
+      gameId,
+      access,
+      dto.reason,
+    );
+  }
+
   @Get('player-of-game')
   getPlayerOfGame(
     @Param('organizationId') organizationId: string,

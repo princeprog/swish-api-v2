@@ -622,6 +622,77 @@ export class StatisticsService {
     });
   }
 
+  async resume(
+    organizationId: string,
+    gameId: string,
+    access: OrganizationAccessContext,
+    reason: string,
+  ) {
+    const normalizedReason = reason?.trim() ?? '';
+    if (normalizedReason.length < 10) {
+      throw new BadRequestException(
+        'Explain why the submitted stat sheet needs another correction.',
+      );
+    }
+    const game = await this.assertGameAccess(organizationId, gameId, access);
+    if (game.status === 'final') {
+      throw new ConflictException(
+        'Finalized games require an audited game reopen before statistics can be corrected.',
+      );
+    }
+
+    return this.db.transaction().execute(async (trx) => {
+      const lockedGame = await this.lockGameForStatistics(
+        trx,
+        organizationId,
+        gameId,
+        game,
+      );
+      await this.lockExistingScoringState(trx, lockedGame.id);
+      const sheet = await trx
+        .selectFrom('statistics.game_stat_sheets')
+        .selectAll()
+        .where('game_id', '=', gameId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!sheet || sheet.status !== 'submitted') {
+        throw new ConflictException(
+          'Only a submitted stat sheet can be resumed before the game is finalized.',
+        );
+      }
+      const now = new Date();
+      const updateResult = await trx
+        .updateTable('statistics.game_stat_sheets')
+        .set({
+          override_by_member_id: null,
+          override_reason: null,
+          reconciled_at: null,
+          reopened_at: now,
+          status: 'reopened',
+          submitted_at: null,
+          updated_at: now,
+        })
+        .where('id', '=', sheet.id)
+        .where('status', '=', 'submitted')
+        .execute();
+      this.assertSingleRowUpdated(
+        updateResult,
+        'The stat sheet changed before it could be resumed. Review it and try again.',
+      );
+      await this.writeAudit(
+        access,
+        gameId,
+        'statistics.sheet.resumed',
+        {
+          previousStatus: sheet.status,
+          reason: normalizedReason,
+        },
+        trx,
+      );
+      return { status: 'reopened' as const };
+    });
+  }
+
   private assertSubmissionReady(projection: OfficialScoreProjection) {
     const complete =
       projection.phase === 'period_break' &&

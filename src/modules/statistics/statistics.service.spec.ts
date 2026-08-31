@@ -422,3 +422,105 @@ describe('StatisticsService transactional control', () => {
     expect(controlQuery.forUpdate).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('StatisticsService stat-sheet resumption', () => {
+  it('reopens a submitted pre-final sheet with an audited reason', async () => {
+    const sheetQuery = {
+      executeTakeFirst: jest.fn().mockResolvedValue({
+        id: 'sheet-1',
+        status: 'submitted',
+      }),
+      executeTakeFirstOrThrow: jest.fn().mockResolvedValue({
+        id: 'sheet-1',
+        status: 'submitted',
+      }),
+      forUpdate: jest.fn().mockReturnThis(),
+      selectAll: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+    };
+    const updateSet = jest.fn().mockReturnThis();
+    const updateQuery = {
+      execute: jest.fn().mockResolvedValue({ numUpdatedRows: 1n }),
+      set: updateSet,
+      where: jest.fn().mockReturnThis(),
+    };
+    const auditQuery = {
+      execute: jest.fn().mockResolvedValue(undefined),
+      values: jest.fn().mockReturnThis(),
+    };
+    const transactionExecute = jest.fn(async (callback) =>
+      callback({
+        insertInto: jest.fn().mockReturnValue(auditQuery),
+        selectFrom: jest.fn().mockReturnValue(sheetQuery),
+        updateTable: jest.fn().mockReturnValue(updateQuery),
+      }),
+    );
+    const game = {
+      away_score: 70,
+      away_team_id: 'away-team',
+      home_score: 75,
+      home_team_id: 'home-team',
+      id: 'game-1',
+      organization_id: 'org-1',
+      status: 'live',
+    };
+    const db = {
+      transaction: jest.fn().mockReturnValue({ execute: transactionExecute }),
+    };
+    const service = new StatisticsService(db as never, {} as never);
+    jest.spyOn(service as any, 'assertGameAccess').mockResolvedValue(game);
+    jest.spyOn(service as any, 'lockGameForStatistics').mockResolvedValue(game);
+    jest
+      .spyOn(service as any, 'lockExistingScoringState')
+      .mockResolvedValue(undefined);
+
+    await expect(
+      service.resume(
+        'org-1',
+        'game-1',
+        { membershipId: 'member-1' } as never,
+        'Correct an incorrectly attributed assist.',
+      ),
+    ).resolves.toEqual({ status: 'reopened' });
+
+    expect(updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reconciled_at: null,
+        reopened_at: expect.any(Date),
+        status: 'reopened',
+        submitted_at: null,
+      }),
+    );
+    expect(auditQuery.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'statistics.sheet.resumed',
+        metadata: expect.objectContaining({
+          reason: 'Correct an incorrectly attributed assist.',
+        }),
+      }),
+    );
+  });
+
+  it('does not use pre-final resume for a finalized game', async () => {
+    const db = {
+      transaction: jest.fn(),
+    };
+    const service = new StatisticsService(db as never, {} as never);
+    jest.spyOn(service as any, 'assertGameAccess').mockResolvedValue({
+      id: 'game-1',
+      status: 'final',
+    });
+
+    await expect(
+      service.resume(
+        'org-1',
+        'game-1',
+        { membershipId: 'member-1' } as never,
+        'Correct an old stat entry.',
+      ),
+    ).rejects.toThrow(
+      'Finalized games require an audited game reopen before statistics can be corrected.',
+    );
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+});
