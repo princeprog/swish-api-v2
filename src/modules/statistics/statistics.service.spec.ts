@@ -694,6 +694,31 @@ describe('StatisticsService transactional control', () => {
 
     expect(transactionExecute).toHaveBeenCalledTimes(1);
     expect(gameQuery.forUpdate).toHaveBeenCalledTimes(1);
+    expect(gameQuery.where).toHaveBeenCalledWith(
+      'seasons.archived_at',
+      'is',
+      null,
+    );
+    expect(gameQuery.where).toHaveBeenCalledWith(
+      'divisions.archived_at',
+      'is',
+      null,
+    );
+    expect(gameQuery.where).toHaveBeenCalledWith(
+      'home_teams.archived_at',
+      'is',
+      null,
+    );
+    expect(gameQuery.where).toHaveBeenCalledWith(
+      'away_teams.archived_at',
+      'is',
+      null,
+    );
+    expect(gameQuery.where).toHaveBeenCalledWith(
+      'venues.archived_at',
+      'is',
+      null,
+    );
     expect(stateQuery.forUpdate).toHaveBeenCalledTimes(1);
     expect(controlQuery.forUpdate).toHaveBeenCalledTimes(1);
   });
