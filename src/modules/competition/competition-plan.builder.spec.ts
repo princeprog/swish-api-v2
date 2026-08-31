@@ -71,6 +71,33 @@ describe('buildCompetitionPlan', () => {
     ).toThrow('Crossover seeds must be unique and refer to a qualifying pool.');
   });
 
+  it('rejects a qualifier count that exceeds a pool size', () => {
+    expect(() =>
+      buildCompetitionPlan({
+        crossoverTemplate: [],
+        playoffFormat: 'none',
+        pools: [
+          { code: 'A', id: 'pool-a', teamIds: ['A1'] },
+          { code: 'B', id: 'pool-b', teamIds: ['B1', 'B2'] },
+        ],
+        qualifiersPerPool: 2,
+        qualifyingFormat: 'single_round_robin',
+      }),
+    ).toThrow('Each pool must contain at least 2 teams to qualify 2 teams.');
+  });
+
+  it('requires every qualifying seed in the crossover template', () => {
+    expect(() =>
+      buildCompetitionPlan({
+        crossoverTemplate: [{ awaySeed: 'B1', homeSeed: 'A1' }],
+        playoffFormat: 'single_elimination',
+        pools,
+        qualifiersPerPool: 2,
+        qualifyingFormat: 'single_round_robin',
+      }),
+    ).toThrow('The crossover template must include every qualifying seed exactly once.');
+  });
+
   it('requires direct seed confirmation before generating direct elimination', () => {
     expect(() =>
       buildCompetitionPlan({

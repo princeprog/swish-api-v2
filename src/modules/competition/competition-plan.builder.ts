@@ -82,6 +82,7 @@ function validateCrossoverSeeds(
   qualifiersPerPool: number,
   crossoverTemplate: CrossoverMatchupDto[],
 ): void {
+  const expectedSeedCount = pools.length * qualifiersPerPool;
   const allowed = new Set(
     pools.flatMap((pool) =>
       Array.from(
@@ -95,6 +96,12 @@ function validateCrossoverSeeds(
     matchup.awaySeed,
   ]);
 
+  if (selected.length !== expectedSeedCount) {
+    throw new Error(
+      'The crossover template must include every qualifying seed exactly once.',
+    );
+  }
+
   if (
     new Set(selected).size !== selected.length ||
     selected.some((seed) => !allowed.has(seed))
@@ -105,12 +112,29 @@ function validateCrossoverSeeds(
   }
 }
 
+function validateQualifyingPools(
+  pools: CompetitionPlanPool[],
+  qualifiersPerPool: number,
+): void {
+  for (const pool of pools) {
+    if (pool.teamIds.length < qualifiersPerPool || pool.teamIds.length < 2) {
+      throw new Error(
+        `Each pool must contain at least ${Math.max(2, qualifiersPerPool)} teams to qualify ${qualifiersPerPool} teams.`,
+      );
+    }
+    if (new Set(pool.teamIds).size !== pool.teamIds.length) {
+      throw new Error(`Pool ${pool.code} cannot contain the same team twice.`);
+    }
+  }
+}
+
 export function buildCompetitionPlan(
   input: BuildCompetitionPlanInput,
 ): CompetitionPlanMatchup[] {
   const qualifierMatchups: CompetitionPlanMatchup[] = [];
 
   if (input.qualifyingFormat !== 'none') {
+    validateQualifyingPools(input.pools, input.qualifiersPerPool);
     for (const pool of input.pools) {
       const fixtures = generateRoundRobin(
         pool.teamIds,
